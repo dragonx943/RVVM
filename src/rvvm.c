@@ -313,18 +313,31 @@ static void* rvvm_eventloop(void* manual)
         emscripten_set_main_loop(rvvm_eventloop_tick_em, 0, true);
     }
 #else
+    uint32_t delay = 1000000000ULL / 60;
+    rvtimer_t timer = {0};
+    rvtimecmp_t cmp = {0};
+    rvtimer_init(&timer, 1000000000);
+    rvtimecmp_init(&cmp, &timer);
+    rvtimecmp_set(&cmp, delay);
+
     if (!manual && !rvvm_has_arg("noisolation")) {
         rvvm_restrict_this_thread();
     }
 
     while (true) {
-        spin_lock(&global_lock);
-        if (rvvm_eventloop_tick(!!manual)) {
+        if (rvtimecmp_pending(&cmp)) {
+            uint64_t next = rvtimecmp_get(&cmp) + delay;
+            uint64_t time = rvtimer_get(&timer);
+            rvtimecmp_set(&cmp, EVAL_MAX(time, next));
+
+            spin_lock(&global_lock);
+            if (rvvm_eventloop_tick(!!manual)) {
+                spin_unlock(&global_lock);
+                break;
+            }
             spin_unlock(&global_lock);
-            break;
         }
-        spin_unlock(&global_lock);
-        condvar_wait(eventloop_cond, 16);
+        condvar_wait_ns(eventloop_cond, rvtimecmp_delay_ns(&cmp));
     }
 #endif
     return NULL;
