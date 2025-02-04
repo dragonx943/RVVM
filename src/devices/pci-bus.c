@@ -81,7 +81,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define PCIE_CAP_INTEGRATED_ENDPOINT 0x9
 
 // MSI-X interrupts
-#define PCI_MSIX_MAX_IRQS 1
+#define PCI_MSIX_MAX_IRQS 32
 #define PCI_MSIX_TBL_SIZE (((PCI_MSIX_MAX_IRQS + 1) >> 1) << 3)
 #define PCI_MSIX_PBA_SIZE ((PCI_MSIX_MAX_IRQS + 0x1F) >> 5)
 #define PCI_MSIX_BAR_SIZE (PCI_MSIX_TBL_SIZE + PCI_MSIX_PBA_SIZE)
@@ -241,10 +241,10 @@ static bool pci_func_send_msix_irq(pci_func_t* func, uint32_t msi_id)
         uint32_t command = atomic_load_uint32_relax(&func->command);
         if (likely((command & PCI_CMD_BUS_MASTER) && (msi_id < PCI_MSIX_MAX_IRQS))) {
             // Bus mastering enabled, valid MSI-X vector
-            uint32_t mask = atomic_load_uint32_relax(&func->msix[msi_id + 3]);
-            uint32_t data = atomic_load_uint32_relax(&func->msix[msi_id + 2]);
-            rvvm_addr_t addr = atomic_load_uint32_relax(&func->msix[msi_id])
-                  | ((uint64_t)atomic_load_uint32_relax(&func->msix[msi_id + 1]) << 32);
+            uint32_t mask = atomic_load_uint32_relax(&func->msix[(msi_id << 2) + 3]);
+            uint32_t data = atomic_load_uint32_relax(&func->msix[(msi_id << 2) + 2]);
+            rvvm_addr_t addr = atomic_load_uint32_relax(&func->msix[(msi_id << 2)])
+                  | ((uint64_t)atomic_load_uint32_relax(&func->msix[(msi_id << 2) + 1]) << 32);
 
             if (likely(!(msix_control & PCI_MSIX_MASKED) && !(mask & 1))) {
                 // Perform an MSI write
