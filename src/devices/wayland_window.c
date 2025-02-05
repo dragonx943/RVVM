@@ -97,14 +97,19 @@ thread_ctx_t* wayland_evloop_thread = NULL;
 
 // Autogen end
 
+// Min global versions
+#define XDG_WM_BASE_MIN_VER 2
+#define ZXDG_OUTPUT_MANAGER_V1_MIN_VER 2
+
+// Required globals
 static struct wl_display *display = NULL;
 static struct wl_compositor *compositor = NULL;
 static struct wl_shm *shm = NULL;
-
 static struct xdg_wm_base* wm_base = NULL;
+
+// Optional globals
 static struct zxdg_output_manager_v1* xdg_output_manager = NULL;
 static struct zxdg_decoration_manager_v1* xdg_decoration_manager = NULL;
-
 static struct zwp_relative_pointer_manager_v1* relative_pointer_manager = NULL;
 static struct zwp_pointer_constraints_v1* pointer_constraints = NULL;
 static struct zwp_keyboard_shortcuts_inhibit_manager_v1 *keyboard_shortcuts_inhibit_manager = NULL;
@@ -1090,13 +1095,13 @@ static void wl_registry_on_global(void* data, struct wl_registry* registry, uint
         hashmap_put(&seats, name, (size_t)(uintptr_t)seat_data);
         wl_seat_add_listener(seat_data->seat, &seat_listener, NULL);
 
-    } else if (rvvm_strcmp(interface, xdg_wm_base_interface.name) && version >= 3) {
+    } else if (rvvm_strcmp(interface, xdg_wm_base_interface.name) && version >= XDG_WM_BASE_MIN_VER) {
         proxy = wl_registry_bind(registry, name, &xdg_wm_base_interface, version);
         wm_base = (struct xdg_wm_base*)proxy;
         global_data->global_type = GLOBAL_TYPE_WM_BASE;
         xdg_wm_base_add_listener(wm_base, &wm_base_listener, NULL);
 
-    } else if (rvvm_strcmp(interface, zxdg_output_manager_v1_interface.name) && version >= 2) {
+    } else if (rvvm_strcmp(interface, zxdg_output_manager_v1_interface.name) && version >= ZXDG_OUTPUT_MANAGER_V1_MIN_VER) {
         proxy = wl_registry_bind(registry, name, &zxdg_output_manager_v1_interface, version);
         xdg_output_manager = (struct zxdg_output_manager_v1*)proxy;
         global_data->global_type = GLOBAL_ANY;
@@ -1229,12 +1234,13 @@ static bool wayland_init(void)
     rvvm_info("Initializing wayland backend");
     display = wl_display_connect(NULL);
     if (!display) {
+        rvvm_info("Wayland initialization failed: Failed to connect to Wayland display");
         return false;
     }
 
     struct wl_registry* registry = wl_display_get_registry(display);
     if (!registry) {
-        rvvm_warn("Failed to get Wayland registry");
+        rvvm_info("Wayland initialization failed: Failed to get Wayland registry");
         return false;
     }
 
@@ -1242,6 +1248,21 @@ static bool wayland_init(void)
 
     wl_display_roundtrip(display);
     wl_display_roundtrip(display);
+
+    if (!compositor) {
+        rvvm_info("Wayland initialization failed: wl_compositor global is never advertised.");
+        return false;
+    }
+
+    if (!shm) {
+        rvvm_info("Wayland initialization failed: wl_shm global is never advertised.");
+        return false;
+    }
+
+    if (!wm_base) {
+        rvvm_info("Wayland initialization failed: xdg_wm_base global of version >= 2 is never advertised.");
+        return false;
+    }
 
     rvvm_info("Wayland backend initialized.");
     rvvm_info("Available features:");
