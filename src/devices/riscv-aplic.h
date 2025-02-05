@@ -15,7 +15,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define APLIC_M_ADDR_DEFAULT 0x0C000000U
 #define APLIC_S_ADDR_DEFAULT 0x0D000000U
 
-PUBLIC rvvm_intc_t* riscv_aplic_init(rvvm_machine_t* machine, rvvm_addr_t addr, bool smode);
+PUBLIC rvvm_intc_t* riscv_aplic_init(rvvm_machine_t* machine, rvvm_addr_t m_addr, rvvm_addr_t s_addr);
 
 PUBLIC rvvm_intc_t* riscv_aplic_init_auto(rvvm_machine_t* machine);
 
