@@ -253,7 +253,7 @@ struct rvvm_hart_t {
     rvtimecmp_t mtimecmp;
     rvtimecmp_t stimecmp;
 
-    uint64_t pending_irqs;
+    uint32_t pending_irqs;
     uint32_t pending_events;
     uint32_t preempt_ms;
 
