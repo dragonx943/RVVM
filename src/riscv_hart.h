@@ -46,9 +46,9 @@ void riscv_interrupt_clear(rvvm_hart_t* vm, bitcnt_t irq);
 void riscv_send_aia_irq(rvvm_hart_t* vm, bool smode, uint32_t irq);
 
 // Hart interrupts that are raised externally
-static inline uint64_t riscv_interrupts_raised(rvvm_hart_t* vm)
+static inline uint32_t riscv_interrupts_raised(rvvm_hart_t* vm)
 {
-    return atomic_load_uint64_ex(&vm->pending_irqs, ATOMIC_RELAXED);
+    return atomic_load_uint32_relax(&vm->pending_irqs);
 }
 
 // Signal the vCPU to check for timer interrupts
@@ -62,10 +62,13 @@ void riscv_hart_preempt(rvvm_hart_t* vm, uint32_t preempt_ms);
  */
 
 // Hart interrupts that are pending & enabled by ie CSR
-static inline uint64_t riscv_interrupts_pending(rvvm_hart_t* vm)
+static inline uint32_t riscv_interrupts_pending(rvvm_hart_t* vm)
 {
     return (riscv_interrupts_raised(vm) | vm->csr.ip) & vm->csr.ie;
 }
+
+// Update AIA state after write to AIA CSRs
+void riscv_update_aia_state(rvvm_hart_t* vm, bool smode);
 
 // Get/Claim highest-priority AIA (MSI) IRQ at M/S mode
 uint32_t riscv_get_aia_irq(rvvm_hart_t* vm, bool smode, bool claim);
