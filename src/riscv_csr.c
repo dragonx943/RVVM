@@ -53,6 +53,11 @@ static uint64_t riscv_mkmisa(const char* str)
     return ret;
 }
 
+static inline bool riscv_is_csr_write(rvvm_uxlen_t* dest, uint8_t op)
+{
+    return (*dest != 0) || (op == CSR_SWAP);
+}
+
 static inline bool riscv_csr_helper_masked(rvvm_hart_t* vm, rvvm_uxlen_t* csr, rvvm_uxlen_t* dest, rvvm_uxlen_t mask, uint8_t op)
 {
     rvvm_uxlen_t tmp = *csr;
@@ -293,8 +298,7 @@ static inline bool riscv_csr_topei(rvvm_hart_t* vm, uint8_t priv_mode, rvvm_uxle
 {
     if (vm->aia) {
         bool smode = priv_mode == RISCV_PRIV_SUPERVISOR;
-        bool claim = op == CSR_SWAP || *dest != 0;
-        uint32_t irq = riscv_get_aia_irq(vm, smode, claim);
+        uint32_t irq = riscv_get_aia_irq(vm, smode, riscv_is_csr_write(dest, op));
         *dest = irq | (irq << 16);
         return true;
     }
@@ -485,16 +489,32 @@ static inline bool riscv_csr_atomic_helper(uint32_t* val, rvvm_uxlen_t* dest, ui
             *dest = atomic_swap_uint32(val, *dest);
             return true;
         case CSR_SETBITS:
-            *dest = atomic_or_uint32(val, *dest);
-            return true;
+            if (*dest) {
+                *dest = atomic_or_uint32(val, *dest);
+                return true;
+            }
+            *dest = atomic_load_uint32(val);
+            return false;
         case CSR_CLEARBITS:
-            *dest = atomic_swap_uint32(val, ~(*dest));
-            return true;
+            if (*dest) {
+                *dest = atomic_and_uint32(val, ~(*dest));
+                return true;
+            }
+            *dest = atomic_load_uint32(val);
+            return false;
     }
     return false;
 }
 
-static bool riscv_csr_aia_helper(rvvm_hart_t* vm, uint32_t reg, uint32_t* arr, rvvm_uxlen_t* dest, uint8_t op)
+static bool riscv_csr_aia_helper(rvvm_hart_t* vm, bool smode, uint32_t* val, rvvm_uxlen_t* dest, uint8_t op)
+{
+    if (riscv_csr_atomic_helper(val, dest, op)) {
+        riscv_update_aia_state(vm, smode);
+    }
+    return true;
+}
+
+static bool riscv_csr_aia_pair_helper(rvvm_hart_t* vm, bool smode, uint32_t reg, uint32_t* arr, rvvm_uxlen_t* dest, uint8_t op)
 {
     if (vm->rv64 && (reg & 1)) {
         // Only even eip/eie are accessible in 64 bit mode
@@ -502,9 +522,9 @@ static bool riscv_csr_aia_helper(rvvm_hart_t* vm, uint32_t reg, uint32_t* arr, r
     }
     if (reg < RVVM_AIA_ARR_LEN) {
         rvvm_uxlen_t top = ((uint64_t)*dest) >> 32;
-        riscv_csr_atomic_helper(&arr[reg], dest, op);
+        riscv_csr_aia_helper(vm, smode, &arr[reg], dest, op);
         if (vm->rv64 && reg + 1 < RVVM_AIA_ARR_LEN) {
-            riscv_csr_atomic_helper(&arr[reg + 1], &top, op);
+            riscv_csr_aia_helper(vm, smode, &arr[reg + 1], &top, op);
             *dest |= ((uint64_t)top) << 32;
         }
         return true;
@@ -519,12 +539,12 @@ static bool riscv_csr_indirect(rvvm_hart_t* vm, uint8_t priv_mode, uint32_t csri
         case CSRI_EIDELIVERY:
             if (vm->aia) {
                 *dest &= 1;
-                return riscv_csr_atomic_helper(&vm->aia[smode].eidelivery, dest, op);
+                return riscv_csr_aia_helper(vm, smode, &vm->aia[smode].eidelivery, dest, op);
             }
             break;
         case CSRI_EITHRESHOLD:
             if (vm->aia) {
-                return riscv_csr_atomic_helper(&vm->aia[smode].eithreshold, dest, op);
+                return riscv_csr_aia_helper(vm, smode, &vm->aia[smode].eithreshold, dest, op);
             }
             break;
         default:
@@ -534,10 +554,10 @@ static bool riscv_csr_indirect(rvvm_hart_t* vm, uint8_t priv_mode, uint32_t csri
                     return riscv_csr_zero(dest);
                 } else if (csri >= CSRI_EIP0 && csri <= CSRI_EIP63) {
                     uint32_t reg = csri - CSRI_EIP0;
-                    return riscv_csr_aia_helper(vm, reg, vm->aia[smode].eip, dest, op);
+                    return riscv_csr_aia_pair_helper(vm, smode, reg, vm->aia[smode].eip, dest, op);
                 } else if (csri >= CSRI_EIE0 && csri <= CSRI_EIE63) {
                     uint32_t reg = csri - CSRI_EIE0;
-                    return riscv_csr_aia_helper(vm, reg, vm->aia[smode].eie, dest, op);
+                    return riscv_csr_aia_pair_helper(vm, smode, reg, vm->aia[smode].eie, dest, op);
                 }
             }
             break;
