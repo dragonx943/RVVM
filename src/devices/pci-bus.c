@@ -845,7 +845,6 @@ PUBLIC pci_bus_t* pci_bus_init(rvvm_machine_t* machine, rvvm_intc_t* intc, const
     uint32_t ranges[] = {
         0x1000000, FDT_ADDR(0),        FDT_ADDR(io_addr),  FDT_ADDR(io_len),
         0x2000000, FDT_ADDR(mem_addr), FDT_ADDR(mem_addr), FDT_ADDR(mem_len),
-        0x3000000, 0x4, 0x0,           0x4, 0x0,           0x4, 0x0,
     };
     fdt_node_add_prop_cells(pci_fdt, "ranges", ranges, STATIC_ARRAY_SIZE(ranges));
 
