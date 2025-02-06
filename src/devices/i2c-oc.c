@@ -207,21 +207,21 @@ PUBLIC i2c_bus_t* i2c_oc_init(rvvm_machine_t* machine, rvvm_addr_t addr, rvvm_in
     }
 
 #ifdef USE_FDT
-    struct fdt_node* i2c_clock = fdt_node_find(rvvm_get_fdt_root(machine), "i2c_oc_osc");
-    if (i2c_clock == NULL) {
-        i2c_clock = fdt_node_create("i2c_oc_osc");
-        fdt_node_add_prop_str(i2c_clock, "compatible", "fixed-clock");
-        fdt_node_add_prop_u32(i2c_clock, "#clock-cells", 0);
-        fdt_node_add_prop_u32(i2c_clock, "clock-frequency", 20000000);
-        fdt_node_add_prop_str(i2c_clock, "clock-output-names", "clk");
-        fdt_node_add_child(rvvm_get_fdt_root(machine), i2c_clock);
+    struct fdt_node* i2c_osc = fdt_node_find(rvvm_get_fdt_root(machine), "i2c_osc");
+    if (i2c_osc == NULL) {
+        i2c_osc = fdt_node_create("i2c_osc");
+        fdt_node_add_prop_str(i2c_osc, "compatible", "fixed-clock");
+        fdt_node_add_prop_u32(i2c_osc, "#clock-cells", 0);
+        fdt_node_add_prop_u32(i2c_osc, "clock-frequency", 20000000);
+        fdt_node_add_prop_str(i2c_osc, "clock-output-names", "clk");
+        fdt_node_add_child(rvvm_get_fdt_root(machine), i2c_osc);
     }
 
     struct fdt_node* i2c_fdt = fdt_node_create_reg("i2c", i2c_oc.addr);
     fdt_node_add_prop_reg(i2c_fdt, "reg", i2c_oc.addr, i2c_oc.size);
     fdt_node_add_prop_str(i2c_fdt, "compatible", "opencores,i2c-ocores");
     rvvm_fdt_describe_irq(i2c_fdt, intc, irq);
-    fdt_node_add_prop_u32(i2c_fdt, "clocks", fdt_node_get_phandle(i2c_clock));
+    fdt_node_add_prop_u32(i2c_fdt, "clocks", fdt_node_get_phandle(i2c_osc));
     fdt_node_add_prop_str(i2c_fdt, "clock-names", "clk");
     fdt_node_add_prop_u32(i2c_fdt, "reg-shift", 2);
     fdt_node_add_prop_u32(i2c_fdt, "reg-io-width", 1);
