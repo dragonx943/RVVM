@@ -391,10 +391,21 @@ static void i2c_hid_init(rvvm_machine_t* machine, i2c_bus_t* bus, uint16_t addr,
     i2c_hid_reset(i2c_hid, true);
 
 #ifdef USE_FDT
+    struct fdt_node* i2c_vdd = fdt_node_find(rvvm_get_fdt_root(machine), "i2c_vdd");
+    if (i2c_vdd == NULL) {
+        i2c_vdd = fdt_node_create("i2c_vdd");
+        fdt_node_add_prop_str(i2c_vdd, "compatible", "regulator-fixed");
+        fdt_node_add_prop_str(i2c_vdd, "regulator-name", "i2c_vdd");
+        fdt_node_add_child(rvvm_get_fdt_root(machine), i2c_vdd);
+    }
+
     struct fdt_node* i2c_fdt = fdt_node_create_reg("i2c", i2c_dev.addr);
     fdt_node_add_prop_u32(i2c_fdt, "reg", i2c_dev.addr);
     fdt_node_add_prop_str(i2c_fdt, "compatible", "hid-over-i2c");
     fdt_node_add_prop_u32(i2c_fdt, "hid-descr-addr", I2C_HID_DESC_REG);
+    fdt_node_add_prop_u32(i2c_fdt, "vdd-supply", fdt_node_get_phandle(i2c_vdd));
+    fdt_node_add_prop_u32(i2c_fdt, "vddl-supply", fdt_node_get_phandle(i2c_vdd));
+    fdt_node_add_prop(i2c_fdt, "wakeup-source", NULL, 0);
     rvvm_fdt_describe_irq(i2c_fdt, intc, irq);
     fdt_node_add_child(i2c_bus_fdt_node(bus), i2c_fdt);
 #endif
