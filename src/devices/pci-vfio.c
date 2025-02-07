@@ -268,7 +268,7 @@ static bool vfio_setup_irqs(vfio_func_t* vfio, int irq_type)
         irq->eventfd = eventfd(0, 0);
         irq->id = i;
 
-        irq_set->data[i] = irq->eventfd;
+        ((int*)irq_set->data)[i] = irq->eventfd;
         vector_push_back(vfio->irqs, irq);
 
         if (irq->eventfd < 0) {
