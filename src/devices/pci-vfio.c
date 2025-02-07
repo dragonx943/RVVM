@@ -14,9 +14,6 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #include "pci-vfio.h"
 #include "compiler.h"
-#include "threading.h"
-#include "mem_ops.h"
-#include "utils.h"
 
 // Check that <linux/vfio.h> include is available
 #if defined(__linux__) && defined(USE_VFIO) && !CHECK_INCLUDE(linux/vfio.h, 0)
@@ -36,6 +33,16 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include <sys/eventfd.h>
 
 #include <linux/vfio.h>
+
+#include "threading.h"
+#include "atomics.h"
+#include "mem_ops.h"
+#include "vector.h"
+#include "utils.h"
+
+/*
+ * Helper code to unbind a device from host driver and bind to vfio_pci driver
+ */
 
 static size_t vfio_pci_sysfs_path(char* buffer, size_t size, const char* pci_id, const char* suffix)
 {
@@ -118,82 +125,58 @@ static int vfio_open_group(const char* pci_id)
     return fd;
 }
 
+/*
+ * VFIO attachment
+ */
+
 typedef struct {
+    pci_func_t*   pci_func;
+    thread_ctx_t* thread;
+    uint32_t running;
+    int eventfd;
+    int id;
+} vfio_irq_t;
+
+typedef struct {
+    vector_t(vfio_irq_t*) irqs;
     pci_func_desc_t func_desc;
     pci_func_t*     pci_func;
-    thread_ctx_t*  thread;
     int container;
     int group;
     int device;
-    int eventfd;
-    int irqtype;
-    bool running;
-} vfio_dev_t;
+    bool valid;
+} vfio_func_t;
 
-static void vfio_unmask_irq(vfio_dev_t* vfio)
+static void vfio_bar_unmap(rvvm_mmio_dev_t* dev)
 {
-    struct vfio_irq_set irq_set = {
-        .argsz = sizeof(irq_set),
-        .flags = VFIO_IRQ_SET_DATA_NONE | VFIO_IRQ_SET_ACTION_UNMASK,
-        .index = vfio->irqtype,
-        .start = 0,
-        .count = 1,
-    };
-    ioctl(vfio->device, VFIO_DEVICE_SET_IRQS, &irq_set);
-}
-
-static void vfio_trigger_irq(vfio_dev_t* vfio)
-{
-    struct vfio_irq_set irq_set = {
-        .argsz = sizeof(irq_set),
-        .flags = VFIO_IRQ_SET_DATA_NONE | VFIO_IRQ_SET_ACTION_TRIGGER,
-        .index = vfio->irqtype,
-        .start = 0,
-        .count = 1,
-    };
-    if (vfio->device > 0) ioctl(vfio->device, VFIO_DEVICE_SET_IRQS, &irq_set);
-}
-
-static void* vfio_irq_thread(void* data)
-{
-    vfio_dev_t* vfio = data;
-    uint8_t buffer[8] = {0};
-    vfio_unmask_irq(vfio);
-    while (vfio->running) {
-        UNUSED(!read(vfio->eventfd, buffer, sizeof(buffer)));
-        pci_send_irq(vfio->pci_func, 0);
+    if (dev->mapping && dev->size) {
+        // This BAR holds a host PCI MMIO mapping
+        munmap(dev->mapping, dev->size);
     }
-    return NULL;
 }
 
-static void vfio_bar_remove(rvvm_mmio_dev_t* dev)
+static void vfio_func_free(vfio_func_t* vfio)
 {
-    UNUSED(dev);
-}
+    // Shutdown VFIO IRQ eventfd threads
+    uint64_t val = 1;
+    vector_foreach_back(vfio->irqs, i) {
+        vfio_irq_t* irq = vector_at(vfio->irqs, i);
+        atomic_store_uint32(&irq->running, false);
+        UNUSED(!write(irq->eventfd, &val, sizeof(val)));
+        thread_join(irq->thread);
+        free(irq);
+    }
+    vector_free(vfio->irqs);
 
-static rvvm_mmio_type_t vfio_bar_type = {
-    .name = "vfio_bar",
-    .remove = vfio_bar_remove,
-};
-
-static void vfio_dev_free(vfio_dev_t* vfio)
-{
-    for (size_t i = 0; i < PCI_FUNC_BARS; ++i) {
-        void*  bar_ptr  = vfio->func_desc.bar[i].mapping;
-        size_t bar_size = vfio->func_desc.bar[i].size;
-        if (bar_ptr && bar_size) {
-            munmap(bar_ptr, bar_size);
+    if (!vfio->valid) {
+        // Unmap non-attached BAR mappings
+        for (size_t i = 0; i < PCI_FUNC_BARS; ++i) {
+            vfio_bar_unmap(&vfio->func_desc.bar[i]);
         }
+        vfio_bar_unmap(&vfio->func_desc.expansion_rom);
     }
-    if (vfio->func_desc.expansion_rom.mapping && vfio->func_desc.expansion_rom.size) {
-        munmap(vfio->func_desc.expansion_rom.mapping, vfio->func_desc.expansion_rom.size);
-    }
-    vfio->running = false;
-    vfio_trigger_irq(vfio);
-    thread_join(vfio->thread);
-    if (vfio->eventfd > 0) {
-        close(vfio->eventfd);
-    }
+
+    // Close VFIO descriptors
     if (vfio->device > 0) {
         close(vfio->device);
     }
@@ -203,21 +186,50 @@ static void vfio_dev_free(vfio_dev_t* vfio)
     if (vfio->container > 0) {
         close(vfio->container);
     }
+
     free(vfio);
 }
 
-static void vfio_dev_remove(rvvm_mmio_dev_t* dev)
+static void vfio_bar_remove(rvvm_mmio_dev_t* dev)
 {
-    vfio_dev_t* vfio = dev->data;
-    vfio_dev_free(vfio);
+    vfio_bar_unmap(dev);
+    if (dev->data) {
+        // This BAR is responsible for VFIO cleanup
+        vfio_func_free(dev->data);
+    }
 }
 
-static rvvm_mmio_type_t vfio_dev_type = {
-    .name = "vfio_pci_dev",
-    .remove = vfio_dev_remove,
+static const rvvm_mmio_type_t vfio_bar_type = {
+    .name = "vfio_bar",
+    .remove = vfio_bar_remove,
 };
 
-static bool vfio_map_dma(vfio_dev_t* vfio, rvvm_machine_t* machine, rvvm_addr_t mem_base, size_t mem_size)
+static void* vfio_irq_thread(void* data)
+{
+    vfio_irq_t* irq = data;
+    uint64_t val = 0;
+    while (true) {
+        UNUSED(!read(irq->eventfd, &val, sizeof(val)));
+        if (atomic_load_uint32_relax(&irq->running)) {
+            pci_send_irq(irq->pci_func, irq->id);
+        } else {
+            break;
+        }
+    }
+    return NULL;
+}
+
+static void vfio_enable_irqs(vfio_func_t* vfio)
+{
+    vector_foreach_back(vfio->irqs, i) {
+        vfio_irq_t* irq = vector_at(vfio->irqs, i);
+        irq->pci_func = vfio->pci_func;
+        irq->running = true;
+        irq->thread = thread_create(vfio_irq_thread, irq);
+    }
+}
+
+static bool vfio_map_dma(vfio_func_t* vfio, rvvm_machine_t* machine, rvvm_addr_t mem_base, size_t mem_size)
 {
     struct vfio_iommu_type1_dma_map dma_map = {
         .argsz = sizeof(struct vfio_iommu_type1_dma_map),
@@ -229,47 +241,53 @@ static bool vfio_map_dma(vfio_dev_t* vfio, rvvm_machine_t* machine, rvvm_addr_t 
     return ioctl(vfio->container, VFIO_IOMMU_MAP_DMA, &dma_map) == 0;
 }
 
-static bool vfio_setup_device_irqs(vfio_dev_t* vfio, uint32_t irqtype)
+static bool vfio_setup_irqs(vfio_func_t* vfio, int irq_type)
 {
-    struct vfio_irq_info irq_info = { .argsz = sizeof(struct vfio_irq_info), .index = irqtype, };
+    struct vfio_irq_info irq_info = { .argsz = sizeof(struct vfio_irq_info), .index = irq_type, };
     if (ioctl(vfio->device, VFIO_DEVICE_GET_IRQ_INFO, &irq_info)) {
         return false;
     }
 
-    if (!(irq_info.flags & VFIO_IRQ_INFO_EVENTFD)) {
-        return false;
+    if (!irq_info.count && irq_type == VFIO_PCI_MSI_IRQ_INDEX) {
+        // This device doesn't have any IRQs
+        rvvm_info("VFIO device doesn't have any IRQ vectors");
+        return true;
     }
 
-    if (vfio->eventfd <= 0) {
-        // Set up IRQ eventfd
-        vfio->eventfd = eventfd(0, 0);
-        if (vfio->eventfd < 0) {
+    size_t irq_count = irq_info.count;
+    size_t irq_size = sizeof(struct vfio_irq_set) + (irq_count * sizeof(int));
+    struct vfio_irq_set* irq_set = safe_calloc(1, irq_size);
+    irq_set->argsz = irq_size;
+    irq_set->flags = VFIO_IRQ_SET_DATA_EVENTFD | VFIO_IRQ_SET_ACTION_TRIGGER;
+    irq_set->index = irq_type;
+    irq_set->start = 0;
+    irq_set->count = irq_count;
+
+    for (size_t i = 0; i < irq_count; ++i) {
+        vfio_irq_t* irq = safe_new_obj(vfio_irq_t);
+        irq->eventfd = eventfd(0, 0);
+        irq->id = i;
+
+        irq_set->data[i] = irq->eventfd;
+        vector_push_back(vfio->irqs, irq);
+
+        if (irq->eventfd < 0) {
             rvvm_error("Failed to create VFIO IRQ eventfd: %s", strerror(errno));
+            free(irq_set);
             return false;
         }
     }
-
-    size_t irq_size = sizeof(struct vfio_irq_set) + sizeof(int);
-    struct vfio_irq_set* irq_set = safe_calloc(irq_size, 1);
-    irq_set->argsz = irq_size;
-    irq_set->flags = VFIO_IRQ_SET_DATA_EVENTFD | VFIO_IRQ_SET_ACTION_TRIGGER;
-    irq_set->index = irqtype;
-    irq_set->start = 0;
-    irq_set->count = 1;
-
-    // For MSI IRQ vectors, this is an array of eventfds
-    *((int*)irq_set->data) = vfio->eventfd;
 
     if (ioctl(vfio->device, VFIO_DEVICE_SET_IRQS, irq_set)) {
         free(irq_set);
         return false;
     }
 
-    vfio->irqtype = irqtype;
+    free(irq_set);
     return true;
 }
 
-static bool vfio_try_attach(vfio_dev_t* vfio, rvvm_machine_t* machine, const char* pci_id)
+static bool vfio_try_attach(vfio_func_t* vfio, rvvm_machine_t* machine, const char* pci_id)
 {
     vfio->container = open("/dev/vfio/vfio", O_RDWR | O_CLOEXEC);
     if (vfio->container == -1) {
@@ -342,7 +360,7 @@ static bool vfio_try_attach(vfio_dev_t* vfio, rvvm_machine_t* machine, const cha
         rvvm_error("Failed to get VFIO PCI config space info: %s", strerror(errno));
         return false;
     }
-    uint8_t pci_config[64];
+    uint8_t pci_config[64] = {0};
     if (pread(vfio->device, pci_config, 64, pci_cfg_info.offset) != 64) {
         rvvm_error("Failed to read PCI config space: %s", strerror(errno));
         return false;
@@ -354,14 +372,21 @@ static bool vfio_try_attach(vfio_dev_t* vfio, rvvm_machine_t* machine, const cha
     vfio->func_desc.prog_if = pci_config[0x9];
     vfio->func_desc.irq_pin = pci_config[0x3D];
 
-    // Enable interrupts, Bus-mastering, MMIO access, Write-inval
-    write_uint32_le(pci_config + 4, 0x16);
+    // Disable INTx interrupts, Enable Bus Mastering & MMIO BAR access
+    write_uint32_le(pci_config + 4, 0x406);
     if (pwrite(vfio->device, pci_config + 4, 4, pci_cfg_info.offset + 4) != 4) {
         rvvm_error("Failed to write PCI config space: %s", strerror(errno));
         return false;
     }
 
-    // Set up device BAR mappings
+    // Setup IRQs
+    if (!vfio_setup_irqs(vfio, VFIO_PCI_MSIX_IRQ_INDEX) && !vfio_setup_irqs(vfio, VFIO_PCI_MSI_IRQ_INDEX)) {
+        rvvm_error("Failed to setup VFIO IRQs!");
+        return false;
+    }
+
+    // Setup device BAR mappings
+    void* data = vfio;
     for (uint32_t i = 0; i < device_info.num_regions && i <= VFIO_PCI_ROM_REGION_INDEX; ++i) {
         bool expansion_rom = i == VFIO_PCI_ROM_REGION_INDEX;
         struct vfio_region_info region_info = { .argsz = sizeof(struct vfio_region_info), .index = i, };
@@ -369,50 +394,47 @@ static bool vfio_try_attach(vfio_dev_t* vfio, rvvm_machine_t* machine, const cha
             rvvm_error("Failed to get VFIO BAR info: %s", strerror(errno));
             return false;
         }
-        if (region_info.size && (region_info.flags & VFIO_REGION_INFO_FLAG_MMAP)) {
+        bool region_valid = region_info.size && (region_info.flags & VFIO_REGION_INFO_FLAG_MMAP);
+        if ((region_info.flags & VFIO_REGION_INFO_FLAG_CAPS) && i >= 4) {
+            rvvm_info("Skipping MSI-X BAR %d", i);
+            region_valid = false;
+        }
+        if (region_valid) {
             if (expansion_rom) {
                 void* rom = mmap(NULL, region_info.size, PROT_READ | PROT_WRITE, MAP_PRIVATE, vfio->device, region_info.offset);
                 rvvm_info("VFIO Expansion ROM: size 0x%lx, offset 0x%lx, flags 0x%x",
                     (unsigned long)region_info.size,
                     (unsigned long)region_info.offset,
                     (uint32_t)region_info.flags);
+                vfio->func_desc.expansion_rom.type = &vfio_bar_type;
+                vfio->func_desc.expansion_rom.data = data;
+
                 if (rom == MAP_FAILED) {
                     rvvm_error("VFIO Expansion ROM mmap() failed: %s", strerror(errno));
                     return false;
                 }
                 vfio->func_desc.expansion_rom.mapping = rom;
                 vfio->func_desc.expansion_rom.size = region_info.size;
-                vfio->func_desc.expansion_rom.min_op_size = 1;
-                vfio->func_desc.expansion_rom.max_op_size = 16;
-                vfio->func_desc.expansion_rom.type = &vfio_bar_type;
             } else {
                 void* bar = mmap(NULL, region_info.size, PROT_READ | PROT_WRITE, MAP_SHARED, vfio->device, region_info.offset);
                 rvvm_info("VFIO PCI BAR %d: size 0x%lx, offset 0x%lx, flags 0x%x", i,
                     (unsigned long)region_info.size,
                     (unsigned long)region_info.offset,
                     (uint32_t)region_info.flags);
+                vfio->func_desc.bar[i].type = &vfio_bar_type;
+                vfio->func_desc.bar[i].data = data;
+
                 if (bar == MAP_FAILED) {
                     rvvm_error("VFIO BAR mmap() failed: %s", strerror(errno));
                     return false;
                 }
                 vfio->func_desc.bar[i].mapping = bar;
                 vfio->func_desc.bar[i].size = region_info.size;
-                vfio->func_desc.bar[i].min_op_size = 1;
-                vfio->func_desc.bar[i].max_op_size = 16;
-                vfio->func_desc.bar[i].type = &vfio_bar_type;
             }
+
+            // Only one BAR is responsible for VFIO cleanup
+            data = NULL;
         }
-    }
-
-    // Check IRQ capabilities
-    if (device_info.num_irqs < VFIO_PCI_MSI_IRQ_INDEX) {
-        rvvm_error("No support for VFIO MSI IRQs");
-        return false;
-    }
-
-    if (!vfio_setup_device_irqs(vfio, VFIO_PCI_MSI_IRQ_INDEX) && !vfio_setup_device_irqs(vfio, VFIO_PCI_MSIX_IRQ_INDEX)) {
-        rvvm_error("Failed to setup VFIO IRQs");
-        return false;
     }
 
     // Graceful device reset, all OK
@@ -437,37 +459,27 @@ PUBLIC bool pci_vfio_init_auto(rvvm_machine_t* machine, const char* pci_id)
         return false;
     }
 
-    vfio_dev_t* vfio = safe_new_obj(vfio_dev_t);
+    vfio_func_t* vfio = safe_new_obj(vfio_func_t);
     if (!vfio_try_attach(vfio, machine, pci_id)) {
-        // Failed to attach to the host VFIO device
-        vfio_dev_free(vfio);
+        vfio_func_free(vfio);
         return false;
     }
 
-    rvvm_mmio_dev_t vfio_dev_placeholder = {
-        .size = 0,
-        .type = &vfio_dev_type,
-        .data = vfio,
-    };
+    vfio->valid = true;
 
-    rvvm_mmio_dev_t* placeholder = rvvm_attach_mmio(machine, &vfio_dev_placeholder);
-    if (placeholder) {
-        pci_dev_t* pci_dev = pci_attach_func(pci_bus, &vfio->func_desc);
+    pci_dev_t* pci_dev = pci_attach_func(pci_bus, &vfio->func_desc);
+    if (pci_dev) {
+        // Successfully plugged in
         vfio->pci_func = pci_get_device_func(pci_dev, 0);
-        if (vfio->pci_func) {
-            vfio->running = true;
-            vfio->thread = thread_create(vfio_irq_thread, vfio);
-            return true;
-        } else {
-            // Failed to attach to guest PCI bus
-            rvvm_remove_mmio(placeholder);
-        }
+        vfio_enable_irqs(vfio);
     }
 
-    return false;
+    return !!pci_dev;
 }
 
 #else
+
+#include "utils.h"
 
 PUBLIC bool pci_vfio_init_auto(rvvm_machine_t* machine, const char* pci_id)
 {
