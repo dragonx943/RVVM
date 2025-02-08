@@ -85,26 +85,32 @@ The RVVM Manager and Linux userland emulator (**rvvm** and **rvvm-user**) binari
 [![PRs are welcome](https://img.shields.io/badge/Pull%20requests-welcome-8957e5?style=for-the-badge&logo=github)](https://github.com/LekKit/RVVM/pulls?q=is%3Apr+is%3Aclosed)
 |                      | Achievements | Working on |
 |----------------------|-------------|------------|
-| [**LekKit**](https://github.com/LekKit)                     | RVVM API & infrastructure <br> RV64IMAFDC interpreter, MMU/IRQs/Priv/etc <br> RVJIT Compiler, X86/RISC-V backends <br> NVMe, RTL8169, VFIO, many tiny devices <br> Userspace network <br> Rework of PCIe, PLIC, etc | Networking, Userspace emulation <br> COW blk-dedup image format <br> New CPU features & JIT optimizations |
+| [**LekKit**](https://github.com/LekKit)                     | RVVM API & infrastructure <br> RV64IMAFDC interpreter, MMU/IRQs/Priv/etc <br> RVJIT Compiler, X86/RISC-V backends <br> NVMe, RTL8169, VFIO, many tiny devices <br> Userspace networking | Networking, Userspace emulation <br> COW blk-dedup image format <br> New CPU features & JIT optimizations |
 | [**cerg2010cerg2010**](https://github.com/cerg2010cerg2010) | Important fixes, RV64 groundwork, FPU <br> Initial PLIC & PCI, PS2 HID, ATA, OC Ethernet <br> ARM/ARM64 RVJIT backends | Testing, Assistance |
 | [**Mr0maks**](https://github.com/Mr0maks)                   | Initial C/M/Zicsr extensions, initial UART, VM debugger <br> ARM32 mul/div JIT intrinsics | - |
-| [**0xCatPKG**](https://github.com/0xCatPKG)                 | Userspace network & API improvements <br> Extended testing & portability fixes | HD Audio |
+| [**0xCatPKG**](https://github.com/0xCatPKG)                 | Userspace network & API improvements <br> Extended testing & portability fixes <br> Wayland support | HD Audio |
 | [**X547**](https://github.com/X547)                         | Haiku GUI, I2C HID, Userland API assistance | Guest Haiku support, UserlandVM |
 | [**iyzsong**](https://github.com/iyzsong)                   | OpenBSD & PLIC fixes, Chardev API | |
 | [**nebulka1**](https://github.com/nebulka1)                 | Relative input mode | |
 
+## ☕️ Support the project
+If you'd like to support the project, thank you, here's what you can do:
+- Contribute features listed in [issues](https://github.com/LekKit/RVVM/issues) or [TODO](#-todo)
+- Give access to, or donate a useful piece of hardware for development (Milk-V Megrez would be very helpful for KVM) - contact at `@lekkit:matrix.org`
+- Monero: `43LXDwciXLhK26tKCKKdqWTSjHusuEGHK7y6s6BWLVKLGtZhgaN4NLLDbQEdvoGdVseq9P6icsiAbab5dGgo1XdCRr6etfS`
+- Bitcoin: `bc1qg02hthvfnrmsz2xd2lrgfgkwcvnt2509ynj4mh`
+
 ## 🔍 TODO
 - Implement Svpbmt, Svnapot extensions
-- Sparse block image format with compression/deduplication
+- Sparse block image format with compression/deduplication [WIP]
 - Suspend/resume to file, VM migration
-- Linux userspace binary emulation (WIP)
-- USB3.0 XHCI, USB passthrough
-- Sound (HD Audio or else)
+- Linux userspace binary emulation [WIP]
+- USB3.0 XHCI, USB passthrough [WIP]
+- Sound (HD Audio or else) [WIP]
 - More RVJIT optimizations, shared caches
 - FPU JIT (Complicated AF to make a conformant one)
 - Vector extensions
 - Other peripherals from real boards (VisionFive 2: GPIO, SPI, flash...)
-- RISC-V APLIC, PCIe MSI Interrupts
 - Virtio devices (For better QEMU interoperability; VirGL via Virtio-GPU)
 - Free page reporting via virtio-balloon
 - *A lot more...*
