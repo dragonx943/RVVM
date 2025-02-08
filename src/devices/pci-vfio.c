@@ -7,6 +7,10 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
+// Force 64-bit file offsets
+#define _FILE_OFFSET_BITS 64
+#define _LARGEFILE64_SOURCE
+
 // Needed for pread()/pwrite()/readlink(), O_CLOEXEC when not passing -std=gnu..
 #define _GNU_SOURCE
 #define _BSD_SOURCE
@@ -40,6 +44,14 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "vector.h"
 #include "utils.h"
 
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 0
+#endif
+
+#ifndef MAP_ANON
+#define MAP_ANON MAP_ANONYMOUS
+#endif
+
 /*
  * Helper code to unbind a device from host driver and bind to vfio_pci driver
  */
@@ -51,13 +63,18 @@ static size_t vfio_pci_sysfs_path(char* buffer, size_t size, const char* pci_id,
     return len + rvvm_strlcpy(buffer + len, suffix, size - len);
 }
 
-static size_t vfio_rw_file(const char* path, void* rdbuf, const void* wrbuf, size_t size)
+static bool vfio_rw_file(const char* path, void* rd, const void* wr, size_t size)
 {
-    int fd = open(path, (rdbuf ? O_RDONLY : 0) | (wrbuf ? O_WRONLY : 0) | O_CLOEXEC);
-    size_t ret = fd >= 0;
-    if (wrbuf && ret) ret = (size_t)write(fd, wrbuf, size) == size;
-    if (rdbuf && ret) ret = read(fd, rdbuf, size);
-    if (fd >= 0) close(fd);
+    bool ret = false;
+    int fd = open(path, (wr ? O_WRONLY : O_RDONLY) | O_CLOEXEC);
+    if (wr) {
+        ret = (fd > 0) && ((size_t)write(fd, wr, size)) == size;
+    } else {
+        ret = (fd > 0) && ((size_t)read(fd, rd, size)) == size;
+    }
+    if (fd > 0) {
+        close(fd);
+    }
     return ret;
 }
 
@@ -123,6 +140,27 @@ static int vfio_open_group(const char* pci_id)
     int_to_str_dec(path + len, sizeof(path) - len, group);
     int fd = open(path, O_RDWR | O_CLOEXEC);
     return fd;
+}
+
+static size_t vfio_read_rom(const char* pci_id, void* buffer, size_t size)
+{
+    char path[256] = {0};
+    size_t ret = 0;
+    vfio_pci_sysfs_path(path, sizeof(path), pci_id, "/rom");
+    vfio_rw_file(path, NULL, "1", 1);
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd > 0) {
+        if (buffer) {
+            if (((size_t)read(fd, buffer, size)) == size) {
+                ret = size;
+            }
+        } else {
+            ret = lseek(fd, 0, SEEK_END);
+        }
+        close(fd);
+    }
+    vfio_rw_file(path, NULL, "0", 1);
+    return ret;
 }
 
 /*
@@ -387,8 +425,7 @@ static bool vfio_try_attach(vfio_func_t* vfio, rvvm_machine_t* machine, const ch
 
     // Setup device BAR mappings
     void* data = vfio;
-    for (uint32_t i = 0; i < device_info.num_regions && i <= VFIO_PCI_ROM_REGION_INDEX; ++i) {
-        bool expansion_rom = i == VFIO_PCI_ROM_REGION_INDEX;
+    for (uint32_t i = 0; i < device_info.num_regions && i <= VFIO_PCI_BAR5_REGION_INDEX; ++i) {
         struct vfio_region_info region_info = { .argsz = sizeof(struct vfio_region_info), .index = i, };
         if (ioctl(vfio->device, VFIO_DEVICE_GET_REGION_INFO, &region_info)) {
             rvvm_error("Failed to get VFIO BAR info: %s", strerror(errno));
@@ -400,40 +437,37 @@ static bool vfio_try_attach(vfio_func_t* vfio, rvvm_machine_t* machine, const ch
             region_valid = false;
         }
         if (region_valid) {
-            if (expansion_rom) {
-                void* rom = mmap(NULL, region_info.size, PROT_READ | PROT_WRITE, MAP_PRIVATE, vfio->device, region_info.offset);
-                rvvm_info("VFIO Expansion ROM: size 0x%lx, offset 0x%lx, flags 0x%x",
-                    (unsigned long)region_info.size,
-                    (unsigned long)region_info.offset,
-                    (uint32_t)region_info.flags);
-                vfio->func_desc.expansion_rom.type = &vfio_bar_type;
-                vfio->func_desc.expansion_rom.data = data;
+            void* bar = mmap(NULL, region_info.size, PROT_READ | PROT_WRITE, MAP_SHARED, vfio->device, region_info.offset);
+            rvvm_info("VFIO PCI BAR %d: size 0x%lx, offset 0x%lx, flags 0x%x", i,
+                (unsigned long)region_info.size,
+                (unsigned long)region_info.offset,
+                (uint32_t)region_info.flags);
+            vfio->func_desc.bar[i].type = &vfio_bar_type;
+            vfio->func_desc.bar[i].data = data;
 
-                if (rom == MAP_FAILED) {
-                    rvvm_error("VFIO Expansion ROM mmap() failed: %s", strerror(errno));
-                    return false;
-                }
-                vfio->func_desc.expansion_rom.mapping = rom;
-                vfio->func_desc.expansion_rom.size = region_info.size;
-            } else {
-                void* bar = mmap(NULL, region_info.size, PROT_READ | PROT_WRITE, MAP_SHARED, vfio->device, region_info.offset);
-                rvvm_info("VFIO PCI BAR %d: size 0x%lx, offset 0x%lx, flags 0x%x", i,
-                    (unsigned long)region_info.size,
-                    (unsigned long)region_info.offset,
-                    (uint32_t)region_info.flags);
-                vfio->func_desc.bar[i].type = &vfio_bar_type;
-                vfio->func_desc.bar[i].data = data;
-
-                if (bar == MAP_FAILED) {
-                    rvvm_error("VFIO BAR mmap() failed: %s", strerror(errno));
-                    return false;
-                }
-                vfio->func_desc.bar[i].mapping = bar;
-                vfio->func_desc.bar[i].size = region_info.size;
+            if (bar == MAP_FAILED) {
+                rvvm_error("VFIO BAR mmap() failed: %s", strerror(errno));
+                return false;
             }
+            vfio->func_desc.bar[i].mapping = bar;
+            vfio->func_desc.bar[i].size = region_info.size;
 
             // Only one BAR is responsible for VFIO cleanup
             data = NULL;
+        }
+    }
+
+    // Set up expansion ROM
+    size_t rom_size = vfio_read_rom(pci_id, NULL, 0);
+    if (rom_size) {
+        void* rom = mmap(NULL, rom_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+        if (rom && vfio_read_rom(pci_id, rom, rom_size)) {
+            vfio->func_desc.expansion_rom.data = data;
+            vfio->func_desc.expansion_rom.mapping = rom;
+            vfio->func_desc.expansion_rom.size = rom_size;
+            vfio->func_desc.expansion_rom.type = &vfio_bar_type;
+        } else {
+            rvvm_error("Failed to read PCI ROM properly! Check whether CSM is disabled in host BIOS");
         }
     }
 
