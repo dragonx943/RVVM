@@ -95,6 +95,7 @@ The RVVM Manager and Linux userland emulator (**rvvm** and **rvvm-user**) binari
 
 ## ☕️ Support the project
 If you'd like to support the project, thank you, here's what you can do:
+- Report any encountered issue you may find (Beware to check on staging branch)
 - Contribute features listed in [issues](https://github.com/LekKit/RVVM/issues) or [TODO](#-todo)
 - Give access to, or donate a useful piece of hardware for development (Milk-V Megrez would be very helpful for KVM) - contact at `@lekkit:matrix.org`
 - Monero: `43LXDwciXLhK26tKCKKdqWTSjHusuEGHK7y6s6BWLVKLGtZhgaN4NLLDbQEdvoGdVseq9P6icsiAbab5dGgo1XdCRr6etfS`
