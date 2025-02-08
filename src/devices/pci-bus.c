@@ -16,7 +16,10 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "bit_ops.h"
 #include "mem_ops.h"
 
-// PCI Configuration Space Registers
+/*
+ * PCI Configuration Space Registers
+ */
+
 #define PCI_REG_DEV_VEN_ID    0x0  // Device, Vendor ID
 #define PCI_REG_STATUS_CMD    0x4  // Status, Command
 #define PCI_REG_CLASS_REV     0x8  // Class, Subclass, Prog IF, revision
@@ -57,10 +60,16 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 // Expansion ROM bits
 #define PCI_EXPANSION_ROM_ENABLED 0x1
 
-// PCI capabilities offsets
+// PCI capabilities offset
 #define PCI_CAP_LIST_OFF 0x40 // Capabilities List Offset
 
+/*
+ * PCI Capability Registers
+ */
+
 #define PCI_REG_ENDPOINT 0x40 // Endpoint capability
+
+#define PCI_REG_PMCSR    0x84 // Power Management Control/Status
 
 #define PCI_REG_MSI      0x90 // MSI capability
 #define PCI_REG_MSI_AL   0x94 // MSI address low
@@ -79,6 +88,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define PCIE_CAP_UPSTREAM_SWITCH     0x5
 #define PCIE_CAP_DOWNSTREAM_SWITCH   0x6
 #define PCIE_CAP_INTEGRATED_ENDPOINT 0x9
+
+// Power management
+#define PCI_PMCSR_PS 0x3
 
 // MSI-X interrupts
 #define PCI_MSIX_MAX_IRQS 32
@@ -148,10 +160,8 @@ struct rvvm_pci_function {
     uint32_t bridge_io;
     uint32_t bridge_mem;
 
-    // MSI-X state (Sits in a dedicated BAR)
-    uint32_t msix_control;
-    uint32_t msix_bar;
-    uint32_t msix[PCI_MSIX_BAR_SIZE];
+    // Power management state
+    uint32_t pm_csr;
 
     // MSI state
     uint32_t msi_control;
@@ -160,6 +170,11 @@ struct rvvm_pci_function {
     uint32_t msi_data;
     uint32_t msi_mask;
     uint32_t msi_pending;
+
+    // MSI-X state (Sits in a dedicated BAR)
+    uint32_t msix_control;
+    uint32_t msix_bar;
+    uint32_t msix[PCI_MSIX_BAR_SIZE];
 
     // RO attributes
     uint16_t vendor_id;
@@ -619,6 +634,10 @@ static bool pci_bus_read(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint8
             }
             break;
 
+        case PCI_REG_PMCSR:
+            val |= atomic_load_uint32_relax(&func->pm_csr);
+            break;
+
         case PCI_REG_MSI:
             val |= atomic_load_uint32_relax(&func->msi_control);
             if (!func->msix_bar) {
@@ -724,6 +743,10 @@ static bool pci_bus_write(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint
             break;
         case PCI_REG_IRQ_PIN_LINE:
             atomic_store_uint32_relax(&func->irq_line, (uint8_t)val);
+            break;
+
+        case PCI_REG_PMCSR:
+            atomic_store_uint32_relax(&func->pm_csr, val & PCI_PMCSR_PS);
             break;
 
         // PCI Capabilities
