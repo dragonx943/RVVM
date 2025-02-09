@@ -45,15 +45,94 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "utils.h"
 #include "mem_ops.h"
 
+typedef struct {
+    chardev_t chardev;
+    spinlock_t lock;
+    uint32_t flags;
+    int rfd, wfd;
+    ringbuf_t rx, tx;
+    bool ctrl_a;
+} chardev_term_t;
+
+/*
+ * OS-specific terminal handling
+ */
+
 #if defined(POSIX_TERM_IMPL)
+
 static struct termios orig_term_opts = {0};
+
 #elif defined(WIN32_TERM_IMPL)
+
 static DWORD orig_input_mode = 0;
 static DWORD orig_output_mode = 0;
+
 #endif
+
+static bool term_ready_for_io(chardev_term_t* term, bool write)
+{
+    UNUSED(term);
+#if defined(POSIX_TERM_IMPL)
+    struct timeval timeout = {0};
+    fd_set fds = {0};
+    int rfd = term ? term->rfd : 0;
+    int wfd = term ? term->wfd : 1;
+    int fd = write ? wfd : rfd;
+    FD_SET(fd, &fds);
+    return select(fd + 1, write ? NULL : &fds, write ? &fds : NULL, NULL, &timeout) > 0 && FD_ISSET(fd, &fds);
+#elif defined(WIN32_TERM_IMPL)
+    return write ? true : _kbhit();
+#else
+    return write;
+#endif
+}
+
+static size_t term_write_raw(chardev_term_t* term, const char* buffer, size_t size)
+{
+    UNUSED(term);
+#if defined(POSIX_TERM_IMPL)
+    int wfd = term ? term->wfd : 1;
+    int tmp = write(wfd, buffer, size);
+    return (tmp > 0) ? tmp : 0;
+#elif defined(WIN32_TERM_IMPL)
+    DWORD count = 0;
+    WriteConsoleA(GetStdHandle(STD_OUTPUT_HANDLE), buffer, size, &count, NULL);
+    return count;
+#else
+    char tmp[256] = {0};
+    size_t ret = EVAL_MIN(size, sizeof(tmp) - 1);
+    memcpy(tmp, buffer, ret);
+    fputs(tmp, stdout);
+    return ret;
+#endif
+}
+
+static size_t term_read_raw(chardev_term_t* term, char* buffer, size_t size)
+{
+    UNUSED(term);
+#if defined(POSIX_TERM_IMPL)
+    int rfd = term ? term->rfd : 0;
+    int tmp = read(rfd, buffer, size);
+    return (tmp > 0) ? tmp : 0;
+#elif defined(WIN32_TERM_IMPL)
+    wchar_t w_buf[256] = {0};
+    DWORD w_chars = 0;
+    size_t count = EVAL_MIN(size / 6, STATIC_ARRAY_SIZE(w_buf));
+    ReadConsoleW(GetStdHandle(STD_INPUT_HANDLE), w_buf, count, &w_chars, NULL);
+    return WideCharToMultiByte(CP_UTF8, 0, w_buf, w_chars, buffer, size, NULL, NULL);
+#else
+    // No way to implement non-blocking input using stdio
+    return 0;
+#endif
+}
 
 static void term_origmode(void)
 {
+    // Perfom terminal reset to a sensible state, without clearing the screen
+    // Don't send Mouse X & Y; Don't send FocusIn/FocusOut; Disable Alternate Scroll Mode;
+    // Use Normal Screen Buffer; Soft terminal reset
+    const char* reset = "\033[?1000l\e[?1004l\e[?1007l\e[?47l\e[!p";
+    term_write_raw(NULL, reset, rvvm_strlen(reset));
 #if defined(POSIX_TERM_IMPL)
     tcsetattr(0, TCSAFLUSH, &orig_term_opts);
 #elif defined(WIN32_TERM_IMPL)
@@ -89,14 +168,9 @@ static void term_rawmode(void)
     call_at_deinit(term_origmode);
 }
 
-typedef struct {
-    chardev_t chardev;
-    spinlock_t lock;
-    uint32_t flags;
-    int rfd, wfd;
-    ringbuf_t rx, tx;
-    bool ctrl_a;
-} chardev_term_t;
+/*
+ * Chardev handling
+ */
 
 static uint32_t term_update_flags(chardev_term_t* term)
 {
@@ -105,54 +179,6 @@ static uint32_t term_update_flags(chardev_term_t* term)
     if (ringbuf_space(&term->tx)) flags |= CHARDEV_TX;
 
     return flags & ~atomic_swap_uint32(&term->flags, flags);
-}
-
-static void term_push_io(chardev_term_t* term, char* buffer, size_t* rx_size, size_t* tx_size)
-{
-    size_t to_read = rx_size ? *rx_size : 0;
-    size_t to_write = tx_size ? *tx_size : 0;
-    if (rx_size) *rx_size = 0;
-    if (tx_size) *tx_size = 0;
-    UNUSED(term);
-#if defined(POSIX_TERM_IMPL)
-    fd_set rfds, wfds;
-    struct timeval timeout = {0};
-    int nfds = EVAL_MAX(term->rfd, term->wfd) + 1;
-    FD_ZERO(&rfds);
-    FD_ZERO(&wfds);
-    if (to_read) FD_SET(term->rfd, &rfds);
-    if (to_write) FD_SET(term->wfd, &wfds);
-    if ((to_read || to_write) && select(nfds, to_read ? &rfds : NULL, to_write ? &wfds : NULL, NULL, &timeout) > 0) {
-        if (to_write && FD_ISSET(term->wfd, &wfds)) {
-            int tmp = write(term->wfd, buffer, to_write);
-            *tx_size = tmp > 0 ? tmp : 0;
-        }
-        if (to_read && FD_ISSET(term->rfd, &rfds)) {
-            int tmp = read(term->rfd, buffer, to_read);
-            *rx_size = tmp > 0 ? tmp : 0;
-        }
-    }
-#elif defined(WIN32_TERM_IMPL)
-    if (to_write) {
-        DWORD count = 0;
-        WriteConsoleA(GetStdHandle(STD_OUTPUT_HANDLE), buffer, to_write, &count, NULL);
-        *tx_size = count;
-    }
-    if (to_read && _kbhit()) {
-        wchar_t w_buf[64] = {0};
-        size_t count = EVAL_MIN(to_read / 6, STATIC_ARRAY_SIZE(w_buf));
-        DWORD w_chars = 0;
-        ReadConsoleW(GetStdHandle(STD_INPUT_HANDLE), w_buf, count, &w_chars, NULL);
-        *rx_size = WideCharToMultiByte(CP_UTF8, 0,
-            w_buf, w_chars, buffer, to_read, NULL, NULL);
-    }
-#else
-    UNUSED(to_read);
-    if (to_write) {
-        printf("%s", buffer);
-        *tx_size = to_write;
-    }
-#endif
 }
 
 // Handles VM-related hotkeys
@@ -171,24 +197,47 @@ static void term_process_input(chardev_term_t* term, char* buffer, size_t size)
     }
 }
 
+static void term_pull_rx(chardev_term_t* term)
+{
+    if (term_ready_for_io(term, false)) {
+        char rx_buf[256] = {0};
+        size_t rx_size = EVAL_MIN(sizeof(rx_buf), ringbuf_space(&term->rx));
+        rx_size = term_read_raw(term, rx_buf, rx_size);
+
+        term_process_input(term, rx_buf, rx_size);
+        ringbuf_write(&term->rx, rx_buf, rx_size);
+    }
+}
+
+static void term_push_tx(chardev_term_t* term)
+{
+    if (term_ready_for_io(term, true)) {
+        char tx_buf[256] = {0};
+        size_t tx_size = ringbuf_peek(&term->tx, tx_buf, sizeof(tx_buf));
+        tx_size = term_write_raw(term, tx_buf, tx_size);
+        ringbuf_skip(&term->tx, tx_size);
+    }
+}
+
 static void term_update(chardev_t* dev)
 {
     chardev_term_t* term = dev->data;
 
     if (spin_try_lock(&term->lock)) {
-        char buffer[256] = {0};
-        size_t rx_size = EVAL_MIN(ringbuf_space(&term->rx), sizeof(buffer));
-        size_t tx_size = ringbuf_peek(&term->tx, buffer, sizeof(buffer));
+        if (ringbuf_space(&term->rx)) {
+            term_pull_rx(term);
+        }
 
-        term_push_io(term, buffer, &rx_size, &tx_size);
-        term_process_input(term, buffer, rx_size);
+        if (ringbuf_avail(&term->tx)) {
+            term_push_tx(term);
+        }
 
-        ringbuf_write(&term->rx, buffer, rx_size);
-        ringbuf_skip(&term->tx, tx_size);
         uint32_t flags = term_update_flags(term);
         spin_unlock(&term->lock);
 
-        if (flags) chardev_notify(&term->chardev, flags);
+        if (flags) {
+            chardev_notify(&term->chardev, flags);
+        }
     }
 }
 
@@ -205,10 +254,7 @@ static size_t term_read(chardev_t* dev, void* buf, size_t nbytes)
         spin_lock(&term->lock);
         size_t ret = ringbuf_read(&term->rx, buf, nbytes);
         if (!ringbuf_avail(&term->rx)) {
-            char buffer[256] = {0};
-            size_t rx_size = sizeof(buffer);
-            term_push_io(term, buffer, &rx_size, NULL);
-            ringbuf_write(&term->rx, buffer, rx_size);
+            term_pull_rx(term);
         }
         term_update_flags(term);
         spin_unlock(&term->lock);
@@ -223,10 +269,7 @@ static size_t term_write(chardev_t* dev, const void* buf, size_t nbytes)
     spin_lock(&term->lock);
     size_t ret = ringbuf_write(&term->tx, buf, nbytes);
     if (!ringbuf_space(&term->tx)) {
-        char buffer[257] = {0};
-        size_t tx_size = ringbuf_peek(&term->tx, buffer, sizeof(buffer) - 1);
-        term_push_io(term, buffer, NULL, &tx_size);
-        ringbuf_skip(&term->tx, tx_size);
+        term_push_tx(term);
     }
     term_update_flags(term);
     spin_unlock(&term->lock);
@@ -240,8 +283,12 @@ static void term_remove(chardev_t* dev)
     ringbuf_destroy(&term->rx);
     ringbuf_destroy(&term->tx);
 #ifdef POSIX_TERM_IMPL
-    if (term->rfd != 0) close(term->rfd);
-    if (term->wfd != 1 && term->wfd != term->rfd) close(term->wfd);
+    if (term->rfd != 0) {
+        close(term->rfd);
+    }
+    if (term->wfd != 1 && term->wfd != term->rfd) {
+        close(term->wfd);
+    }
 #endif
     free(term);
 }
@@ -278,11 +325,20 @@ PUBLIC chardev_t* chardev_fd_create(int rfd, int wfd)
 
 PUBLIC chardev_t* chardev_pty_create(const char* path)
 {
-    if (rvvm_strcmp(path, "stdout")) return chardev_term_create();
-    if (rvvm_strcmp(path, "null")) return NULL; // NULL chardev
+    if (rvvm_strcmp(path, "stdout")) {
+        // Create a terminal character device on stdout
+        return chardev_term_create();
+    }
+    if (rvvm_strcmp(path, "null")) {
+        // NULL character device
+        return NULL;
+    }
+
 #ifdef POSIX_TERM_IMPL
     int fd = open(path, O_RDWR | O_NOCTTY | O_CLOEXEC);
-    if (fd >= 0) return chardev_fd_create(fd, fd);
+    if (fd >= 0) {
+        return chardev_fd_create(fd, fd);
+    }
     rvvm_error("Could not open PTY %s", path);
 #else
     rvvm_error("No PTY chardev support on non-POSIX");
