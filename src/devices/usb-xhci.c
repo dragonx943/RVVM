@@ -72,19 +72,28 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define XHCI_USBCMD_HCRST 0x2 // Host Controller Reset
 #define XHCI_USBCMD_INTE  0x4 // Interrupter Enable
 #define XHCI_USBCMD_HSEE  0x8 // Host System Error Enable
+#define XHCI_USBCMD_MASK (XHCI_USBCMD_RS | XHCI_USBCMD_HCRST | XHCI_USBCMD_INTE | XHCI_USBCMD_HSEE)
 
 // USB Status values
 #define XHCI_USBSTS_HCH  0x1   // HCHalted
 #define XHCI_USBSTS_HSE  0x4   // Host System Error
 #define XHCI_USBSTS_EINT 0x8   // Event interrupt
 #define XHCI_USBSTS_PCD  0x10  // Port Change Detected
-#define XHCI_USBSTS_CNR  0x800 // Controller Not Ready
+#define XHCI_USBSTS_MASK (XHCI_USBSTS_HSE | XHCI_USBSTS_EINT | XHCI_USBSTS_PCD)
+
+// Device Notification Control values
+#define XHCI_DNCTRL_MASK 0xFFFF
+
+#define XHCI_ALIGN_64BYTE (~0x3FULL) // 64 byte aligned
 
 // Command Ring Control values
 #define XHCI_CRCR_RCS 0x1 // Ring Cycle State
 #define XHCI_CRCR_CS  0x2 // Command Stop
 #define XHCI_CRCR_CA  0x4 // Command Abort
 #define XHCI_CRCR_CRR 0x8 // Command Ring Running
+
+#define XHCI_CRCR_RMASK (XHCI_ALIGN_64BYTE | XHCI_CRCR_CRR)
+#define XHCI_CRCR_WMASK (XHCI_ALIGN_64BYTE | XHCI_CRCR_RCS | XHCI_CRCR_CS | XHCI_CRCR_CA)
 
 /*
  * Port registers
@@ -123,6 +132,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #define XHCI_IMAN_IP 0x1 // Interrupt Pending
 #define XHCI_IMAN_IE 0x2 // Interrupt Enable
+
+#define XHCI_ERDP_EHB 0x8 // Event Handler Busy
 
 /*
  * Transfer Request Block
@@ -240,72 +251,128 @@ static const uint32_t xhci_ext_caps[] = {
 };
 
 typedef struct {
-    // Registers
-    uint32_t iman;   // Interrupt Management
-    uint32_t erstsz; // Event Ring Segment Table Size
-    uint64_t erstba; // Event Ring Segment Base Address
-    uint64_t erdp;   // Event Ring Dequeue Pointer
-
-    // Internal
-    uint64_t crep;   // Current Ring Enqueue Pointer
-    uint64_t crsea;  // Current Ring Segment Entry Address
-    uint64_t crsba;  // Current Ring Segment Base Address
-    uint32_t crssz;  // Current Ring Segment Size
-} xhci_interrupter_t;
-
-typedef struct {
-    pci_func_t* pci_func;
-
-    uint64_t or_crcr;
-    uint32_t or_usbcmd;
-    uint32_t or_dnctrl;
-    uint64_t or_dcbaap;
-    uint32_t or_config;
-
-    xhci_interrupter_t ints[XHCI_MAX_INTRS];
-} xhci_bus_t;
-
-typedef struct {
     uint64_t ptr;
     uint32_t sts;
     uint32_t ctr;
     uint32_t interrupter;
 } xhci_event_trb_t;
 
+typedef struct {
+    // Registers
+    uint32_t iman;     // Interrupt Management
+    uint32_t erstsz;   // Event Ring Segment Table Size
+    uint32_t erstba;   // Event Ring Segment Base Address
+    uint32_t erstba_h; // Event Ring Segment Base Address (High 32 bits)
+    uint32_t erdp;     // Event Ring Dequeue Pointer
+    uint32_t erdp_h;   // Event Ring Dequeue Pointer (High 32 bits)
+
+    // Internal
+    uint32_t crste;   // Current Ring Segment Table Entry
+    uint32_t crsba;   // Current Ring Segment Base Address
+    uint32_t crsba_h; // Current Ring Segment Base Address (High 32 bits)
+    uint32_t crssz;   // Current Ring Segment Size
+    uint32_t crse;    // Current Ring Segment Entry
+} xhci_interrupter_t;
+
+typedef struct {
+    pci_func_t* pci_func;
+
+    // Operational registers
+    uint32_t usbcmd;
+    uint32_t usbsts;
+    uint32_t dnctrl;
+    uint32_t crcr;
+    uint32_t crcr_h;
+    uint32_t dcbaap;
+    uint32_t dcbaap_h;
+    uint32_t config;
+
+    xhci_interrupter_t ints[XHCI_MAX_INTRS];
+} xhci_bus_t;
+
+static inline void xhci_interrupt(xhci_bus_t* xhci, uint32_t irq_vec)
+{
+    atomic_or_uint32(&xhci->usbsts, XHCI_USBSTS_EINT);
+    if (likely(atomic_load_uint32_relax(&xhci->usbcmd) & XHCI_USBCMD_INTE)) {
+        // TODO: What interrupt vector should be used here?
+        pci_send_irq(xhci->pci_func, irq_vec);
+    }
+}
+
+static inline rvvm_addr_t xhci_load_addr(const uint32_t* low, const uint32_t* high)
+{
+    return atomic_load_uint32_relax(low) | (((uint64_t)atomic_load_uint32_relax(high)) << 32);
+}
+
+static inline rvvm_addr_t xhci_cmd_ring_addr(const xhci_bus_t* xhci)
+{
+    // Command ring must be 64-byte aligned
+    return xhci_load_addr(&xhci->crcr, &xhci->crcr_h) & XHCI_ALIGN_64BYTE;
+}
+
 static void xhci_report_event(xhci_bus_t* xhci, const xhci_event_trb_t* event)
 {
     if (event->interrupter < XHCI_MAX_INTRS) {
-        xhci_interrupter_t* interrupter = &xhci->ints[event->interrupter];
-        if (interrupter->crep >= (interrupter->crsba + (interrupter->crssz << 4))) {
-            // Reached end of ring segment
-            interrupter->crsea += 0x10;
-            if (interrupter->crsea >= (interrupter->erstba + (interrupter->erstsz << 4))) {
-                // Reached end of ring segment table
-                interrupter->crsea = interrupter->erstba & ~0xF;
-            }
-            uint8_t* dma = pci_get_dma_ptr(xhci->pci_func, interrupter->crsea, 0x10);
-            if (dma) {
-                interrupter->crsba = read_uint64_le(dma) & ~0x3F;
-                interrupter->crssz = read_uint16_le(dma + 0x8);
-            } else {
-                rvvm_warn("xhci ring segment table dma error");
-            }
-            interrupter->crep = interrupter->crsba;
-        }
+        xhci_interrupter_t* intr = &xhci->ints[event->interrupter];
 
-        uint8_t* dma = pci_get_dma_ptr(xhci->pci_func, interrupter->crep, XHCI_TRB_SIZE);
-        if (dma) {
-            rvvm_warn("xhci event submitted at %x", (uint32_t)interrupter->crep);
+        // Obtain TRB entry
+        rvvm_addr_t crsba = 0;
+        uint32_t crse = 0;
+        uint32_t crse_next = 0;
+        do {
+            uint32_t crssz = atomic_load_uint32_relax(&intr->crssz);
+            crsba = xhci_load_addr(&intr->crsba, &intr->crsba_h);
+            crse = atomic_load_uint32_relax(&intr->crse);
+            if (crse >= crssz) {
+                // Reached end of ring segment
+                rvvm_addr_t erstba = xhci_load_addr(&intr->erstba, &intr->erstba_h);
+                uint32_t erstsz = atomic_load_uint32_relax(&intr->erstsz);
+                uint32_t crste = atomic_load_uint32_relax(&intr->crste);
+                uint32_t crste_next = 0;
+                if (crste >= erstsz) {
+                    // Reached end of ring segment table
+                    crste_next = 0;
+                } else {
+                    crste_next = crste + 1;
+                }
+
+                const uint8_t* crs_ptr = pci_get_dma_ptr(xhci->pci_func, erstba + (crste << 4), 0x10);
+                if (likely(crs_ptr)) {
+                    crsba = read_uint64_le(crs_ptr) & (~0x3FULL);
+                    crssz = read_uint16_le(crs_ptr + 0x8);
+                    atomic_store_uint32_relax(&intr->crsba, crsba);
+                    atomic_store_uint32_relax(&intr->crsba_h, crsba >> 32);
+                    atomic_store_uint32_relax(&intr->crssz, crssz);
+                } else {
+                    rvvm_warn("XHCI DMA error for event ring segment table");
+                    return;
+                }
+
+                if (!atomic_cas_uint32(&intr->crste, crste, crste_next)) {
+                    // CAS failed - retry everything
+                    continue;
+                }
+
+                crse_next = 0;
+            } else {
+                crse_next = crse + 1;
+            }
+        } while (!atomic_cas_uint32(&intr->crse, crse, crse_next));
+
+        // Submit TRB
+        uint8_t* dma = pci_get_dma_ptr(xhci->pci_func, crsba + (crse << 4), XHCI_TRB_SIZE);
+        if (likely(dma)) {
+            rvvm_warn("xhci event submitted at %x", (uint32_t)(crsba + (crse << 4)));
             write_uint64_le(dma + XHCI_TRB_PTR, event->ptr);
             write_uint32_le(dma + XHCI_TRB_STS, event->sts);
-            write_uint32_le(dma + XHCI_TRB_CTR, event->ctr);
+            atomic_store_uint32_le(dma + XHCI_TRB_CTR, event->ctr);
 
-            interrupter->crep += XHCI_TRB_SIZE;
-
-            interrupter->iman |= XHCI_IMAN_IP;
-            if (interrupter->iman & XHCI_IMAN_IE) {
-                pci_send_irq(xhci->pci_func, 0/*event->interrupter*/);
+            atomic_or_uint32(&intr->erdp, XHCI_ERDP_EHB);
+            if (atomic_or_uint32(&intr->iman, XHCI_IMAN_IP) & XHCI_IMAN_IE) {
+                xhci_interrupt(xhci, 0);
             }
+        } else {
+            rvvm_warn("XHCI DMA error for event ring TRB");
         }
     }
 }
@@ -342,7 +409,8 @@ static void xhci_doorbell_write(xhci_bus_t* xhci, size_t id, uint32_t val)
     if (id == 0) {
         // Command Ring doorbell
         rvvm_warn("xhci command doorbell rang");
-        rvvm_addr_t cr_addr = xhci->or_crcr & ~0x3F;
+        uint32_t crcr = atomic_load_uint32_relax(&xhci->crcr);
+        rvvm_addr_t cr_addr = xhci_cmd_ring_addr(xhci);
         rvvm_addr_t start = cr_addr;
         do {
             uint8_t* dma = pci_get_dma_ptr(xhci->pci_func, cr_addr, XHCI_TRB_SIZE);
@@ -350,12 +418,12 @@ static void xhci_doorbell_write(xhci_bus_t* xhci, size_t id, uint32_t val)
                 uint64_t ptr = read_uint64_le(dma);
                 uint32_t sts = read_uint32_le(dma + 0x8);
                 uint32_t ctr = read_uint32_le(dma + 0xC);
-                if ((ctr ^ xhci->or_crcr) & XHCI_TRB_CTR_C) {
+                rvvm_warn("crcr: %x, ctr: %x", crcr, ctr);
+                if (!!(crcr & XHCI_CRCR_RCS) != !!(ctr & XHCI_TRB_CTR_C)) {
                     // Cycle bit mismatch, stop the ring
                     rvvm_warn("xhci command ring stopped");
-                    xhci->or_crcr &= 0x3F;
-                    xhci->or_crcr &= ~XHCI_CRCR_CRR;
-                    xhci->or_crcr |= cr_addr;
+                    atomic_store_uint32_relax(&xhci->crcr, (crcr & XHCI_CRCR_RCS) | (cr_addr & XHCI_ALIGN_64BYTE));
+                    atomic_store_uint32_relax(&xhci->crcr_h, cr_addr >> 32);
                     break;
                 }
 
@@ -364,7 +432,7 @@ static void xhci_doorbell_write(xhci_bus_t* xhci, size_t id, uint32_t val)
 
                 xhci_event_trb_t event = {
                     .ptr = cr_addr,
-                    .ctr = (XHCI_TRB_TYPE_COMPLETION << 10) | (xhci->or_crcr & XHCI_CRCR_RCS),
+                    .ctr = (XHCI_TRB_TYPE_COMPLETION << 10) | (crcr & XHCI_CRCR_RCS),
                     .sts = (XHCI_TRB_COMP_SUCCESS << 24),
                     .interrupter = XHCI_TRB_INTERRUPTER(ctr),
                 };
@@ -372,7 +440,7 @@ static void xhci_doorbell_write(xhci_bus_t* xhci, size_t id, uint32_t val)
 
                 if (XHCI_TRB_TYPE(ctr) == XHCI_TRB_TYPE_LINK) {
                     // Jump to link TRB pointer
-                    cr_addr = ptr & ~0x3F;
+                    cr_addr = ptr & XHCI_ALIGN_64BYTE;
                 } else {
                     // Advance the ring
                     cr_addr += XHCI_TRB_SIZE;
@@ -394,17 +462,17 @@ static uint32_t xhci_interrupter_read(xhci_bus_t* xhci, size_t id, size_t offset
         xhci_interrupter_t* interrupter = &xhci->ints[id];
         switch (offset) {
             case XHCI_REG_IMAN:
-                return interrupter->iman;
+                return atomic_load_uint32_relax(&interrupter->iman);
             case XHCI_REG_ERSTSZ:
-                return interrupter->erstsz;
+                return atomic_load_uint32_relax(&interrupter->erstsz);
             case XHCI_REG_ERSTBA:
-                return interrupter->erstba;
+                return atomic_load_uint32_relax(&interrupter->erstba);
             case XHCI_REG_ERSTBA_H:
-                return interrupter->erstba >> 32;
+                return atomic_load_uint32_relax(&interrupter->erstba_h);
             case XHCI_REG_ERDP:
-                return interrupter->erdp;
+                return atomic_load_uint32_relax(&interrupter->erdp);
             case XHCI_REG_ERDP_H:
-                return interrupter->erdp >> 32;
+                return atomic_load_uint32_relax(&interrupter->erdp_h);
         }
     }
     return 0;
@@ -416,23 +484,24 @@ static void xhci_interrupter_write(xhci_bus_t* xhci, size_t id, size_t offset, u
         xhci_interrupter_t* interrupter = &xhci->ints[id];
         switch (offset) {
             case XHCI_REG_IMAN:
-                interrupter->iman = val;
+                val = (val ^ XHCI_IMAN_IP);
+                atomic_and_uint32(&interrupter->iman, val & (XHCI_IMAN_IP | XHCI_IMAN_IE));
+                atomic_or_uint32(&interrupter->iman, val & XHCI_IMAN_IE);
                 return;
             case XHCI_REG_ERSTSZ:
-                interrupter->erstsz = val;
+                atomic_store_uint32_relax(&interrupter->erstsz, val);
                 return;
             case XHCI_REG_ERSTBA:
-                interrupter->erstba = bit_replace(interrupter->erstba, 0, 32, val);
+                atomic_store_uint32_relax(&interrupter->erstba, val & XHCI_ALIGN_64BYTE);
                 return;
             case XHCI_REG_ERSTBA_H:
-                interrupter->erstba = bit_replace(interrupter->erstba, 32, 32, val);
-                interrupter->crsea = interrupter->erstba;
+                atomic_store_uint32_relax(&interrupter->erstba_h, val);
                 return;
             case XHCI_REG_ERDP:
-                interrupter->erdp = bit_replace(interrupter->erdp, 0, 32, val);
+                atomic_store_uint32_relax(&interrupter->erdp, val & XHCI_ALIGN_64BYTE);
                 return;
             case XHCI_REG_ERDP_H:
-                interrupter->erdp = bit_replace(interrupter->erdp, 32, 32, val);
+                atomic_store_uint32_relax(&interrupter->erdp_h, val);
                 return;
         }
     }
@@ -495,31 +564,35 @@ static bool xhci_pci_read(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint8
 
         // Operational registers
         case XHCI_REG_USBCMD:
-            val = xhci->or_usbcmd;
+            val = atomic_load_uint32_relax(&xhci->usbcmd);
             break;
         case XHCI_REG_USBSTS:
-            val = ((~xhci->or_usbcmd) & XHCI_USBSTS_HCH);
+            val = atomic_load_uint32_relax(&xhci->usbsts);
+            if (!(atomic_load_uint32_relax(&xhci->usbcmd) & XHCI_USBCMD_RS)) {
+                // Controller is halted
+                val |= XHCI_USBSTS_HCH;
+            }
             break;
         case XHCI_REG_PAGESIZE:
             val = 0x1; // 4k pages
             break;
         case XHCI_REG_DNCTRL:
-            val = xhci->or_dnctrl;
+            val = atomic_load_uint32_relax(&xhci->dnctrl);
             break;
         case XHCI_REG_CRCR:
-            val = xhci->or_crcr;
+            val = atomic_load_uint32_relax(&xhci->crcr) & XHCI_CRCR_RMASK;
             break;
         case XHCI_REG_CRCR_H:
-            val = xhci->or_crcr >> 32;
+            val = atomic_load_uint32_relax(&xhci->crcr_h);
             break;
         case XHCI_REG_DCBAAP:
-            val = xhci->or_dcbaap;
+            val = atomic_load_uint32_relax(&xhci->dcbaap);
             break;
         case XHCI_REG_DCBAAP_H:
-            val = xhci->or_dcbaap >> 32;
+            val = atomic_load_uint32_relax(&xhci->dcbaap_h);
             break;
         case XHCI_REG_CONFIG:
-            val = xhci->or_config;
+            val = atomic_load_uint32_relax(&xhci->config);
             break;
 
         default:
@@ -559,31 +632,42 @@ static bool xhci_pci_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint
     } else switch (offset) {
         // Operational registers
         case XHCI_REG_USBCMD:
-            xhci->or_usbcmd = val;
-            if (xhci->or_usbcmd & XHCI_USBCMD_HCRST) {
+            if (val & XHCI_USBCMD_HCRST) {
                 // Perform controller reset
-                xhci->or_usbcmd &= ~XHCI_USBCMD_HCRST;
-                xhci->or_crcr = 0;
+                atomic_store_uint32_relax(&xhci->usbcmd, 0);
+                atomic_store_uint32_relax(&xhci->usbsts, 0);
+                atomic_store_uint32_relax(&xhci->dnctrl, 0);
+                atomic_store_uint32_relax(&xhci->crcr,   0);
+                atomic_store_uint32_relax(&xhci->crcr_h, 0);
+                atomic_store_uint32_relax(&xhci->dcbaap, 0);
+                atomic_store_uint32_relax(&xhci->dcbaap_h, 0);
+                atomic_store_uint32_relax(&xhci->config, 0);
+                // TODO: Atomicity
                 memset(xhci->ints, 0, sizeof(xhci->ints));
+            } else {
+                atomic_store_uint32_relax(&xhci->usbcmd, val & XHCI_USBCMD_MASK);
             }
             break;
+        case XHCI_REG_USBSTS:
+            atomic_and_uint32(&xhci->usbsts, val);
+            break;
         case XHCI_REG_DNCTRL:
-            xhci->or_dnctrl = val;
+            atomic_store_uint32_relax(&xhci->dnctrl, val & XHCI_DNCTRL_MASK);
             break;
         case XHCI_REG_CRCR:
-            xhci->or_crcr = bit_replace(xhci->or_crcr, 0, 32, val);
+            atomic_store_uint32_relax(&xhci->crcr, val & XHCI_CRCR_WMASK);
             break;
         case XHCI_REG_CRCR_H:
-            xhci->or_crcr = bit_replace(xhci->or_crcr, 32, 32, val);
+            atomic_store_uint32_relax(&xhci->crcr_h, val);
             break;
         case XHCI_REG_DCBAAP:
-            xhci->or_dcbaap = bit_replace(xhci->or_dcbaap, 0, 32, val);
+            atomic_store_uint32_relax(&xhci->dcbaap, val & XHCI_ALIGN_64BYTE);
             break;
         case XHCI_REG_DCBAAP_H:
-            xhci->or_dcbaap = bit_replace(xhci->or_dcbaap, 32, 32, val);
+            atomic_store_uint32_relax(&xhci->dcbaap_h, val);
             break;
         case XHCI_REG_CONFIG:
-            xhci->or_config = EVAL_MAX(val, XHCI_MAX_SLOTS);
+            atomic_store_uint32_relax(&xhci->config, EVAL_MAX(val, XHCI_MAX_SLOTS));
             break;
 
         default:
@@ -593,7 +677,7 @@ static bool xhci_pci_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint
     return true;
 }
 
-static rvvm_mmio_type_t xhci_type = {
+static const rvvm_mmio_type_t xhci_type = {
     .name = "xhci",
 };
 
