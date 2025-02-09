@@ -9,6 +9,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
 #include "chardev.h"
+#include <stdio.h>
 
 #if (defined(__unix__) || defined(__APPLE__) || defined(__HAIKU__)) && !defined(__EMSCRIPTEN__)
 #include <sys/types.h>
@@ -33,7 +34,6 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define WIN32_TERM_IMPL
 
 #else
-#include <stdio.h>
 #warning No UART input support!
 
 #endif
@@ -132,7 +132,7 @@ static void term_origmode(void)
     // Don't send Mouse X & Y; Don't send FocusIn/FocusOut; Disable Alternate Scroll Mode;
     // Use Normal Screen Buffer; Soft terminal reset
     const char* reset = "\033[?1000l\e[?1004l\e[?1007l\e[?47l\e[!p";
-    term_write_raw(NULL, reset, rvvm_strlen(reset));
+    fputs(reset, stderr);
 #if defined(POSIX_TERM_IMPL)
     tcsetattr(0, TCSAFLUSH, &orig_term_opts);
 #elif defined(WIN32_TERM_IMPL)
