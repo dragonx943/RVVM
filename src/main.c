@@ -157,7 +157,7 @@ static bool rvvm_cli_configure(rvvm_machine_t* machine, const char* bios, tap_de
                 uint32_t fb_y = str_to_uint_base(arg_val + len + 1, NULL, 10);
                 if (arg_val[len] != 'x') fb_y = 0;
                 if (fb_x < 100 || fb_y < 100) {
-                    rvvm_error("Invalid resoulution: %s, expects 640x480", arg_val);
+                    rvvm_error("Invalid resolution: %s, expects 640x480", arg_val);
                     return false;
                 }
                 gui_window_init_auto(machine, fb_x, fb_y);
