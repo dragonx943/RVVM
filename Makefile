@@ -620,7 +620,7 @@ $(STATIC): $(LIB_OBJS)
 	@$(AR) -rcs $@ $(LIB_OBJS)
 
 .PHONY: test        # Run RISC-V tests
-test: all
+test: bin
 	$(if $(wildcard $(BUILDDIR)/riscv-tests.tar.gz),,@cd "$(BUILDDIR)"; curl -LO "https://github.com/LekKit/riscv-tests/releases/download/rvvm-tests/riscv-tests.tar.gz")
 	@tar xf "$(BUILDDIR)/riscv-tests.tar.gz" -C $(BUILDDIR)
 ifeq ($(USE_RV32),1)
