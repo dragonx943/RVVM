@@ -18,6 +18,9 @@ typedef struct {
     hid_keyboard_t* keyboard;
     hid_mouse_t*    mouse;
 
+    uint32_t dirty;
+
+    bool force_redraw;
     bool ctrl;
     bool alt;
     bool grab;
@@ -45,26 +48,46 @@ static const uint8_t rvvm_logo_pix[] = {
     0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x04, 0x00, 0x00, 0x00,
 };
 
-static void gui_window_grab_input(gui_window_t* win, bool grab)
+static void gui_window_update_title(gui_window_t* win)
 {
-    gui_window_data_t* data = win->data;
-    if (data->grab != grab && win->grab_input) {
-        data->grab = grab;
-        win->grab_input(win, data->grab);
-        if (win->set_title) {
-            if (data->grab) {
-                win->set_title(win, "RVVM - Press Ctrl+Alt+G to release grab");
-            } else {
-                win->set_title(win, "RVVM");
-            }
+    gui_window_data_t* wdata = win->data;
+    if (win->set_title) {
+        if (wdata->grab) {
+            win->set_title(win, "RVVM - Press Ctrl+Alt+G to release grab");
+        } else {
+            win->set_title(win, "RVVM");
         }
     }
+}
+
+static void gui_window_grab_input(gui_window_t* win, bool grab)
+{
+    gui_window_data_t* wdata = win->data;
+    if (wdata->grab != grab && win->grab_input) {
+        wdata->grab = grab;
+        win->grab_input(win, wdata->grab);
+        gui_window_update_title(win);
+    }
+}
+
+static bool gui_window_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint8_t size)
+{
+    // Mark the framebuffer as dirty
+    gui_window_t* win = dev->data;
+    gui_window_data_t* wdata = win->data;
+    atomic_store_uint32_relax(&wdata->dirty, 0);
+    UNUSED(data);
+    UNUSED(offset);
+    UNUSED(size);
+    return true;
 }
 
 static void gui_window_free(gui_window_t* win)
 {
     gui_window_grab_input(win, false);
-    if (win->remove) win->remove(win);
+    if (win->remove) {
+        win->remove(win);
+    }
     free(win->data);
     free(win);
 }
@@ -72,8 +95,21 @@ static void gui_window_free(gui_window_t* win)
 static void gui_window_update(rvvm_mmio_dev_t* dev)
 {
     gui_window_t* win = dev->data;
-    if (win->poll) win->poll(win);
-    if (win->draw) win->draw(win);
+    if (win->poll) {
+        win->poll(win);
+    }
+
+    if (win->draw) {
+        gui_window_data_t* wdata = win->data;
+        if (wdata->force_redraw) {
+            win->draw(win);
+        } else {
+            uint32_t dirty = atomic_add_uint32(&wdata->dirty, 1);
+            if ((dirty < 2) || !(dirty & 0xF)) {
+                win->draw(win);
+            }
+        }
+    }
 }
 
 static void gui_window_remove(rvvm_mmio_dev_t* dev)
@@ -93,9 +129,9 @@ static void gui_window_reset(rvvm_mmio_dev_t* dev)
     uint32_t pos_x = fb->width / 2 - 152;
     uint32_t pos_y = fb->height / 2 - 80;
 
-    for (uint32_t y=0; y<fb->height; ++y) {
+    for (uint32_t y = 0; y < fb->height; ++y) {
         size_t tmp_stride = stride * y;
-        for (uint32_t x=0; x<fb->width; ++x) {
+        for (uint32_t x=0; x < fb->width; ++x) {
             uint8_t pix = 0;
             if (x >= pos_x && x - pos_x < 304 && y >= pos_y && y - pos_y < 160) {
                 uint32_t pos = ((y - pos_y) >> 3) * 38 + ((x - pos_x) >> 3);
@@ -115,114 +151,118 @@ static const rvvm_mmio_type_t gui_window_dev_type = {
 
 static void gui_on_close(gui_window_t* win)
 {
-    gui_window_data_t* data = win->data;
+    gui_window_data_t* wdata = win->data;
     if (rvvm_has_arg("poweroff_key")) {
         // Send poweroff request to the guest via keyboard key
-        hid_keyboard_press(data->keyboard, HID_KEY_POWER);
-        hid_keyboard_release(data->keyboard, HID_KEY_POWER);
+        hid_keyboard_press(wdata->keyboard, HID_KEY_POWER);
+        hid_keyboard_release(wdata->keyboard, HID_KEY_POWER);
     } else {
-        rvvm_reset_machine(data->machine, false);
+        rvvm_reset_machine(wdata->machine, false);
     }
 }
 
 static void gui_on_focus_lost(gui_window_t* win)
 {
-    gui_window_data_t* data = win->data;
+    gui_window_data_t* wdata = win->data;
 
     // Fix stuck buttons after lost focus (Alt+Tab, etc)
     for (hid_key_t key = 0; key < 255; ++key) {
-        hid_keyboard_release(data->keyboard, key);
+        hid_keyboard_release(wdata->keyboard, key);
     }
 
     // Ungrab input
     gui_window_grab_input(win, false);
 }
 
-static void gui_handle_modkeys(gui_window_data_t* data, hid_key_t key, bool pressed)
+static void gui_handle_modkeys(gui_window_data_t* wdata, hid_key_t key, bool pressed)
 {
     switch (key) {
         case HID_KEY_LEFTALT:
         case HID_KEY_RIGHTALT:
-            data->alt = pressed;
+            wdata->alt = pressed;
             break;
         case HID_KEY_LEFTCTRL:
         case HID_KEY_RIGHTCTRL:
-            data->ctrl = pressed;
+            wdata->ctrl = pressed;
             break;
     }
 }
 
 static void gui_on_key_press(gui_window_t* win, hid_key_t key)
 {
-    gui_window_data_t* data = win->data;
-    gui_handle_modkeys(data, key, true);
-    if (key == HID_KEY_G && data->alt && data->ctrl) {
-        gui_window_grab_input(win, !data->grab);
-        return;
+    gui_window_data_t* wdata = win->data;
+    gui_handle_modkeys(wdata, key, true);
+    if (wdata->ctrl && wdata->alt) {
+        switch (key) {
+            case HID_KEY_G:
+                // Grab mouse & keyboard
+                gui_window_grab_input(win, !wdata->grab);
+                return;
+        }
     }
-    hid_keyboard_press(data->keyboard, key);
+    hid_keyboard_press(wdata->keyboard, key);
 }
 
 static void gui_on_key_release(gui_window_t* win, hid_key_t key)
 {
-    gui_window_data_t* data = win->data;
-    gui_handle_modkeys(data, key, false);
-    hid_keyboard_release(data->keyboard, key);
+    gui_window_data_t* wdata = win->data;
+    gui_handle_modkeys(wdata, key, false);
+    hid_keyboard_release(wdata->keyboard, key);
 }
 
 static void gui_on_mouse_press(gui_window_t* win, hid_btns_t btns)
 {
-    gui_window_data_t* data = win->data;
-    hid_mouse_press(data->mouse, btns);
+    gui_window_data_t* wdata = win->data;
+    hid_mouse_press(wdata->mouse, btns);
 }
 
 static void gui_on_mouse_release(gui_window_t* win, hid_btns_t btns)
 {
-    gui_window_data_t* data = win->data;
-    hid_mouse_release(data->mouse, btns);
+    gui_window_data_t* wdata = win->data;
+    hid_mouse_release(wdata->mouse, btns);
 }
 
 static void gui_on_mouse_place(gui_window_t* win, int32_t x, int32_t y)
 {
-    gui_window_data_t* data = win->data;
-    hid_mouse_place(data->mouse, x, y);
+    gui_window_data_t* wdata = win->data;
+    hid_mouse_place(wdata->mouse, x, y);
 }
 
 static void gui_on_mouse_move(gui_window_t* win, int32_t x, int32_t y)
 {
-    gui_window_data_t* data = win->data;
-    hid_mouse_move(data->mouse, x, y);
+    gui_window_data_t* wdata = win->data;
+    hid_mouse_move(wdata->mouse, x, y);
 }
 
 static void gui_on_mouse_scroll(gui_window_t* win, int32_t offset)
 {
-    gui_window_data_t* data = win->data;
-    hid_mouse_scroll(data->mouse, offset);
+    gui_window_data_t* wdata = win->data;
+    hid_mouse_scroll(wdata->mouse, offset);
 }
 
 bool gui_window_create(gui_window_t* win)
 {
-#ifdef _WIN32
+#if defined(USE_WIN32_GUI)
     if (!rvvm_has_arg("gui") || rvvm_strcmp(rvvm_getarg("gui"), "win32")) {
         if (win32_window_init(win)) return true;
     }
 #endif
-#ifdef __HAIKU__
+#if defined(USE_HAIKU_GUI)
     if (!rvvm_has_arg("gui") || rvvm_strcmp(rvvm_getarg("gui"), "haiku")) {
         if (haiku_window_init(win)) return true;
     }
 #endif
-#ifdef USE_WAYLAND
+#if defined(USE_WAYLAND)
     if (!rvvm_has_arg("gui") || rvvm_strcmp(rvvm_getarg("gui"), "wayland")) {
         if (wayland_window_init(win)) return true;
     }
 #endif
-#ifdef USE_X11
+#if defined(USE_X11)
     if (!rvvm_has_arg("gui") || rvvm_strcmp(rvvm_getarg("gui"), "x11")) {
         if (x11_window_init(win)) return true;
     }
 #endif
-#ifdef USE_SDL
+#if defined(USE_SDL)
     if (!rvvm_has_arg("gui") || rvvm_strcmp(rvvm_getarg("gui"), "sdl")) {
         if (sdl_window_init(win)) return true;
     }
@@ -235,15 +275,16 @@ bool gui_window_create(gui_window_t* win)
 bool gui_window_init_auto(rvvm_machine_t* machine, uint32_t width, uint32_t height)
 {
     gui_window_t* win = safe_new_obj(gui_window_t);
-    gui_window_data_t* data = safe_new_obj(gui_window_data_t);
+    gui_window_data_t* wdata = safe_new_obj(gui_window_data_t);
 
-    data->machine = machine;
-    data->keyboard = hid_keyboard_init_auto(machine);
-    data->mouse = hid_mouse_init_auto(machine);
+    wdata->machine = machine;
+    wdata->keyboard = hid_keyboard_init_auto(machine);
+    wdata->mouse = hid_mouse_init_auto(machine);
+    wdata->force_redraw = rvvm_has_arg("force_redraw");
 
-    hid_mouse_resolution(data->mouse, width, height);
+    hid_mouse_resolution(wdata->mouse, width, height);
 
-    win->data = data;
+    win->data = wdata;
     win->fb.width = width;
     win->fb.height = height;
     win->fb.format = RGB_FMT_A8R8G8B8;
@@ -271,6 +312,10 @@ bool gui_window_init_auto(rvvm_machine_t* machine, uint32_t width, uint32_t heig
 
     fb->data = win;
     fb->type = &gui_window_dev_type;
+
+    if (!wdata->force_redraw) {
+        fb->write = gui_window_write;
+    }
 
     return true;
 }
