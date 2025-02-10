@@ -365,7 +365,7 @@ TSAN_SUPPRESS static forceinline void atomic_memcpy_relaxed(void* dst, const voi
     }
 }
 
-static bool riscv_mmio_unaligned_op(rvvm_mmio_dev_t* dev, void* dest, size_t offset, uint8_t size, uint8_t access)
+slow_path static bool riscv_mmio_unaligned_op(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint8_t size, uint8_t access)
 {
     uint8_t tmp[16] = {0};
     size_t align = (size < dev->min_op_size) ? dev->min_op_size :
@@ -390,11 +390,11 @@ static bool riscv_mmio_unaligned_op(rvvm_mmio_dev_t* dev, void* dest, size_t off
 
         if (access == RISCV_MMU_WRITE) {
             // Carry the changed bytes in the RMW operation, write back to the device
-            memcpy(tmp + offset_diff, ((uint8_t*)dest) + offset_dest, size_dest);
+            memcpy(tmp + offset_diff, ((uint8_t*)data) + offset_dest, size_dest);
             if (dev->write == NULL || !dev->write(dev, tmp, offset_align, align)) return false;
         } else {
             // Copy the read bytes from the aligned buffer
-            memcpy(((uint8_t*)dest) + offset_dest, tmp + offset_diff, size_dest);
+            memcpy(((uint8_t*)data) + offset_dest, tmp + offset_diff, size_dest);
         }
 
         // Advance the pointers
@@ -408,44 +408,46 @@ static bool riscv_mmio_unaligned_op(rvvm_mmio_dev_t* dev, void* dest, size_t off
 }
 
 // Receives any operation on physical address space out of RAM region
-static bool riscv_mmio_scan(rvvm_hart_t* vm, rvvm_addr_t vaddr, rvvm_addr_t paddr, void* dest, uint8_t size, uint8_t access)
+static bool riscv_mmio_scan(rvvm_hart_t* vm, rvvm_addr_t vaddr, rvvm_addr_t paddr, void* data, uint8_t size, uint8_t access)
 {
     vector_foreach(vm->machine->mmio_devs, i) {
         rvvm_mmio_dev_t* mmio = vector_at(vm->machine->mmio_devs, i);
-        rvvm_mmio_handler_t rwfunc = NULL;
-        if (paddr >= mmio->addr && (paddr + size) <= (mmio->addr + mmio->size)) {
+        if (mmio->addr <= paddr && paddr < (mmio->addr + mmio->size)) {
             // Found the device, access lies in range
+            rvvm_mmio_handler_t rwfunc = (access == RISCV_MMU_WRITE) ? mmio->write : mmio->read;
             size_t offset = paddr - mmio->addr;
-            if (access == RISCV_MMU_WRITE) {
-                rwfunc = mmio->write;
-            } else {
-                rwfunc = mmio->read;
+
+            if (likely(rwfunc)) {
+                if (likely(size <= mmio->max_op_size && size >= mmio->min_op_size && (offset & (size - 1)))) {
+                    // Operation size / alignment validated
+                    rwfunc(mmio, data, offset, size);
+                } else {
+                    // Misaligned or poorly sized operation, attempt fixup
+                    rvvm_debug("Misaligned MMIO access to %s at %x, size %x",
+                               (mmio->type ? mmio->type->name : NULL), (uint32_t)offset, size);
+                    riscv_mmio_unaligned_op(mmio, data, offset, size, access);
+                }
+            } else if (unlikely(!mmio->mapping)) {
+                // Read zeroes
+                rvvm_mmio_none(mmio, data, offset, size);
             }
 
             if (mmio->mapping) {
                 // This is a direct memory region, cache translation in TLB if possible
-                if ((paddr & RISCV_PAGE_PNMASK) >= mmio->addr && mmio->size - (offset & RISCV_PAGE_PNMASK) >= RISCV_PAGE_SIZE) {
+                rvvm_addr_t paddr_align = (paddr & RISCV_PAGE_PNMASK);
+                if (likely(mmio->addr <= paddr_align && (paddr_align + RISCV_PAGE_SIZE) <= (mmio->addr + mmio->size))) {
                     riscv_tlb_put(vm, vaddr, ((uint8_t*)mmio->mapping) + offset, access);
                 }
-                if (rwfunc == NULL) {
-                    // Just copy the data over
-                    if (access == RISCV_MMU_WRITE) {
-                        atomic_memcpy_relaxed(((uint8_t*)mmio->mapping) + offset, dest, size);
-                    } else {
-                        atomic_memcpy_relaxed(dest, ((uint8_t*)mmio->mapping) + offset, size);
-                    }
-                    return true;
+
+                // Copy the data over
+                if (access == RISCV_MMU_WRITE) {
+                    atomic_memcpy_relaxed(((uint8_t*)mmio->mapping) + offset, data, size);
+                } else {
+                    atomic_memcpy_relaxed(data, ((uint8_t*)mmio->mapping) + offset, size);
                 }
-            } else if (rwfunc == NULL) {
-                return false;
             }
 
-            if (unlikely(size > mmio->max_op_size || size < mmio->min_op_size || (offset & (size - 1)))) {
-                // Misaligned or poorly sized operation, attempt fixup
-                rvvm_debug("Misaligned MMIO access to %s at %x, size %x", (mmio->type ? mmio->type->name : NULL), (uint32_t)offset, size);
-                return riscv_mmio_unaligned_op(mmio, dest, offset, size, access);
-            }
-            return rwfunc(mmio, dest, offset, size);
+            return true;
         }
     }
 
