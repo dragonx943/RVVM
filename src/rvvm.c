@@ -325,7 +325,7 @@ static void* rvvm_eventloop(void* manual)
     }
 
     while (true) {
-        if (rvtimecmp_pending(&cmp)) {
+        if (rvtimecmp_pending(&cmp) || condvar_wait_ns(eventloop_cond, rvtimecmp_delay_ns(&cmp))) {
             uint64_t next = rvtimecmp_get(&cmp) + delay;
             uint64_t time = rvtimer_get(&timer);
             rvtimecmp_set(&cmp, EVAL_MAX(time, next));
@@ -337,7 +337,6 @@ static void* rvvm_eventloop(void* manual)
             }
             spin_unlock(&global_lock);
         }
-        condvar_wait_ns(eventloop_cond, rvtimecmp_delay_ns(&cmp));
     }
 #endif
     return NULL;
@@ -388,6 +387,13 @@ static void rvvm_set_manual_eventloop(bool manual)
     global_manual = manual;
     spin_unlock(&global_lock);
     rvvm_reconfigure_eventloop();
+}
+
+static void rvvm_wake_eventloop(void)
+{
+    spin_lock(&eventloop_lock);
+    condvar_wake(eventloop_cond);
+    spin_unlock(&eventloop_lock);
 }
 
 static bool rvvm_reopen_check_size(rvfile_t** dest, const char* path, size_t size)
@@ -652,7 +658,8 @@ PUBLIC void rvvm_reset_machine(rvvm_machine_t* machine, bool reset)
     if (vector_size(machine->harts) == 1) {
         riscv_hart_queue_pause(vector_at(machine->harts, 0));
     }
-    condvar_wake(eventloop_cond);
+
+    rvvm_wake_eventloop();
 }
 
 PUBLIC bool rvvm_machine_running(rvvm_machine_t* machine)
