@@ -104,8 +104,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // MSI interrupts
 #define PCI_MSI_ENABLED 0x00010000 // MSI Enabled
-#define PCI_MSI_MME     0x00300000 // Multiple Message Enable
-#define PCI_MSI_VALID   0x00310000
+#define PCI_MSI_DATA    0xFFFF     // MSI Data (16-bit)
+#define PCI_MSI_BIT     0x1        // MSI Pending/Masked bit
 
 static const uint32_t pci_express_caps_ro[] = {
     // [40] PCI Express (v2) Endpoint, IntMsgNum 0
@@ -132,8 +132,8 @@ static const uint32_t pci_express_caps_ro[] = {
     0x00000000,
     0x00000000,
 
-    // [90] MSI: Enable- Count=1/8 Maskable+ 64bit+
-    0x0186B005,
+    // [90] MSI: Enable- Count=1/1 Maskable+ 64bit+
+    0x0180B005,
     0x00000000, // Message Address Low
     0x00000000, // Message Address High
     0x00000000, // Message Data
@@ -219,7 +219,7 @@ static inline rvvm_irq_t pci_func_intx_irq(pci_func_t* func)
 }
 
 // Attempts to send an IRQ via MSI, returns true if enabled
-static bool pci_func_send_msi_irq(pci_func_t* func, uint32_t msi_id)
+static bool pci_func_send_msi_irq(pci_func_t* func)
 {
     uint32_t msi_control = atomic_load_uint32_relax(&func->msi_control);
     if (msi_control & PCI_MSI_ENABLED) {
@@ -227,19 +227,16 @@ static bool pci_func_send_msi_irq(pci_func_t* func, uint32_t msi_id)
         uint32_t command = atomic_load_uint32_relax(&func->command);
         if (likely(command & PCI_CMD_BUS_MASTER)) {
             // Bus mastering enabled
-            uint32_t bit = 1U << (msi_id & 0x1F);
-            uint32_t mask = atomic_load_uint32_relax(&func->msi_mask);
-            uint32_t mme_mask = (1U << (msi_control & PCI_MSI_MME)) - 1;
-            uint32_t data = atomic_load_uint32_relax(&func->msi_data) | (msi_id & mme_mask);
+            uint32_t data = atomic_load_uint32_relax(&func->msi_data);
             rvvm_addr_t addr = atomic_load_uint32_relax(&func->msi_addr_low)
                   | ((uint64_t)atomic_load_uint32_relax(&func->msi_addr_high) << 32);
 
-            if (likely(!(mask & bit))) {
+            if (likely(!(atomic_load_uint32_relax(&func->msi_mask)))) {
                 // Perform an MSI write
                 rvvm_send_msi_irq(func->bus->machine, addr, data);
             } else {
                 // Vector is masked, set pending bit
-                atomic_or_uint32(&func->msi_pending, bit);
+                atomic_store_uint32_relax(&func->msi_pending, PCI_MSI_BIT);
             }
         }
         return true;
@@ -280,14 +277,8 @@ static bool pci_func_send_msix_irq(pci_func_t* func, uint32_t msi_id)
 static void pci_func_update_msi_mask(pci_func_t* func)
 {
     uint32_t mask = atomic_load_uint32_relax(&func->msi_mask);
-    uint32_t pending = atomic_and_uint32(&func->msi_mask, mask);
-    uint32_t enabled = pending & ~mask;
-    if (enabled) {
-        for (size_t i = 0; i < 32; ++i) {
-            if (enabled & (1U << i)) {
-                pci_func_send_msi_irq(func, i);
-            }
-        }
+    if (atomic_and_uint32(&func->msi_pending, mask)) {
+        pci_func_send_msi_irq(func);
     }
 }
 
@@ -458,7 +449,7 @@ static pci_func_t* pci_attach_func_internal(pci_bus_t* bus, const pci_func_desc_
                 free(func);
                 return NULL;
             }
-        } else if (bus_addr && bar_id >= 4 && !func->msix_bar) {
+        } else if (!rvvm_has_arg("no_msix") && func->irq_pin && bar_id >= 4 && !func->msix_bar) {
             // Try to attach MSI-X BAR (Unless it's a host bridge)
             rvvm_mmio_dev_t msix_bar = {
                 .size = sizeof(func->msix),
@@ -518,7 +509,7 @@ static bool pci_bus_read(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint8
 
     pci_func_t* func = pci_get_bus_func(bus, bus_addr);
     if (!func) {
-        // Nonexistent devices have all 0xFFFF in their conf space
+        // Nonexistent devices have all 0xFFFFFFFF in their conf space
         write_uint32_le(data, 0xFFFFFFFF);
         return true;
     }
@@ -750,13 +741,9 @@ static bool pci_bus_write(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint
             break;
 
         // PCI Capabilities
-        case PCI_REG_MSI: {
-            uint32_t prev = atomic_swap_uint32(&func->msi_control, val & PCI_MSI_VALID);
-            if ((prev & PCI_MSIX_MASKED) && !(val & PCI_MSIX_MASKED)) {
-                pci_func_update_msix_mask(func);
-            }
+        case PCI_REG_MSI:
+            atomic_store_uint32_relax(&func->msi_control, val & PCI_MSI_ENABLED);
             break;
-        }
         case PCI_REG_MSI_AL:
             atomic_store_uint32_relax(&func->msi_addr_low, val);
             break;
@@ -764,16 +751,20 @@ static bool pci_bus_write(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint
             atomic_store_uint32_relax(&func->msi_addr_high, val);
             break;
         case PCI_REG_MSI_DATA:
-            atomic_store_uint32_relax(&func->msi_data, val & 0xFFFF);
+            atomic_store_uint32_relax(&func->msi_data, val & PCI_MSI_DATA);
             break;
         case PCI_REG_MSI_MASK:
-            atomic_store_uint32_relax(&func->msi_mask, val);
+            atomic_store_uint32_relax(&func->msi_mask, val & PCI_MSI_BIT);
             pci_func_update_msi_mask(func);
             break;
 
-        case PCI_REG_MSIX:
-            atomic_store_uint32_relax(&func->msix_control, val & PCI_MSIX_VALID);
+        case PCI_REG_MSIX: {
+            uint32_t prev =  atomic_swap_uint32(&func->msix_control, val & PCI_MSIX_VALID);
+            if ((prev & PCI_MSIX_MASKED) && !(val & PCI_MSIX_MASKED)) {
+                pci_func_update_msix_mask(func);
+            }
             break;
+        }
     }
 
     return true;
@@ -1093,7 +1084,7 @@ PUBLIC void pci_send_irq(pci_func_t* func, uint32_t msi_id)
             return;
         }
 
-        if (pci_func_send_msi_irq(func, msi_id)) {
+        if (pci_func_send_msi_irq(func)) {
             // Sent an MSI IRQ
             return;
         }
