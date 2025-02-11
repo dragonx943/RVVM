@@ -388,10 +388,14 @@ static void x11_mouse_press(XButtonEvent* xbutton)
                 win->on_mouse_press(win, HID_BTN_RIGHT);
                 return;
             case Button4:
-                win->on_mouse_press(win, HID_SCROLL_UP);
+                if (win->on_mouse_scroll) {
+                    win->on_mouse_scroll(win, HID_SCROLL_UP);
+                }
                 return;
             case Button5:
-                win->on_mouse_press(win, HID_SCROLL_DOWN);
+                if (win->on_mouse_scroll) {
+                    win->on_mouse_scroll(win, HID_SCROLL_DOWN);
+                }
                 return;
         }
     }
