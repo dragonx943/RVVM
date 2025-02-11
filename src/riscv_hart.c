@@ -390,7 +390,7 @@ static void riscv_handle_irqs(rvvm_hart_t* vm)
         // Discard compiled JIT block torn by interrupt
         riscv_jit_discard(vm);
 
-        uint32_t irq = bit_clz64(irqs) ^ 63;
+        uint32_t irq = bit_clz32(irqs) ^ 31;
         // Modify exception stack in csr.status
         riscv_trap_priv_helper(vm, priv);
         // Switch privilege
