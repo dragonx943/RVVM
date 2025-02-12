@@ -12,6 +12,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "fdtlib.h"
 #include "utils.h"
 
+SOURCE_OPTIMIZATION_SIZE
+
 typedef struct {
     blkdev_t* blk;
 } mtd_dev_t;
