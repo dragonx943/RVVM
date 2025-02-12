@@ -13,6 +13,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "fdtlib.h"
 #include <time.h>
 
+SOURCE_OPTIMIZATION_SIZE
+
 #define DS1742_REG_CTL_CENT 0x0 // Control, Century
 #define DS1742_REG_SECONDS  0x1 // Seconds [0, 59]
 #define DS1742_REG_MINUTES  0x2 // Minutes [0, 59]
