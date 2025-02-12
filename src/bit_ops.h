@@ -56,6 +56,13 @@ static inline uint64_t bit_next_pow2(uint64_t val)
 {
     // Fast path for proper pow2 values
     if (!(val & (val - 1))) return val;
+#if GNU_BUILTIN(__builtin_clzll)
+    // Computing this with `val == 0` would trigger UB, and lead to wrong results with power-of-two
+    // values. But we those cases are covered by the fast-path check above. If that check is ever
+    // removed, we'd need to replace `val` with `val - 1` here and add special handling for
+    // `val == 0` and `val == 1`.
+    return 1ULL << (64 - __builtin_clzll(val));
+#else
     // Bit twiddling hacks
     val -= 1;
     val |= (val >> 1);
@@ -65,6 +72,7 @@ static inline uint64_t bit_next_pow2(uint64_t val)
     val |= (val >> 16);
     val |= (val >> 32);
     return val + 1;
+#endif
 }
 
 // Rotate u32 left
