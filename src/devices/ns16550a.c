@@ -14,6 +14,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "utils.h"
 #include "mem_ops.h"
 
+SOURCE_OPTIMIZATION_SIZE
+
 #define NS16550A_MMIO_SIZE 0x1000
 
 typedef struct {
