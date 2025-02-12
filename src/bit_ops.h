@@ -299,14 +299,10 @@ static inline uint32_t byteswap_uint32(uint32_t val)
 // Bswap 64-bit value (From BE to LE or vice versa)
 static inline uint64_t byteswap_uint64(uint64_t val)
 {
-    return (((val & 0xFF00000000000000) >> 56) |
-            ((val & 0x00FF000000000000) >> 40) |
-            ((val & 0x0000FF0000000000) >> 24) |
-            ((val & 0x000000FF00000000) >> 8)  |
-            ((val & 0x00000000FF000000) << 8)  |
-            ((val & 0x0000000000FF0000) << 24) |
-            ((val & 0x000000000000FF00) << 40) |
-            ((val & 0x00000000000000FF) << 56));
+    val = ((val >> 8) & 0x00FF00FF00FF00FF) | ((val & 0x00FF00FF00FF00FF) << 8);
+    val = ((val >> 16) & 0x0000FFFF0000FFFF) | ((val & 0x0000FFFF0000FFFF) << 16);
+    val = ((val >> 32) & 0x00000000FFFFFFFF) | ((val & 0x00000000FFFFFFFF) << 32);
+    return val;
 }
 
 // Get high 64 bits from signed i64 x i64 -> 128 bit multiplication
