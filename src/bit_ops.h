@@ -133,8 +133,7 @@ static inline bitcnt_t bit_clz64(uint64_t val)
 #if GNU_BUILTIN(__builtin_clzll) && defined(HOST_64BIT)
     return __builtin_clzll(val);
 #else
-    bitcnt_t tmp = (!(val >> 32)) << 5;
-    return bit_clz32(val >> (32 - tmp)) + tmp;
+    return val >> 32 ? bit_clz32(val >> 32) : 32 + bit_clz32(val);
 #endif
 }
 
