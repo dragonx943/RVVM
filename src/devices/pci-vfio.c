@@ -52,6 +52,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define MAP_ANON MAP_ANONYMOUS
 #endif
 
+SOURCE_OPTIMIZATION_SIZE
+
 /*
  * Helper code to unbind a device from host driver and bind to vfio_pci driver
  */
