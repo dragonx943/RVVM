@@ -20,6 +20,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #define GDB_MAX_PKTSIZE 1024
 
+SOURCE_OPTIMIZATION_SIZE
+
 typedef struct {
     gdb_server_t* server;
     net_sock_t* sock;
