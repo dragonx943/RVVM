@@ -80,6 +80,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define ATA_SECTOR_SHIFT 9
 #define ATA_SECTOR_SIZE  512
 
+SOURCE_OPTIMIZATION_SIZE
+
 typedef struct {
     pci_func_t* pci_func;
     blkdev_t*   blk;
