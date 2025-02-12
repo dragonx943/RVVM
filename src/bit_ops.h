@@ -347,7 +347,7 @@ static inline uint64_t mulhu_uint64(uint64_t a, uint64_t b)
 static inline uint64_t mulhsu_uint64(int64_t a, uint64_t b)
 {
 #ifdef INT128_SUPPORT
-    return ((int128_t)a * (uint128_t)b) >> 64;
+    return mulhu_uint64(a, b) - (a >= 0 ? 0 : b);
 #else
     int64_t lo_lo = (a & 0xFFFFFFFF) * (b & 0xFFFFFFFF);
     int64_t hi_lo = (a >> 32)        * (b & 0xFFFFFFFF);
