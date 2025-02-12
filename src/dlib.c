@@ -36,6 +36,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 // RVVM internal headers come after system headers because of safe_free()
 #include "utils.h"
 
+SOURCE_OPTIMIZATION_SIZE
+
 struct dlib_ctx {
 #if defined(DLIB_WIN32_IMPL)
     HMODULE handle;
