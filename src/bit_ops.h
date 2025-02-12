@@ -202,10 +202,13 @@ static inline uint64_t bit_orc_b(uint64_t val)
 #elif defined(GNU_EXTS) && defined(__aarch64__)
     __asm__ ("cmtst %0.8b, %0.8b, %0.8b" : "+w"(val));
 #else
-    val |= ((val >> 1) | (val << 1)) & 0x7E7E7E7E7E7E7E7EULL;
-    val |= ((val >> 2) | (val << 2)) & 0x3C3C3C3C3C3C3C3CULL;
-    val |= (val >> 4) & 0x0F0F0F0F0F0F0F0FULL;
-    val |= (val << 4) & 0xF0F0F0F0F0F0F0F0ULL;
+    const uint64_t bytes_hi = 0x8080808080808080ULL;
+    const uint64_t bytes_lo = 0x0101010101010101ULL;
+    // Only non-zero bytes will hold 0x80 pattern afterwards
+    val = (((val | bytes_hi) - bytes_lo) | val) & bytes_hi;
+    // Spill 0x80 pattern into 0xFF via shift-subtract
+    val >>= 7;
+    return (val << 8) - val;
 #endif
     return val;
 }
