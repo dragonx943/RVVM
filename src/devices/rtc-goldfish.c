@@ -14,6 +14,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #include <time.h>
 
+SOURCE_OPTIMIZATION_SIZE
+
 #define RTC_TIME_LOW     0x0
 #define RTC_TIME_HIGH    0x4
 #define RTC_ALARM_LOW    0x8
