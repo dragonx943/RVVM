@@ -16,6 +16,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "utils.h"
 #include "mem_ops.h"
 
+SOURCE_OPTIMIZATION_SIZE
+
 // Device registers
 #define ETHOC_MODER         0x00 // Mode
 #define ETHOC_INT_SRC       0x04 // Interrupt Source
