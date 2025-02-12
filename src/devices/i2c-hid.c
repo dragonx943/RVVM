@@ -15,6 +15,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "utils.h"
 #include "bit_ops.h"
 
+SOURCE_OPTIMIZATION_SIZE
+
 #define I2C_HID_DESC_REG    1
 #define I2C_HID_REPORT_REG  2
 #define I2C_HID_INPUT_REG   3
