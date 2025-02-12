@@ -21,6 +21,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include <string.h>
 #include <stdio.h>
 
+SOURCE_OPTIMIZATION_SIZE
+
 /*
  * String/Integer conversions
  */
