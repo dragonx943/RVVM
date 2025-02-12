@@ -54,6 +54,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #endif
 
+SOURCE_OPTIMIZATION_SIZE
+
 // Drop all the capabilities of the calling thread, prevent privilege escalation
 static void drop_thread_caps(void)
 {
