@@ -14,6 +14,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "mem_ops.h"
 #include "utils.h"
 
+SOURCE_OPTIMIZATION_SIZE
+
 struct rvvm_i2c_bus {
     vector_t(i2c_dev_t) devices;
     struct fdt_node* fdt_node;
