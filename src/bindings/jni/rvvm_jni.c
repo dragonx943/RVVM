@@ -26,7 +26,7 @@
 #include "devices/hid_api.h"
 #include "devices/gpio-sifive.h"
 
-PUSH_OPTIMIZATION_SIZE
+SOURCE_OPTIMIZATION_SIZE
 
 JNIEXPORT jboolean JNICALL Java_lekkit_rvvm_RVVMNative_check_1abi(JNIEnv* env, jclass class, jint abi)
 {
@@ -462,5 +462,3 @@ JNIEXPORT void JNICALL Java_lekkit_rvvm_RVVMNative_hid_1keyboard_1release(JNIEnv
     UNUSED(env); UNUSED(class);
     hid_keyboard_release((hid_keyboard_t*)(size_t)kb, key);
 }
-
-POP_OPTIMIZATION_SIZE
