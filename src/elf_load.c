@@ -40,6 +40,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
         return false; \
     }
 
+SOURCE_OPTIMIZATION_SIZE
+
 bool elf_load_file(rvfile_t* file, elf_desc_t* elf)
 {
     uint8_t tmp[64] = {0};
