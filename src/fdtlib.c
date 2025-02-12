@@ -26,6 +26,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define FDT_HDR_SIZE 40
 #define FDT_RSV_SIZE 16
 
+SOURCE_OPTIMIZATION_SIZE
+
 struct fdt_prop {
     char* name;
     void* data;
