@@ -48,7 +48,7 @@ bool haiku_window_init(gui_window_t* win);
 bool sdl_window_init(gui_window_t* win);
 
 // Probe windowing backends and create a window. Returns false on failure.
-bool gui_window_create(gui_window_t* win);
+bool gui_window_init_backend(gui_window_t* win);
 
 // Attach a framebuffer & HID mouse/keyboard to the VM. Returns false on failure.
 bool gui_window_init_auto(rvvm_machine_t* machine, uint32_t width, uint32_t height);

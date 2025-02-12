@@ -11,6 +11,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "mem_ops.h"
 #include "utils.h"
 
+SOURCE_OPTIMIZATION_SIZE
+
 #ifdef USE_GUI
 
 typedef struct {
@@ -240,35 +242,37 @@ static void gui_on_mouse_scroll(gui_window_t* win, int32_t offset)
     hid_mouse_scroll(wdata->mouse, offset);
 }
 
-bool gui_window_create(gui_window_t* win)
+bool gui_window_init_backend(gui_window_t* win)
 {
+    const char* gui = rvvm_getarg("gui");
 #if defined(USE_WIN32_GUI)
-    if (!rvvm_has_arg("gui") || rvvm_strcmp(rvvm_getarg("gui"), "win32")) {
+    if (!gui || rvvm_strcmp(gui, "win32")) {
         if (win32_window_init(win)) return true;
     }
 #endif
 #if defined(USE_HAIKU_GUI)
-    if (!rvvm_has_arg("gui") || rvvm_strcmp(rvvm_getarg("gui"), "haiku")) {
+    if (!gui || rvvm_strcmp(gui, "haiku")) {
         if (haiku_window_init(win)) return true;
     }
 #endif
 #if defined(USE_WAYLAND)
-    if (!rvvm_has_arg("gui") || rvvm_strcmp(rvvm_getarg("gui"), "wayland")) {
+    if (!gui || rvvm_strcmp(gui, "wayland")) {
         if (wayland_window_init(win)) return true;
     }
 #endif
 #if defined(USE_X11)
-    if (!rvvm_has_arg("gui") || rvvm_strcmp(rvvm_getarg("gui"), "x11")) {
+    if (!gui || rvvm_strcmp(gui, "x11")) {
         if (x11_window_init(win)) return true;
     }
 #endif
 #if defined(USE_SDL)
-    if (!rvvm_has_arg("gui") || rvvm_strcmp(rvvm_getarg("gui"), "sdl")) {
+    if (!gui || rvvm_strcmp(gui, "sdl")) {
         if (sdl_window_init(win)) return true;
     }
 #endif
     rvvm_error("No suitable windowing backends found!");
     UNUSED(win);
+    UNUSED(gui);
     return false;
 }
 
@@ -299,7 +303,7 @@ bool gui_window_init_auto(rvvm_machine_t* machine, uint32_t width, uint32_t heig
     win->on_mouse_move = gui_on_mouse_move;
     win->on_mouse_scroll = gui_on_mouse_scroll;
 
-    if (!gui_window_create(win)) {
+    if (!gui_window_init_backend(win)) {
         gui_window_free(win);
         return false;
     }
