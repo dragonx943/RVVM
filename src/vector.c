@@ -9,7 +9,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #include "vector.h"
 
-PUSH_OPTIMIZATION_SIZE
+SOURCE_OPTIMIZATION_SIZE
 
 typedef struct {
     void* data;
@@ -69,5 +69,3 @@ void vector_erase_internal(void* vec, size_t elem_size, size_t pos)
         vector_move_elem_internal(vector, elem_size, pos, true);
     }
 }
-
-POP_OPTIMIZATION_SIZE
