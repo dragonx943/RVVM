@@ -13,6 +13,11 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "compiler.h"
 #include "rvvm_types.h"
 
+#if defined(_MSC_VER)
+#include <intrin.h> // For _mulh, _umulh
+#include <stdlib.h> // For _byteswap_*
+#endif
+
 // Simple bit operations (sign-extend, etc) for internal usage
 
 /*
@@ -62,6 +67,11 @@ static inline uint64_t bit_next_pow2(uint64_t val)
     // removed, we'd need to replace `val` with `val - 1` here and add special handling for
     // `val == 0` and `val == 1`.
     return 1ULL << (64 - __builtin_clzll(val));
+#elif defined(_MSC_VER) && defined(HOST_64BIT)
+    // Same deal as above
+    unsigned long index;
+    _BitScanReverse64(&index, val);
+    return 2ULL << index;
 #else
     // Bit twiddling hacks
     val -= 1;
@@ -105,6 +115,10 @@ static inline bitcnt_t bit_clz32(uint32_t val)
     if (unlikely(!val)) return 32;
 #if GNU_BUILTIN(__builtin_clz)
     return __builtin_clz(val);
+#elif defined(_MSC_VER)
+    unsigned long index;
+    _BitScanReverse(&index, val);
+    return 31 - index;
 #else
     // de Brujin hashmap, adapted from https://en.wikipedia.org/wiki/De_Bruijn_sequence#Finding_least-_or_most-significant_set_bit_in_a_word
     static const uint8_t lut[32] = {
@@ -126,6 +140,10 @@ static inline bitcnt_t bit_clz64(uint64_t val)
     if (unlikely(!val)) return 64;
 #if GNU_BUILTIN(__builtin_clzll) && defined(HOST_64BIT)
     return __builtin_clzll(val);
+#elif defined(_MSC_VER) && defined(HOST_64BIT)
+    unsigned long index;
+    _BitScanReverse64(&index, val);
+    return 63 - index;
 #else
     return val >> 32 ? bit_clz32(val >> 32) : 32 + bit_clz32(val);
 #endif
@@ -137,6 +155,10 @@ static inline bitcnt_t bit_ctz32(uint32_t val)
     if (unlikely(!val)) return 32;
 #if GNU_BUILTIN(__builtin_ctz)
     return __builtin_ctz(val);
+#elif defined(_MSC_VER)
+    unsigned long index;
+    _BitScanForward(&index, val);
+    return index;
 #else
     // de Brujin hashmap, copied from https://en.wikipedia.org/wiki/De_Bruijn_sequence#Finding_least-_or_most-significant_set_bit_in_a_word
     static const uint8_t lut[32] = {
@@ -153,6 +175,10 @@ static inline bitcnt_t bit_ctz64(uint64_t val)
     if (unlikely(!val)) return 64;
 #if GNU_BUILTIN(__builtin_ctzll) && defined(HOST_64BIT)
     return __builtin_ctzll(val);
+#elif defined(_MSC_VER) && defined(HOST_64BIT)
+    unsigned long index;
+    _BitScanForward64(&index, val);
+    return index;
 #else
     bitcnt_t tmp = (!((uint32_t)val)) << 5;
     return bit_ctz32(val >> tmp) + tmp;
@@ -292,6 +318,8 @@ static inline uint32_t byteswap_uint32(uint32_t val)
 {
 #if GNU_BUILTIN(__builtin_bswap32)
     return __builtin_bswap32(val);
+#elif defined(_MSC_VER)
+    return _byteswap_ulong(val);
 #else
     return (((val & 0xFF000000) >> 24) |
             ((val & 0x00FF0000) >> 8)  |
@@ -305,6 +333,8 @@ static inline uint64_t byteswap_uint64(uint64_t val)
 {
 #if GNU_BUILTIN(__builtin_bswap64)
     return __builtin_bswap64(val);
+#elif defined(_MSC_VER)
+    return _byteswap_uint64(val);
 #else
     val = ((val >> 8) & 0x00FF00FF00FF00FF) | ((val & 0x00FF00FF00FF00FF) << 8);
     val = ((val >> 16) & 0x0000FFFF0000FFFF) | ((val & 0x0000FFFF0000FFFF) << 16);
@@ -318,6 +348,8 @@ static inline uint64_t mulh_uint64(int64_t a, int64_t b)
 {
 #ifdef INT128_SUPPORT
     return ((int128_t)a * (int128_t)b) >> 64;
+#elif defined(_MSC_VER) && defined(_M_X64)
+    return _mulh(a, b);
 #else
     int64_t lo_lo = (a & 0xFFFFFFFF) * (b & 0xFFFFFFFF);
     int64_t hi_lo = (a >> 32)        * (b & 0xFFFFFFFF);
@@ -333,6 +365,8 @@ static inline uint64_t mulhu_uint64(uint64_t a, uint64_t b)
 {
 #ifdef INT128_SUPPORT
     return ((uint128_t)a * (uint128_t)b) >> 64;
+#elif defined(_MSC_VER) && defined(_M_X64)
+    return _umulh(a, b);
 #else
     uint64_t lo_lo = (a & 0xFFFFFFFF) * (b & 0xFFFFFFFF);
     uint64_t hi_lo = (a >> 32)        * (b & 0xFFFFFFFF);
@@ -346,7 +380,7 @@ static inline uint64_t mulhu_uint64(uint64_t a, uint64_t b)
 // Get high 64 bits from signed * unsigned i64 x u64 -> 128 bit multiplication
 static inline uint64_t mulhsu_uint64(int64_t a, uint64_t b)
 {
-#ifdef INT128_SUPPORT
+#if defined(INT128_SUPPORT) || (defined(_MSC_VER) && defined(_M_X64))
     return mulhu_uint64(a, b) - (a >= 0 ? 0 : b);
 #else
     int64_t lo_lo = (a & 0xFFFFFFFF) * (b & 0xFFFFFFFF);
