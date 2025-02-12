@@ -12,6 +12,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "utils.h"
 #include "mem_ops.h"
 
+SOURCE_OPTIMIZATION_SIZE
+
 void ringbuf_create(ringbuf_t* rb, size_t size)
 {
     rb->data = safe_new_arr(uint8_t, size);
