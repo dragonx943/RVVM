@@ -29,6 +29,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "utils.h"
 #include "dlib.h"
 
+SOURCE_OPTIMIZATION_SIZE
+
 /*
  * libbacktrace boilerplace
  */
