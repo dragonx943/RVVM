@@ -290,19 +290,27 @@ static inline uint64_t bit_clmulr64(uint64_t a, uint64_t b)
 // Bswap 32-bit value (From BE to LE or vice versa)
 static inline uint32_t byteswap_uint32(uint32_t val)
 {
+#if GNU_BUILTIN(__builtin_bswap32)
+    return __builtin_bswap32(val);
+#else
     return (((val & 0xFF000000) >> 24) |
             ((val & 0x00FF0000) >> 8)  |
             ((val & 0x0000FF00) << 8)  |
             ((val & 0x000000FF) << 24));
+#endif
 }
 
 // Bswap 64-bit value (From BE to LE or vice versa)
 static inline uint64_t byteswap_uint64(uint64_t val)
 {
+#if GNU_BUILTIN(__builtin_bswap64)
+    return __builtin_bswap64(val);
+#else
     val = ((val >> 8) & 0x00FF00FF00FF00FF) | ((val & 0x00FF00FF00FF00FF) << 8);
     val = ((val >> 16) & 0x0000FFFF0000FFFF) | ((val & 0x0000FFFF0000FFFF) << 16);
     val = ((val >> 32) & 0x00000000FFFFFFFF) | ((val & 0x00000000FFFFFFFF) << 32);
     return val;
+#endif
 }
 
 // Get high 64 bits from signed i64 x i64 -> 128 bit multiplication
