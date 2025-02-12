@@ -106,23 +106,17 @@ static inline bitcnt_t bit_clz32(uint32_t val)
 #if GNU_BUILTIN(__builtin_clz)
     return __builtin_clz(val);
 #else
-    bitcnt_t ret = 0;
-    bitcnt_t tmp = (!(val >> 16)) << 4;
-    val >>= 16 - tmp;
-    ret += tmp;
-    tmp = (!(val >> 8)) << 3;
-    val >>= 8 - tmp;
-    ret += tmp;
-    tmp = (!(val >> 4)) << 2;
-    val >>= 4 - tmp;
-    ret += tmp;
-    tmp = (!(val >> 2)) << 1;
-    val >>= 2 - tmp;
-    ret += tmp;
-    tmp = !(val >> 1);
-    val >>= 1 - tmp;
-    ret += tmp;
-    return ret + !(val & 1);
+    // de Brujin hashmap, adapted from https://en.wikipedia.org/wiki/De_Bruijn_sequence#Finding_least-_or_most-significant_set_bit_in_a_word
+    static const uint8_t lut[32] = {
+        0, 31, 4, 30, 3, 18, 8, 29, 2, 10, 12, 17, 7, 15, 28, 24,
+        1, 5, 19, 9, 11, 13, 16, 25, 6, 20, 14, 26, 21, 27, 22, 23
+    };
+    val |= (val >> 1);
+    val |= (val >> 2);
+    val |= (val >> 4);
+    val |= (val >> 8);
+    val |= (val >> 16);
+    return lut[((val + 1) * 0x077CB531U) >> 27];
 #endif
 }
 
@@ -144,20 +138,12 @@ static inline bitcnt_t bit_ctz32(uint32_t val)
 #if GNU_BUILTIN(__builtin_ctz)
     return __builtin_ctz(val);
 #else
-    bitcnt_t ret = 0;
-    bitcnt_t tmp = (!((uint16_t)val)) << 4;
-    val >>= tmp;
-    ret += tmp;
-    tmp = (!((uint8_t)val)) << 3;
-    val >>= tmp;
-    ret += tmp;
-    tmp = (!(val & 0xF)) << 2;
-    val >>= tmp;
-    ret += tmp;
-    tmp = (!(val & 0x3)) << 1;
-    val >>= tmp;
-    ret += tmp;
-    return ret + !(val & 0x1);
+    // de Brujin hashmap, copied from https://en.wikipedia.org/wiki/De_Bruijn_sequence#Finding_least-_or_most-significant_set_bit_in_a_word
+    static const uint8_t lut[32] = {
+        0, 1, 28, 2, 29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4, 8, 
+        31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18, 6, 11, 5, 10, 9
+    };
+    return lut[((val & -val) * 0x077CB531U) >> 27];
 #endif
 }
 
