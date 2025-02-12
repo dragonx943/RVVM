@@ -13,6 +13,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "utils.h"
 #include "mem_ops.h"
 
+SOURCE_OPTIMIZATION_SIZE
+
 // See https://static.dev.sifive.com/FU540-C000-v1.0.pdf
 
 #define GPIO_SIFIVE_REG_INPUT     0x00 // Pin input value
