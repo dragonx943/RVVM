@@ -13,6 +13,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "spinlock.h"
 #include "vector.h"
 
+SOURCE_OPTIMIZATION_SIZE
+
 RCU_THREAD_LOCAL uint32_t rcu_internal_reader_state = 0;
 
 uint32_t rcu_internal_writer_waiting = 0;
