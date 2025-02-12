@@ -14,6 +14,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "spinlock.h"
 #include "utils.h"
 
+SOURCE_OPTIMIZATION_SIZE
+
 #define PS2_CMD_RESET 0xFF
 #define PS2_CMD_RESEND 0xFE
 #define PS2_CMD_SET_DEFAULTS 0xF6

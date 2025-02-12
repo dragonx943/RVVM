@@ -14,6 +14,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "utils.h"
 #include "fdtlib.h"
 
+SOURCE_OPTIMIZATION_SIZE
+
 #define PS2_ALTERA_REG_DATA 0x0
 #define PS2_ALTERA_REG_CTRL 0x4
 
