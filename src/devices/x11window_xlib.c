@@ -153,6 +153,8 @@ X11_DLIB_SYM(XCloseDisplay)
 #include "utils.h"
 #include "dlib.h"
 
+SOURCE_OPTIMIZATION_SIZE
+
 // X11 window state
 typedef struct {
     Window window;
