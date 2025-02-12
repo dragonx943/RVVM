@@ -418,7 +418,7 @@ static bool riscv_mmio_scan(rvvm_hart_t* vm, rvvm_addr_t vaddr, rvvm_addr_t padd
             size_t offset = paddr - mmio->addr;
 
             if (likely(rwfunc)) {
-                if (likely(size <= mmio->max_op_size && size >= mmio->min_op_size && (offset & (size - 1)))) {
+                if (likely(size <= mmio->max_op_size && size >= mmio->min_op_size && !(offset & (size - 1)))) {
                     // Operation size / alignment validated
                     rwfunc(mmio, data, offset, size);
                 } else {
