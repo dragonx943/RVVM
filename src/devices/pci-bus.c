@@ -154,6 +154,7 @@ struct rvvm_pci_function {
 
     // Atomic variables
     uint32_t command;
+    uint32_t status;
     uint32_t irq_line;
 
     // Bridge IO/MEM assignment
@@ -218,11 +219,32 @@ static inline rvvm_irq_t pci_func_intx_irq(pci_func_t* func)
     return pci_bus_intx_irq(func->bus, func->addr >> 3, func->irq_pin);
 }
 
+// Send/Raise INTx IRQ
+static void pci_func_send_intx_irq(pci_func_t* func, bool raise)
+{
+    if (likely(!(atomic_load_uint32_relax(&func->command) & PCI_CMD_INTX_DISABLE))) {
+        if (likely(func->irq_pin)) {
+            atomic_store_uint32_relax(&func->status, PCI_STATUS_INTX);
+            if (raise) {
+                rvvm_raise_irq(func->bus->intc, pci_func_intx_irq(func));
+            } else {
+                rvvm_send_irq(func->bus->intc, pci_func_intx_irq(func));
+            }
+        }
+    }
+}
+
+// Lower INTx IRQ
+static void pci_func_lower_intx_irq(pci_func_t* func)
+{
+    atomic_store_uint32_relax(&func->status, 0);
+    rvvm_lower_irq(func->bus->intc, pci_func_intx_irq(func));
+}
+
 // Attempts to send an IRQ via MSI, returns true if enabled
 static bool pci_func_send_msi_irq(pci_func_t* func)
 {
-    uint32_t msi_control = atomic_load_uint32_relax(&func->msi_control);
-    if (msi_control & PCI_MSI_ENABLED) {
+    if (atomic_load_uint32_relax(&func->msi_control) & PCI_MSI_ENABLED) {
         // MSI enabled
         uint32_t command = atomic_load_uint32_relax(&func->command);
         if (likely(command & PCI_CMD_BUS_MASTER)) {
@@ -239,6 +261,17 @@ static bool pci_func_send_msi_irq(pci_func_t* func)
                 atomic_store_uint32_relax(&func->msi_pending, PCI_MSI_BIT);
             }
         }
+        return true;
+    }
+    return false;
+}
+
+// Lower MSI IRQ
+static bool pci_func_lower_msi_irq(pci_func_t* func)
+{
+    if (atomic_load_uint32_relax(&func->msi_control) & PCI_MSI_ENABLED) {
+        // MSI enabled
+        atomic_store_uint32_relax(&func->msi_pending, 0);
         return true;
     }
     return false;
@@ -267,6 +300,20 @@ static bool pci_func_send_msix_irq(pci_func_t* func, uint32_t msi_id)
                 uint32_t bit = 1U << (msi_id & 0x1F);
                 atomic_or_uint32(&func->msix[PCI_MSIX_TBL_SIZE + reg], bit);
             }
+        }
+        return true;
+    }
+    return false;
+}
+
+// Lower MSI-X IRQ
+static bool pci_func_lower_msix_irq(pci_func_t* func, uint32_t msi_id)
+{
+    if (atomic_load_uint32_relax(&func->msix_control) & PCI_MSIX_ENABLED) {
+        // MSI-X enabled
+        uint32_t reg = msi_id >> 5;
+        if (atomic_load_uint32_relax(&func->msix[PCI_MSIX_TBL_SIZE + reg]) & bit_set32(msi_id)) {
+            atomic_and_uint32(&func->msix[PCI_MSIX_TBL_SIZE + reg], ~bit_set32(msi_id));
         }
         return true;
     }
@@ -527,11 +574,7 @@ static bool pci_bus_read(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint8
             val = (func->vendor_id | (uint32_t)func->device_id << 16);
             break;
         case PCI_REG_STATUS_CMD: {
-            val = atomic_load_uint32_relax(&func->command);
-            if (!(val & PCI_CMD_INTX_DISABLE)) {
-                // Always report INTx+ whenever DisINTx- for INTx emulation
-                val |= PCI_STATUS_INTX << 16;
-            }
+            val = atomic_load_uint32_relax(&func->command) | (atomic_load_uint32_relax(&func->status) << 16);
             if (bus_addr) {
                 // Host bridge doesn't have capabilities
                 val |= PCI_STATUS_CAP << 16;
@@ -683,9 +726,14 @@ static bool pci_bus_write(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint
     }
 
     switch (reg) {
-        case PCI_REG_STATUS_CMD:
-            atomic_store_uint32_relax(&func->command, val & PCI_CMD_MASK);
+        case PCI_REG_STATUS_CMD: {
+            uint32_t prev = atomic_swap_uint32(&func->command, val & PCI_CMD_MASK);
+            if (!(prev & PCI_CMD_INTX_DISABLE) && (val & PCI_CMD_INTX_DISABLE)) {
+                // Clear INTx interrupt whenever INTx is disabled
+                pci_func_lower_intx_irq(func);
+            }
             break;
+        }
         case PCI_REG_BAR0:
         case PCI_REG_BAR1:
         case PCI_REG_BAR2:
@@ -1077,23 +1125,33 @@ PUBLIC pci_func_t* pci_get_device_func(pci_dev_t* dev, size_t func_id)
 
 PUBLIC void pci_send_irq(pci_func_t* func, uint32_t msi_id)
 {
-    UNUSED(msi_id);
     if (likely(func)) {
-        if (pci_func_send_msix_irq(func, msi_id)) {
-            // Sent an MSI-X IRQ
-            return;
+        // Try to send MSI/MSI-X IRQ
+        if (!pci_func_send_msix_irq(func, msi_id) && !pci_func_send_msi_irq(func)) {
+            // Send INTx IRQ edge - obscure, but needed for e.q. VFIO to work somehow
+            pci_func_send_intx_irq(func, false);
         }
+    }
+}
 
-        if (pci_func_send_msi_irq(func)) {
-            // Sent an MSI IRQ
-            return;
+PUBLIC void pci_raise_irq(pci_func_t* func, uint32_t msi_id)
+{
+    if (likely(func)) {
+        // Try to send MSI/MSI-X IRQ
+        if (!pci_func_send_msix_irq(func, msi_id) && !pci_func_send_msi_irq(func)) {
+            // Raise a level-triggered INTx IRQ
+            pci_func_send_intx_irq(func, true);
         }
+    }
+}
 
-        if (likely(!(atomic_load_uint32_relax(&func->command) & PCI_CMD_INTX_DISABLE))) {
-            // Send INTx IRQ
-            if (likely(func->irq_pin)) {
-                rvvm_send_irq(func->bus->intc, pci_func_intx_irq(func));
-            }
+PUBLIC void pci_lower_irq(pci_func_t* func, uint32_t msi_id)
+{
+    if (likely(func)) {
+        // Try to lower MSI/MSI-X IRQ
+        if (!pci_func_lower_msix_irq(func, msi_id) && !pci_func_lower_msi_irq(func)) {
+            // Lower a level-triggered INTx IRQ
+            pci_func_lower_intx_irq(func);
         }
     }
 }

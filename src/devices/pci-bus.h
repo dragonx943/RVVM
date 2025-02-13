@@ -151,10 +151,20 @@ PUBLIC void pci_remove_device(pci_dev_t* dev);
 //! \return PCI function handle, or NULL on failure
 PUBLIC pci_func_t* pci_get_device_func(pci_dev_t* dev, size_t func_id);
 
-//! \brief Send INTx/MSI/MSI-X interrupt to the PCI host
+//! \brief Send INTx/MSI/MSI-X interrupt edge to the PCI host
 //! \param func   Valid handle to a PCI function which sent the IRQ
 //! \param msi_id MSI/MSI-X IRQ Vector ID (Ignored with INTx emulation)
 PUBLIC void pci_send_irq(pci_func_t* func, uint32_t msi_id);
+
+//! \brief Raise INTx/MSI/MSI-X interrupt vector
+//! \param func   Valid handle to a PCI function which raised the IRQ
+//! \param msi_id MSI/MSI-X IRQ Vector ID (Ignored with INTx emulation)
+PUBLIC void pci_raise_irq(pci_func_t* func, uint32_t msi_id);
+
+//! \brief Lower INTx/MSI/MSI-X interrupt vector
+//! \param func   Valid handle to a PCI function which lowered the IRQ
+//! \param msi_id MSI/MSI-X IRQ Vector ID (Ignored with INTx emulation)
+PUBLIC void pci_lower_irq(pci_func_t* func, uint32_t msi_id);
 
 //! \brief Perform direct memory access to the PCI host
 //! \param func Valid handle to a PCI function which performs DMA access
