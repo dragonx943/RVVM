@@ -13,6 +13,11 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "compiler.h"
 #include "rvvm_types.h"
 
+#if defined(_MSC_VER)
+#include <intrin.h> // For _mulh, _umulh
+#include <stdlib.h> // For _byteswap_*
+#endif
+
 // Simple bit operations (sign-extend, etc) for internal usage
 
 /*
@@ -56,6 +61,18 @@ static inline uint64_t bit_next_pow2(uint64_t val)
 {
     // Fast path for proper pow2 values
     if (!(val & (val - 1))) return val;
+#if GNU_BUILTIN(__builtin_clzll)
+    // Computing this with `val == 0` would trigger UB, and lead to wrong results with power-of-two
+    // values. But we those cases are covered by the fast-path check above. If that check is ever
+    // removed, we'd need to replace `val` with `val - 1` here and add special handling for
+    // `val == 0` and `val == 1`.
+    return 1ULL << (64 - __builtin_clzll(val));
+#elif defined(_MSC_VER) && defined(HOST_64BIT)
+    // Same deal as above
+    unsigned long index;
+    _BitScanReverse64(&index, val);
+    return 2ULL << index;
+#else
     // Bit twiddling hacks
     val -= 1;
     val |= (val >> 1);
@@ -65,6 +82,7 @@ static inline uint64_t bit_next_pow2(uint64_t val)
     val |= (val >> 16);
     val |= (val >> 32);
     return val + 1;
+#endif
 }
 
 // Rotate u32 left
@@ -97,24 +115,22 @@ static inline bitcnt_t bit_clz32(uint32_t val)
     if (unlikely(!val)) return 32;
 #if GNU_BUILTIN(__builtin_clz)
     return __builtin_clz(val);
+#elif defined(_MSC_VER)
+    unsigned long index;
+    _BitScanReverse(&index, val);
+    return 31 - index;
 #else
-    bitcnt_t ret = 0;
-    bitcnt_t tmp = (!(val >> 16)) << 4;
-    val >>= 16 - tmp;
-    ret += tmp;
-    tmp = (!(val >> 8)) << 3;
-    val >>= 8 - tmp;
-    ret += tmp;
-    tmp = (!(val >> 4)) << 2;
-    val >>= 4 - tmp;
-    ret += tmp;
-    tmp = (!(val >> 2)) << 1;
-    val >>= 2 - tmp;
-    ret += tmp;
-    tmp = !(val >> 1);
-    val >>= 1 - tmp;
-    ret += tmp;
-    return ret + !(val & 1);
+    // de Brujin hashmap, adapted from https://en.wikipedia.org/wiki/De_Bruijn_sequence#Finding_least-_or_most-significant_set_bit_in_a_word
+    static const uint8_t lut[32] = {
+        0, 31, 4, 30, 3, 18, 8, 29, 2, 10, 12, 17, 7, 15, 28, 24,
+        1, 5, 19, 9, 11, 13, 16, 25, 6, 20, 14, 26, 21, 27, 22, 23
+    };
+    val |= (val >> 1);
+    val |= (val >> 2);
+    val |= (val >> 4);
+    val |= (val >> 8);
+    val |= (val >> 16);
+    return lut[((val + 1) * 0x077CB531U) >> 27];
 #endif
 }
 
@@ -124,9 +140,12 @@ static inline bitcnt_t bit_clz64(uint64_t val)
     if (unlikely(!val)) return 64;
 #if GNU_BUILTIN(__builtin_clzll) && defined(HOST_64BIT)
     return __builtin_clzll(val);
+#elif defined(_MSC_VER) && defined(HOST_64BIT)
+    unsigned long index;
+    _BitScanReverse64(&index, val);
+    return 63 - index;
 #else
-    bitcnt_t tmp = (!(val >> 32)) << 5;
-    return bit_clz32(val >> (32 - tmp)) + tmp;
+    return val >> 32 ? bit_clz32(val >> 32) : 32 + bit_clz32(val);
 #endif
 }
 
@@ -136,21 +155,17 @@ static inline bitcnt_t bit_ctz32(uint32_t val)
     if (unlikely(!val)) return 32;
 #if GNU_BUILTIN(__builtin_ctz)
     return __builtin_ctz(val);
+#elif defined(_MSC_VER)
+    unsigned long index;
+    _BitScanForward(&index, val);
+    return index;
 #else
-    bitcnt_t ret = 0;
-    bitcnt_t tmp = (!((uint16_t)val)) << 4;
-    val >>= tmp;
-    ret += tmp;
-    tmp = (!((uint8_t)val)) << 3;
-    val >>= tmp;
-    ret += tmp;
-    tmp = (!(val & 0xF)) << 2;
-    val >>= tmp;
-    ret += tmp;
-    tmp = (!(val & 0x3)) << 1;
-    val >>= tmp;
-    ret += tmp;
-    return ret + !(val & 0x1);
+    // de Brujin hashmap, copied from https://en.wikipedia.org/wiki/De_Bruijn_sequence#Finding_least-_or_most-significant_set_bit_in_a_word
+    static const uint8_t lut[32] = {
+        0, 1, 28, 2, 29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4, 8, 
+        31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18, 6, 11, 5, 10, 9
+    };
+    return lut[((val & -val) * 0x077CB531U) >> 27];
 #endif
 }
 
@@ -160,6 +175,10 @@ static inline bitcnt_t bit_ctz64(uint64_t val)
     if (unlikely(!val)) return 64;
 #if GNU_BUILTIN(__builtin_ctzll) && defined(HOST_64BIT)
     return __builtin_ctzll(val);
+#elif defined(_MSC_VER) && defined(HOST_64BIT)
+    unsigned long index;
+    _BitScanForward64(&index, val);
+    return index;
 #else
     bitcnt_t tmp = (!((uint32_t)val)) << 5;
     return bit_ctz32(val >> tmp) + tmp;
@@ -297,23 +316,31 @@ static inline uint64_t bit_clmulr64(uint64_t a, uint64_t b)
 // Bswap 32-bit value (From BE to LE or vice versa)
 static inline uint32_t byteswap_uint32(uint32_t val)
 {
+#if GNU_BUILTIN(__builtin_bswap32)
+    return __builtin_bswap32(val);
+#elif defined(_MSC_VER)
+    return _byteswap_ulong(val);
+#else
     return (((val & 0xFF000000) >> 24) |
             ((val & 0x00FF0000) >> 8)  |
             ((val & 0x0000FF00) << 8)  |
             ((val & 0x000000FF) << 24));
+#endif
 }
 
 // Bswap 64-bit value (From BE to LE or vice versa)
 static inline uint64_t byteswap_uint64(uint64_t val)
 {
-    return (((val & 0xFF00000000000000) >> 56) |
-            ((val & 0x00FF000000000000) >> 40) |
-            ((val & 0x0000FF0000000000) >> 24) |
-            ((val & 0x000000FF00000000) >> 8)  |
-            ((val & 0x00000000FF000000) << 8)  |
-            ((val & 0x0000000000FF0000) << 24) |
-            ((val & 0x000000000000FF00) << 40) |
-            ((val & 0x00000000000000FF) << 56));
+#if GNU_BUILTIN(__builtin_bswap64)
+    return __builtin_bswap64(val);
+#elif defined(_MSC_VER)
+    return _byteswap_uint64(val);
+#else
+    val = ((val >> 8) & 0x00FF00FF00FF00FF) | ((val & 0x00FF00FF00FF00FF) << 8);
+    val = ((val >> 16) & 0x0000FFFF0000FFFF) | ((val & 0x0000FFFF0000FFFF) << 16);
+    val = ((val >> 32) & 0x00000000FFFFFFFF) | ((val & 0x00000000FFFFFFFF) << 32);
+    return val;
+#endif
 }
 
 // Get high 64 bits from signed i64 x i64 -> 128 bit multiplication
@@ -321,6 +348,8 @@ static inline uint64_t mulh_uint64(int64_t a, int64_t b)
 {
 #ifdef INT128_SUPPORT
     return ((int128_t)a * (int128_t)b) >> 64;
+#elif defined(_MSC_VER) && defined(_M_X64)
+    return _mulh(a, b);
 #else
     int64_t lo_lo = (a & 0xFFFFFFFF) * (b & 0xFFFFFFFF);
     int64_t hi_lo = (a >> 32)        * (b & 0xFFFFFFFF);
@@ -336,6 +365,8 @@ static inline uint64_t mulhu_uint64(uint64_t a, uint64_t b)
 {
 #ifdef INT128_SUPPORT
     return ((uint128_t)a * (uint128_t)b) >> 64;
+#elif defined(_MSC_VER) && defined(_M_X64)
+    return _umulh(a, b);
 #else
     uint64_t lo_lo = (a & 0xFFFFFFFF) * (b & 0xFFFFFFFF);
     uint64_t hi_lo = (a >> 32)        * (b & 0xFFFFFFFF);
@@ -349,8 +380,8 @@ static inline uint64_t mulhu_uint64(uint64_t a, uint64_t b)
 // Get high 64 bits from signed * unsigned i64 x u64 -> 128 bit multiplication
 static inline uint64_t mulhsu_uint64(int64_t a, uint64_t b)
 {
-#ifdef INT128_SUPPORT
-    return ((int128_t)a * (uint128_t)b) >> 64;
+#if defined(INT128_SUPPORT) || (defined(_MSC_VER) && defined(_M_X64))
+    return mulhu_uint64(a, b) - (a >= 0 ? 0 : b);
 #else
     int64_t lo_lo = (a & 0xFFFFFFFF) * (b & 0xFFFFFFFF);
     int64_t hi_lo = (a >> 32)        * (b & 0xFFFFFFFF);
