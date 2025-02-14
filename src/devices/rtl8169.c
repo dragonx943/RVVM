@@ -201,6 +201,26 @@ typedef struct {
     size_t   seg_size;
 } rtl8169_dev_t;
 
+static void rtl8169_update_irqs(rtl8169_dev_t* rtl8169)
+{
+    uint32_t isr = atomic_load_uint32_relax(&rtl8169->isr);
+    uint32_t imr = atomic_load_uint32_relax(&rtl8169->imr);
+    if (isr & imr) {
+        pci_raise_irq(rtl8169->pci_func, 0);
+    } else {
+        pci_lower_irq(rtl8169->pci_func, 0);
+    }
+}
+
+static void rtl8169_interrupt(rtl8169_dev_t* rtl8169, size_t irq)
+{
+    uint32_t irqs = 1U << irq;
+    atomic_or_uint32(&rtl8169->isr, irqs);
+    if (irqs & atomic_load_uint32_relax(&rtl8169->imr)) {
+        pci_raise_irq(rtl8169->pci_func, 0);
+    }
+}
+
 static inline rvvm_addr_t rtl8169_ring_addr(const rtl8169_ring_t* ring)
 {
     return atomic_load_uint32_relax(&ring->addr)
@@ -234,15 +254,8 @@ static void rtl8169_reset(rvvm_mmio_dev_t* dev)
     atomic_store_uint32_relax(&rtl8169->isr, 0);
     atomic_store_uint32_relax(&rtl8169->phydr, 0);
     atomic_store_uint32_relax(&rtl8169->phyar, 0);
-}
 
-static void rtl8169_interrupt(rtl8169_dev_t* rtl8169, size_t irq)
-{
-    uint32_t irqs = 1U << irq;
-    atomic_or_uint32(&rtl8169->isr, irqs);
-    if (irqs & atomic_load_uint32_relax(&rtl8169->imr)) {
-        pci_send_irq(rtl8169->pci_func, 0);
-    }
+    rtl8169_update_irqs(rtl8169);
 }
 
 static uint16_t rtl8169_read_phy(uint32_t reg)
@@ -570,12 +583,12 @@ static bool rtl8169_pci_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, u
             break;
         case RTL8169_REG_IMR:
             atomic_store_uint32_relax(&rtl8169->imr, (uint16_t)val);
-            if (atomic_load_uint32_relax(&rtl8169->isr) & val) {
-                pci_send_irq(rtl8169->pci_func, 0);
-            }
+            rtl8169_update_irqs(rtl8169);
             break;
         case RTL8169_REG_ISR:
-            atomic_and_uint32(&rtl8169->isr, ~val);
+            if (atomic_and_uint32(&rtl8169->isr, ~val) & val) {
+                rtl8169_update_irqs(rtl8169);
+            }
             break;
         case RTL8169_REG_CR:
             atomic_store_uint32_relax(&rtl8169->cr, val & RTL8169_CR_RW);
