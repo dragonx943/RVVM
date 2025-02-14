@@ -23,6 +23,7 @@ typedef struct {
     rvvm_intc_t* intc;
     rvvm_irq_t irq;
 
+    uint32_t flags;
     uint32_t ier;
     uint32_t lcr;
     uint32_t mcr;
@@ -62,13 +63,34 @@ typedef struct {
 
 #define NS16550A_LCR_DLAB    0x80
 
-static void ns16550a_notify(void* io_dev, uint32_t flags)
+// Handle IIR/IER update
+static void ns16550a_update_irq(ns16550a_dev_t* uart)
 {
-    ns16550a_dev_t* uart = io_dev;
+    uint32_t flags = atomic_load_uint32_relax(&uart->flags);
     uint32_t ier = atomic_load_uint32_relax(&uart->ier);
     if (((flags & CHARDEV_RX) && (ier & NS16550A_IER_RECV))
      || ((flags & CHARDEV_TX) && (ier & NS16550A_IER_THR))) {
-        rvvm_send_irq(uart->intc, uart->irq);
+        rvvm_raise_irq(uart->intc, uart->irq);
+    } else {
+        rvvm_lower_irq(uart->intc, uart->irq);
+    }
+}
+
+// Handle RX/TX chardev flags update
+static void ns16550a_notify(void* io_dev, uint32_t flags)
+{
+    ns16550a_dev_t* uart = io_dev;
+    if (atomic_swap_uint32(&uart->flags, flags) != flags) {
+        ns16550a_update_irq(uart);
+    }
+}
+
+// Poll for possible RX/TX chardev flags update
+static void ns16550a_poll(ns16550a_dev_t* uart)
+{
+    uint32_t flags = chardev_poll(uart->chardev);
+    if (flags != atomic_load_uint32_relax(&uart->flags)) {
+        ns16550a_notify(uart, flags);
     }
 }
 
@@ -83,6 +105,7 @@ static bool ns16550a_mmio_read(rvvm_mmio_dev_t* dev, void* data, size_t offset, 
                 write_uint8(data, atomic_load_uint32_relax(&uart->dll));
             } else if (chardev_poll(uart->chardev) & CHARDEV_RX) {
                 chardev_read(uart->chardev, data, 1);
+                ns16550a_poll(uart);
             }
             break;
         case NS16550A_REG_IER_DLM:
@@ -117,13 +140,10 @@ static bool ns16550a_mmio_read(rvvm_mmio_dev_t* dev, void* data, size_t offset, 
             break;
         }
         case NS16550A_REG_MSR:
-            write_uint8(data, 0xF0);
+            write_uint8(data, 0xB0);
             break;
         case NS16550A_REG_SCR:
             write_uint8(data, atomic_load_uint32_relax(&uart->scr));
-            break;
-        default:
-            write_uint8(data, 0);
             break;
     }
     return true;
@@ -140,6 +160,7 @@ static bool ns16550a_mmio_write(rvvm_mmio_dev_t* dev, void* data, size_t offset,
                 atomic_store_uint32_relax(&uart->dll, read_uint8(data));
             } else {
                 chardev_write(uart->chardev, data, 1);
+                ns16550a_poll(uart);
             }
             break;
         case NS16550A_REG_IER_DLM:
@@ -147,8 +168,7 @@ static bool ns16550a_mmio_write(rvvm_mmio_dev_t* dev, void* data, size_t offset,
                 atomic_store_uint32_relax(&uart->dlm, read_uint8(data));
             } else {
                 atomic_store_uint32_relax(&uart->ier, read_uint8(data));
-                // Trigger re-enabled interrupts, if any
-                ns16550a_notify(uart, chardev_poll(uart->chardev));
+                ns16550a_update_irq(uart);
             }
             break;
         case NS16550A_REG_LCR:
@@ -159,8 +179,6 @@ static bool ns16550a_mmio_write(rvvm_mmio_dev_t* dev, void* data, size_t offset,
             break;
         case NS16550A_REG_SCR:
             atomic_store_uint32_relax(&uart->scr, read_uint8(data));
-            break;
-        default:
             break;
     }
     return true;
@@ -179,7 +197,7 @@ static void ns16550a_remove(rvvm_mmio_dev_t* dev)
     free(uart);
 }
 
-static rvvm_mmio_type_t ns16550a_dev_type = {
+static const rvvm_mmio_type_t ns16550a_dev_type = {
     .name = "ns16550a",
     .update = ns16550a_update,
     .remove = ns16550a_remove,
@@ -216,7 +234,7 @@ PUBLIC rvvm_mmio_dev_t* ns16550a_init(rvvm_machine_t* machine, chardev_t* charde
     struct fdt_node* uart_fdt = fdt_node_create_reg("uart", ns16550a.addr);
     fdt_node_add_prop_reg(uart_fdt, "reg", ns16550a.addr, ns16550a.size);
     fdt_node_add_prop_str(uart_fdt, "compatible", "ns16550a");
-    fdt_node_add_prop_u32(uart_fdt, "clock-frequency", 4000000);
+    fdt_node_add_prop_u32(uart_fdt, "clock-frequency", 20000000);
     fdt_node_add_prop_u32(uart_fdt, "fifo-size", 16);
     fdt_node_add_prop_str(uart_fdt, "status", "okay");
     rvvm_fdt_describe_irq(uart_fdt, intc, irq);
