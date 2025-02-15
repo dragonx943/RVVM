@@ -7,38 +7,34 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#include <sys/mman.h>
-#include <unistd.h>
-#include <errno.h>
-#include <linux/input-event-codes.h>
 
 #include "gui_window.h"
-#include "dlib.h"
-#include "vma_ops.h"
-#include "utils.h"
 #include "compiler.h"
-#include "hashmap.h"
-#include "atomics.h"
-#include "threading.h"
 
-#define WAYLAND_DYNAMIC_LOADING
+SOURCE_OPTIMIZATION_SIZE
 
-// Resolve symbols at runtime
-#define WAYLAND_DLIB_SYM(sym) static typeof(sym)* sym##_dlib = NULL;
-#define XKB_DLIB_SYM(sym) static typeof(sym)* sym##_dlib = NULL;
-
-#if !(CHECK_INCLUDE(wayland-client-core.h, 1) && CHECK_INCLUDE(xkbcommon/xkbcommon.h, 1))
-// No Wayland and/or XKB headers found
+#if defined(USE_WAYLAND) && !CHECK_INCLUDE(wayland-client-core.h, 0)
 #undef USE_WAYLAND
-#warning Disabling Wayland support as <wayland-client.h> and/or <xkbcommon/xkbcommon.h> is unavailable
+#warning Disabling Wayland support as <wayland-client-core.h> is unavailable
+#endif
+
+#if defined(USE_WAYLAND) && !CHECK_INCLUDE(xkbcommon/xkbcommon.h, 0)
+#undef USE_WAYLAND
+#warning Disabling Wayland support as <xkbcommon/xkbcommon.h> is unavailable
 #endif
 
 #ifdef USE_WAYLAND
 
-#include <wayland-client-core.h>
+#include <errno.h>
+#include <unistd.h>
+#include <sys/mman.h>
 #include <xkbcommon/xkbcommon.h>
+#include <wayland-client-core.h>
 
-#ifdef WAYLAND_DYNAMIC_LOADING
+#if !defined(USE_FULL_LINKING)
+
+// Resolve symbols at runtime
+#define WAYLAND_DLIB_SYM(sym) static typeof(sym)* sym##_dlib = NULL;
 
 // Functions
 WAYLAND_DLIB_SYM(wl_display_connect)
@@ -71,13 +67,13 @@ WAYLAND_DLIB_SYM(wl_proxy_destroy)
 #define wl_display_read_events wl_display_read_events_dlib
 #define wl_proxy_destroy wl_proxy_destroy_dlib
 
-XKB_DLIB_SYM(xkb_context_new)
-XKB_DLIB_SYM(xkb_context_unref)
-XKB_DLIB_SYM(xkb_keymap_new_from_string)
-XKB_DLIB_SYM(xkb_state_new)
-XKB_DLIB_SYM(xkb_state_key_get_one_sym)
-XKB_DLIB_SYM(xkb_state_unref)
-XKB_DLIB_SYM(xkb_keymap_unref)
+WAYLAND_DLIB_SYM(xkb_context_new)
+WAYLAND_DLIB_SYM(xkb_context_unref)
+WAYLAND_DLIB_SYM(xkb_keymap_new_from_string)
+WAYLAND_DLIB_SYM(xkb_state_new)
+WAYLAND_DLIB_SYM(xkb_state_key_get_one_sym)
+WAYLAND_DLIB_SYM(xkb_state_unref)
+WAYLAND_DLIB_SYM(xkb_keymap_unref)
 
 #define xkb_context_new xkb_context_new_dlib
 #define xkb_context_unref xkb_context_unref_dlib
@@ -88,6 +84,14 @@ XKB_DLIB_SYM(xkb_keymap_unref)
 #define xkb_keymap_unref xkb_keymap_unref_dlib
 
 #endif
+
+// RVVM internal headers come after system headers because of safe_free()
+#include "threading.h"
+#include "spinlock.h"
+#include "vma_ops.h"
+#include "hashmap.h"
+#include "utils.h"
+#include "dlib.h"
 
 thread_ctx_t* wayland_evloop_thread = NULL;
 
@@ -155,24 +159,6 @@ typedef struct {
     bool grabbed;
 } wayland_data_t;
 
-#define WAYLAND_DLIB_RESOLVE(lib, sym) \
-do { \
-    sym = dlib_resolve(lib, #sym);\
-    if (sym == NULL) { \
-        rvvm_warn("Failed to resolve symbol %s", #sym); \
-        return false; \
-    } \
-} while (0)
-
-#define XKB_DLIB_RESOLVE(lib, sym) \
-do { \
-    sym = dlib_resolve(lib, #sym);\
-    if (sym == NULL) { \
-        rvvm_warn("Failed to resolve symbol %s", #sym); \
-        return false; \
-    } \
-} while (0)
-
 // ----------------[Helper structs]--------------------
 
 struct global_data {
@@ -209,14 +195,20 @@ struct seat_data {
     struct wl_touch* touch;
 };
 
-#define WL_POINTER_LEFTBTN 0x01
-#define WL_POINTER_RIGHTBTN 0x02
+#define WL_POINTER_LEFTBTN   0x01
+#define WL_POINTER_RIGHTBTN  0x02
 #define WL_POINTER_MIDDLEBTN 0x04
 
-#define WL_POINTER_FRAME_MOTION 0x01
-#define WL_POINTER_FRAME_BUTTON 0x02
-#define WL_POINTER_FRAME_AXIS 0x04
+#define WL_POINTER_FRAME_MOTION  0x01
+#define WL_POINTER_FRAME_BUTTON  0x02
+#define WL_POINTER_FRAME_AXIS    0x04
 #define WL_POINTER_FRAME_SURFACE 0x08
+
+// From <linux/input-event-codes.h>
+#define WL_BTN_LEFT   0x110
+#define WL_BTN_RIGHT  0x111
+#define WL_BTN_MIDDLE 0x112
+
 struct pointer_data {
     struct wl_pointer* pointer;
     struct wl_surface* entered_surface;
@@ -252,9 +244,7 @@ struct keyboard_data {
 // wl_shm
 static void wl_shm_on_format(void* data, struct wl_shm* wl_shm, uint32_t format)
 {
-    UNUSED(data);
-    UNUSED(wl_shm);
-    UNUSED(format);
+    UNUSED(data); UNUSED(wl_shm); UNUSED(format);
 }
 
 static const struct wl_shm_listener shm_listener = {
@@ -271,13 +261,7 @@ static void wl_output_on_geometry(
 {
     struct global_data* global_data = data;
     struct output_data* output_data = global_data->data;
-    UNUSED(output);
-    UNUSED(x);
-    UNUSED(y);
-    UNUSED(subpixel);
-    UNUSED(make);
-    UNUSED(model);
-    UNUSED(transform);
+    UNUSED(output); UNUSED(x); UNUSED(y); UNUSED(subpixel); UNUSED(make); UNUSED(model); UNUSED(transform);
 
     output_data->physical_size[0] = pwidth;
     output_data->physical_size[1] = pheight;
@@ -288,26 +272,12 @@ static void wl_output_on_mode(
     uint32_t flags, int32_t width, int32_t height, int32_t refresh
 )
 {
-    UNUSED(data);
-    UNUSED(output);
-    UNUSED(flags);
-    UNUSED(width);
-    UNUSED(height);
-    UNUSED(refresh);
+    UNUSED(data); UNUSED(output); UNUSED(flags); UNUSED(width); UNUSED(height); UNUSED(refresh);
 }
 
-static void wl_output_on_name (void* data, struct wl_output* output, const char* name)
+static void wl_output_on_name_or_desc(void* data, struct wl_output* output, const char* name)
 {
-    UNUSED(data);
-    UNUSED(output);
-    UNUSED(name);
-}
-
-static void wl_output_on_description(void* data, struct wl_output* output, const char* desc)
-{
-    UNUSED(data);
-    UNUSED(output);
-    UNUSED(desc);
+    UNUSED(data); UNUSED(output); UNUSED(name);
 }
 
 static void wl_output_on_done(void* data, struct wl_output* output)
@@ -315,6 +285,7 @@ static void wl_output_on_done(void* data, struct wl_output* output)
     struct global_data* global_data = data;
     struct output_data* output_data = global_data->data;
     UNUSED(output);
+
     output_data->done = true;
 }
 
@@ -323,6 +294,7 @@ static void wl_output_on_scale(void* data, struct wl_output* output, int32_t sca
     struct global_data* global_data = data;
     struct output_data* output_data = global_data->data;
     UNUSED(output);
+
     output_data->scale = scale;
 }
 
@@ -331,8 +303,8 @@ static const struct wl_output_listener output_listener = {
     .mode = wl_output_on_mode,
     .done = wl_output_on_done,
     .scale = wl_output_on_scale,
-    .name = wl_output_on_name,
-    .description = wl_output_on_description,
+    .name = wl_output_on_name_or_desc,
+    .description = wl_output_on_name_or_desc,
 };
 
 // zxdg_output_v1
@@ -341,37 +313,32 @@ static void xdg_output_on_logical_size(void* data, struct zxdg_output_v1* xdg_ou
 {
     struct output_data* output_data = data;
     UNUSED(xdg_output);
+
     output_data->logical_size[0] = width;
     output_data->logical_size[1] = height;
 }
 
 static void xdg_output_on_logical_position(void* data, struct zxdg_output_v1* xdg_output, int32_t x, int32_t y)
 {
-    UNUSED(data);
-    UNUSED(xdg_output);
-    UNUSED(x);
-    UNUSED(y);
+    UNUSED(data); UNUSED(xdg_output); UNUSED(x); UNUSED(y);
 }
 
 static void xdg_output_on_done(void* data, struct zxdg_output_v1* xdg_output)
 {
     struct output_data* output_data = data;
     UNUSED(xdg_output);
+
     output_data->done = true;
 }
 
 static void xdg_output_on_name(void* data, struct zxdg_output_v1* xdg_output, const char* name)
 {
-    UNUSED(data);
-    UNUSED(xdg_output);
-    UNUSED(name);
+    UNUSED(data); UNUSED(xdg_output); UNUSED(name);
 }
 
 static void xdg_output_on_description(void* data, struct zxdg_output_v1* xdg_output, const char* desc)
 {
-    UNUSED(data);
-    UNUSED(xdg_output);
-    UNUSED(desc);
+    UNUSED(data); UNUSED(xdg_output); UNUSED(desc);
 }
 
 static const struct zxdg_output_v1_listener xdg_output_listener = {
@@ -388,6 +355,7 @@ static void wl_pointer_on_enter(void* data, struct wl_pointer* pointer, uint32_t
 {
     struct pointer_data* pointer_data = data;
     UNUSED(pointer);
+
     pointer_data->frame.mask |= WL_POINTER_FRAME_SURFACE | WL_POINTER_FRAME_MOTION;
     pointer_data->frame.surface = surface;
     pointer_data->frame.x = wl_fixed_to_int(x);
@@ -398,8 +366,8 @@ static void wl_pointer_on_enter(void* data, struct wl_pointer* pointer, uint32_t
 static void wl_pointer_on_leave(void* data, struct wl_pointer* pointer, uint32_t serial, struct wl_surface* surface)
 {
     struct pointer_data* pointer_data = data;
-    UNUSED(pointer);
-    UNUSED(surface);
+    UNUSED(pointer); UNUSED(surface);
+
     pointer_data->frame.mask |= WL_POINTER_FRAME_SURFACE;
     pointer_data->frame.surface = NULL;
     pointer_data->frame.enter_serial = serial;
@@ -408,8 +376,8 @@ static void wl_pointer_on_leave(void* data, struct wl_pointer* pointer, uint32_t
 static void wl_pointer_on_motion(void* data, struct wl_pointer* pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y)
 {
     struct pointer_data* pointer_data = data;
-    UNUSED(pointer);
-    UNUSED(time);
+    UNUSED(pointer); UNUSED(time);
+
     pointer_data->frame.mask |= WL_POINTER_FRAME_MOTION;
     pointer_data->frame.x = wl_fixed_to_int(x);
     pointer_data->frame.y = wl_fixed_to_int(y);
@@ -420,14 +388,15 @@ static void wl_pointer_on_button(void* data, struct wl_pointer* pointer, uint32_
     struct pointer_data* pointer_data = data;
     UNUSED(pointer);
     UNUSED(time);
+
     pointer_data->frame.mask |= WL_POINTER_FRAME_BUTTON;
 
     int32_t frame_button = 0;
-    if (button == BTN_LEFT) {
+    if (button == WL_BTN_LEFT) {
         frame_button = WL_POINTER_LEFTBTN;
-    } else if (button == BTN_RIGHT) {
+    } else if (button == WL_BTN_RIGHT) {
         frame_button = WL_POINTER_RIGHTBTN;
-    } else if (button == BTN_MIDDLE) {
+    } else if (button == WL_BTN_MIDDLE) {
         frame_button = WL_POINTER_MIDDLEBTN;
     }
 
@@ -444,19 +413,20 @@ static void wl_pointer_on_button(void* data, struct wl_pointer* pointer, uint32_
 
 static void wl_pointer_on_axis(void* data, struct wl_pointer* pointer, uint32_t time, uint32_t axis, wl_fixed_t value)
 {
-    if (axis) return;
-    struct pointer_data* pointer_data = data;
-    UNUSED(pointer);
-    UNUSED(time);
-    pointer_data->frame.mask |= WL_POINTER_FRAME_AXIS;
-    pointer_data->frame.axis_h = wl_fixed_to_int(value);
+    UNUSED(pointer); UNUSED(time);
+    if (axis) {
+        struct pointer_data* pointer_data = data;
+        pointer_data->frame.mask |= WL_POINTER_FRAME_AXIS;
+        pointer_data->frame.axis_h = wl_fixed_to_int(value);
+    }
 }
 
 static void wl_pointer_on_frame(void* data, struct wl_pointer* pointer)
 {
     struct pointer_data* pointer_data = data;
-    UNUSED(pointer);
     wayland_data_t* wayland_data = NULL;
+    UNUSED(pointer);
+
     if (pointer_data->entered_surface) {
         wayland_data = wl_surface_get_user_data(pointer_data->entered_surface);
     }
@@ -519,41 +489,17 @@ static void wl_pointer_on_frame(void* data, struct wl_pointer* pointer)
 
 static void wl_pointer_on_axis_source(void* data, struct wl_pointer* pointer, uint32_t source)
 {
-    UNUSED(data);
-    UNUSED(pointer);
-    UNUSED(source);
+    UNUSED(data); UNUSED(pointer); UNUSED(source);
 }
 
-static void wl_pointer_on_axis_stop(void* data, struct wl_pointer* pointer, uint32_t time, uint32_t axis)
+static void wl_pointer_on_axis_u32(void* data, struct wl_pointer* pointer, uint32_t a, uint32_t b)
 {
-    UNUSED(data);
-    UNUSED(pointer);
-    UNUSED(time);
-    UNUSED(axis);
+    UNUSED(data); UNUSED(pointer); UNUSED(a); UNUSED(b);
 }
 
-static void wl_pointer_on_axis_discrete(void* data, struct wl_pointer* pointer, uint32_t axis, int32_t discrete)
+static void wl_pointer_on_axis_i32(void* data, struct wl_pointer* pointer, uint32_t a, int32_t b)
 {
-    UNUSED(data);
-    UNUSED(pointer);
-    UNUSED(axis);
-    UNUSED(discrete);
-}
-
-static void wl_pointer_on_axis_value120(void* data, struct wl_pointer* pointer, uint32_t axis, int32_t value)
-{
-    UNUSED(data);
-    UNUSED(pointer);
-    UNUSED(axis);
-    UNUSED(value);
-}
-
-static void wl_pointer_on_axis_relative_direction(void* data, struct wl_pointer* pointer, uint32_t axis, uint32_t direction)
-{
-    UNUSED(data);
-    UNUSED(pointer);
-    UNUSED(axis);
-    UNUSED(direction);
+    UNUSED(data); UNUSED(pointer); UNUSED(a); UNUSED(b);
 }
 
 static const struct wl_pointer_listener pointer_listener = {
@@ -564,10 +510,10 @@ static const struct wl_pointer_listener pointer_listener = {
     .axis = wl_pointer_on_axis,
     .frame = wl_pointer_on_frame,
     .axis_source = wl_pointer_on_axis_source,
-    .axis_stop = wl_pointer_on_axis_stop,
-    .axis_discrete = wl_pointer_on_axis_discrete,
-    .axis_value120 = wl_pointer_on_axis_value120,
-    .axis_relative_direction = wl_pointer_on_axis_relative_direction,
+    .axis_stop = wl_pointer_on_axis_u32,
+    .axis_discrete = wl_pointer_on_axis_i32,
+    .axis_value120 = wl_pointer_on_axis_i32,
+    .axis_relative_direction = wl_pointer_on_axis_u32,
 };
 
 // wl_keyboard
@@ -575,8 +521,6 @@ static const struct wl_pointer_listener pointer_listener = {
 static void wl_keyboard_on_keymap(void* data, struct wl_keyboard* keyboard, uint32_t format, int32_t fd, uint32_t size)
 {
     UNUSED(keyboard);
-    UNUSED(format);
-    UNUSED(size);
 
     if (!format) {
         rvvm_warn("Keymap format not supported");
@@ -604,210 +548,207 @@ static void wl_keyboard_on_keymap(void* data, struct wl_keyboard* keyboard, uint
 
 static void wl_keyboard_on_enter(void* data, struct wl_keyboard* keyboard, uint32_t serial, struct wl_surface* surface, struct wl_array* keys)
 {
-    UNUSED(keyboard);
-    UNUSED(serial);
-    UNUSED(keys);
     struct keyboard_data* keyboard_data = data;
+    UNUSED(keyboard); UNUSED(serial); UNUSED(keys);
+
     keyboard_data->entered_surface = surface;
 }
 
 static void wl_keyboard_on_leave(void* data, struct wl_keyboard* keyboard, uint32_t serial, struct wl_surface* surface)
 {
-    UNUSED(keyboard);
-    UNUSED(serial);
     struct keyboard_data* keyboard_data = data;
     wayland_data_t* wayland_data = wl_surface_get_user_data(surface);
+    UNUSED(keyboard); UNUSED(serial);
+
     keyboard_data->entered_surface = NULL;
     wayland_data->win->on_focus_lost(wayland_data->win);
+}
+
+static hid_key_t wayland_keysym_to_hid(int32_t keysym)
+{
+    switch (keysym) {
+        case XKB_KEY_a:                    return HID_KEY_A;
+        case XKB_KEY_b:                    return HID_KEY_B;
+        case XKB_KEY_c:                    return HID_KEY_C;
+        case XKB_KEY_d:                    return HID_KEY_D;
+        case XKB_KEY_e:                    return HID_KEY_E;
+        case XKB_KEY_f:                    return HID_KEY_F;
+        case XKB_KEY_g:                    return HID_KEY_G;
+        case XKB_KEY_h:                    return HID_KEY_H;
+        case XKB_KEY_i:                    return HID_KEY_I;
+        case XKB_KEY_j:                    return HID_KEY_J;
+        case XKB_KEY_k:                    return HID_KEY_K;
+        case XKB_KEY_l:                    return HID_KEY_L;
+        case XKB_KEY_m:                    return HID_KEY_M;
+        case XKB_KEY_n:                    return HID_KEY_N;
+        case XKB_KEY_o:                    return HID_KEY_O;
+        case XKB_KEY_p:                    return HID_KEY_P;
+        case XKB_KEY_q:                    return HID_KEY_Q;
+        case XKB_KEY_r:                    return HID_KEY_R;
+        case XKB_KEY_s:                    return HID_KEY_S;
+        case XKB_KEY_t:                    return HID_KEY_T;
+        case XKB_KEY_u:                    return HID_KEY_U;
+        case XKB_KEY_v:                    return HID_KEY_V;
+        case XKB_KEY_w:                    return HID_KEY_W;
+        case XKB_KEY_x:                    return HID_KEY_X;
+        case XKB_KEY_y:                    return HID_KEY_Y;
+        case XKB_KEY_z:                    return HID_KEY_Z;
+        case XKB_KEY_0:                    return HID_KEY_0;
+        case XKB_KEY_1:                    return HID_KEY_1;
+        case XKB_KEY_2:                    return HID_KEY_2;
+        case XKB_KEY_3:                    return HID_KEY_3;
+        case XKB_KEY_4:                    return HID_KEY_4;
+        case XKB_KEY_5:                    return HID_KEY_5;
+        case XKB_KEY_6:                    return HID_KEY_6;
+        case XKB_KEY_7:                    return HID_KEY_7;
+        case XKB_KEY_8:                    return HID_KEY_8;
+        case XKB_KEY_9:                    return HID_KEY_9;
+        case XKB_KEY_Return:               return HID_KEY_ENTER;
+        case XKB_KEY_Escape:               return HID_KEY_ESC;
+        case XKB_KEY_BackSpace:            return HID_KEY_BACKSPACE;
+        case XKB_KEY_Tab:                  return HID_KEY_TAB;
+        case XKB_KEY_space:                return HID_KEY_SPACE;
+        case XKB_KEY_minus:                return HID_KEY_MINUS;
+        case XKB_KEY_equal:                return HID_KEY_EQUAL;
+        case XKB_KEY_bracketleft:          return HID_KEY_LEFTBRACE;
+        case XKB_KEY_bracketright:         return HID_KEY_RIGHTBRACE;
+        case XKB_KEY_backslash:            return HID_KEY_BACKSLASH;
+        case XKB_KEY_semicolon:            return HID_KEY_SEMICOLON;
+        case XKB_KEY_apostrophe:           return HID_KEY_APOSTROPHE;
+        case XKB_KEY_grave:                return HID_KEY_GRAVE;
+        case XKB_KEY_comma:                return HID_KEY_COMMA;
+        case XKB_KEY_period:               return HID_KEY_DOT;
+        case XKB_KEY_slash:                return HID_KEY_SLASH;
+        case XKB_KEY_Caps_Lock:            return HID_KEY_CAPSLOCK;
+        case XKB_KEY_F1:                   return HID_KEY_F1;
+        case XKB_KEY_F2:                   return HID_KEY_F2;
+        case XKB_KEY_F3:                   return HID_KEY_F3;
+        case XKB_KEY_F4:                   return HID_KEY_F4;
+        case XKB_KEY_F5:                   return HID_KEY_F5;
+        case XKB_KEY_F6:                   return HID_KEY_F6;
+        case XKB_KEY_F7:                   return HID_KEY_F7;
+        case XKB_KEY_F8:                   return HID_KEY_F8;
+        case XKB_KEY_F9:                   return HID_KEY_F9;
+        case XKB_KEY_F10:                  return HID_KEY_F10;
+        case XKB_KEY_F11:                  return HID_KEY_F11;
+        case XKB_KEY_F12:                  return HID_KEY_F12;
+        case XKB_KEY_Sys_Req:              return HID_KEY_SYSRQ;
+        case XKB_KEY_Scroll_Lock:          return HID_KEY_SCROLLLOCK;
+        case XKB_KEY_Pause:                return HID_KEY_PAUSE;
+        case XKB_KEY_Insert:               return HID_KEY_INSERT;
+        case XKB_KEY_Home:                 return HID_KEY_HOME;
+        case XKB_KEY_Page_Up:              return HID_KEY_PAGEUP;
+        case XKB_KEY_Delete:               return HID_KEY_DELETE;
+        case XKB_KEY_End:                  return HID_KEY_END;
+        case XKB_KEY_Page_Down:            return HID_KEY_PAGEDOWN;
+        case XKB_KEY_Right:                return HID_KEY_RIGHT;
+        case XKB_KEY_Left:                 return HID_KEY_LEFT;
+        case XKB_KEY_Down:                 return HID_KEY_DOWN;
+        case XKB_KEY_Up:                   return HID_KEY_UP;
+        case XKB_KEY_Num_Lock:             return HID_KEY_NUMLOCK;
+        case XKB_KEY_KP_Divide:            return HID_KEY_KPSLASH;
+        case XKB_KEY_KP_Multiply:          return HID_KEY_KPASTERISK;
+        case XKB_KEY_KP_Subtract:          return HID_KEY_KPMINUS;
+        case XKB_KEY_KP_Add:               return HID_KEY_KPPLUS;
+        case XKB_KEY_KP_Enter:             return HID_KEY_KPENTER;
+        case XKB_KEY_KP_1:                 return HID_KEY_KP1;
+        case XKB_KEY_KP_2:                 return HID_KEY_KP2;
+        case XKB_KEY_KP_3:                 return HID_KEY_KP3;
+        case XKB_KEY_KP_4:                 return HID_KEY_KP4;
+        case XKB_KEY_KP_5:                 return HID_KEY_KP5;
+        case XKB_KEY_KP_6:                 return HID_KEY_KP6;
+        case XKB_KEY_KP_7:                 return HID_KEY_KP7;
+        case XKB_KEY_KP_8:                 return HID_KEY_KP8;
+        case XKB_KEY_KP_9:                 return HID_KEY_KP9;
+        case XKB_KEY_KP_0:                 return HID_KEY_KP0;
+        case XKB_KEY_KP_Decimal:           return HID_KEY_KPDOT;
+        case XKB_KEY_less:                 return HID_KEY_102ND;
+        case XKB_KEY_Multi_key:            return HID_KEY_COMPOSE;
+        case XKB_KEY_KP_Equal:             return HID_KEY_KPEQUAL;
+        case XKB_KEY_F13:                  return HID_KEY_F13;
+        case XKB_KEY_F14:                  return HID_KEY_F14;
+        case XKB_KEY_F15:                  return HID_KEY_F15;
+        case XKB_KEY_F16:                  return HID_KEY_F16;
+        case XKB_KEY_F17:                  return HID_KEY_F17;
+        case XKB_KEY_F18:                  return HID_KEY_F18;
+        case XKB_KEY_F19:                  return HID_KEY_F19;
+        case XKB_KEY_F20:                  return HID_KEY_F20;
+        case XKB_KEY_F21:                  return HID_KEY_F21;
+        case XKB_KEY_F22:                  return HID_KEY_F22;
+        case XKB_KEY_F23:                  return HID_KEY_F23;
+        case XKB_KEY_F24:                  return HID_KEY_F24;
+        case XKB_KEY_Execute:              return HID_KEY_OPEN;
+        case XKB_KEY_Help:                 return HID_KEY_HELP;
+        case XKB_KEY_XF86ContextMenu:      return HID_KEY_PROPS;
+        case XKB_KEY_Menu:                 return HID_KEY_MENU;
+        case XKB_KEY_Select:               return HID_KEY_FRONT;
+        case XKB_KEY_Cancel:               return HID_KEY_STOP;
+        case XKB_KEY_Redo:                 return HID_KEY_AGAIN;
+        case XKB_KEY_Undo:                 return HID_KEY_UNDO;
+        case XKB_KEY_XF86Cut:              return HID_KEY_CUT;
+        case XKB_KEY_XF86Copy:             return HID_KEY_COPY;
+        case XKB_KEY_XF86Paste:            return HID_KEY_PASTE;
+        case XKB_KEY_Find:                 return HID_KEY_FIND;
+        case XKB_KEY_XF86AudioMute:        return HID_KEY_MUTE;
+        case XKB_KEY_XF86AudioRaiseVolume: return HID_KEY_VOLUMEUP;
+        case XKB_KEY_XF86AudioLowerVolume: return HID_KEY_VOLUMEDOWN;
+        case XKB_KEY_KP_Separator:         return HID_KEY_KPCOMMA;
+        case XKB_KEY_kana_RO:              return HID_KEY_RO;
+        case XKB_KEY_Hiragana_Katakana:    return HID_KEY_KATAKANAHIRAGANA;
+        case XKB_KEY_yen:                  return HID_KEY_YEN;
+        case XKB_KEY_Henkan:               return HID_KEY_HENKAN;
+        case XKB_KEY_Muhenkan:             return HID_KEY_MUHENKAN;
+        // HID_KEY_KPJPCOMMA ?
+        case XKB_KEY_Hangul:               return HID_KEY_HANGEUL;
+        case XKB_KEY_Hangul_Hanja:         return HID_KEY_HANJA;
+        case XKB_KEY_Katakana:             return HID_KEY_KATAKANA;
+        case XKB_KEY_Hiragana:             return HID_KEY_HIRAGANA;
+        case XKB_KEY_Zenkaku_Hankaku:      return HID_KEY_ZENKAKUHANKAKU;
+        case XKB_KEY_Control_L:            return HID_KEY_LEFTCTRL;
+        case XKB_KEY_Shift_L:              return HID_KEY_LEFTSHIFT;
+        case XKB_KEY_Alt_L:                return HID_KEY_LEFTALT;
+        case XKB_KEY_Super_L:              return HID_KEY_LEFTMETA;
+        case XKB_KEY_Control_R:            return HID_KEY_RIGHTCTRL;
+        case XKB_KEY_Shift_R:              return HID_KEY_RIGHTSHIFT;
+        case XKB_KEY_Alt_R:                return HID_KEY_RIGHTALT;
+        case XKB_KEY_Super_R:              return HID_KEY_RIGHTMETA;
+    }
+    rvvm_info("Unmapped XKB keycode %x", keysym);
+    return HID_KEY_NONE;
 }
 
 static void wl_keyboard_on_key(void* data, struct wl_keyboard* keyboard, uint32_t serial, uint32_t time, uint32_t key, uint32_t state)
 {
     struct keyboard_data* keyboard_data = data;
-    if (!keyboard_data->keymap) return;
-    UNUSED(keyboard);
-    UNUSED(time);
-    wayland_data_t* wayland_data = NULL;
-    if (keyboard_data->entered_surface) {
-        wayland_data = wl_surface_get_user_data(keyboard_data->entered_surface);
-    }
-    if (!wayland_data) return;
+    UNUSED(keyboard); UNUSED(time);
+    if (keyboard_data->keymap) {
+        wayland_data_t* wayland_data = NULL;
+        if (keyboard_data->entered_surface) {
+            wayland_data = wl_surface_get_user_data(keyboard_data->entered_surface);
+        }
+        if (wayland_data) {
+            int32_t keysym = xkb_state_key_get_one_sym(keyboard_data->state, key + 8);
+            int32_t hid_key = wayland_keysym_to_hid(keysym);
 
-    int32_t keysym = xkb_state_key_get_one_sym(keyboard_data->state, key + 8);
-    int32_t hid_key;
-    switch (keysym) {
-        case XKB_KEY_Escape: hid_key = HID_KEY_ESC; break;
-        case XKB_KEY_a: hid_key = HID_KEY_A; break;
-        case XKB_KEY_b: hid_key = HID_KEY_B; break;
-        case XKB_KEY_c: hid_key = HID_KEY_C; break;
-        case XKB_KEY_d: hid_key = HID_KEY_D; break;
-        case XKB_KEY_e: hid_key = HID_KEY_E; break;
-        case XKB_KEY_f: hid_key = HID_KEY_F; break;
-        case XKB_KEY_g: hid_key = HID_KEY_G; break;
-        case XKB_KEY_h: hid_key = HID_KEY_H; break;
-        case XKB_KEY_i: hid_key = HID_KEY_I; break;
-        case XKB_KEY_j: hid_key = HID_KEY_J; break;
-        case XKB_KEY_k: hid_key = HID_KEY_K; break;
-        case XKB_KEY_l: hid_key = HID_KEY_L; break;
-        case XKB_KEY_m: hid_key = HID_KEY_M; break;
-        case XKB_KEY_n: hid_key = HID_KEY_N; break;
-        case XKB_KEY_o: hid_key = HID_KEY_O; break;
-        case XKB_KEY_p: hid_key = HID_KEY_P; break;
-        case XKB_KEY_q: hid_key = HID_KEY_Q; break;
-        case XKB_KEY_r: hid_key = HID_KEY_R; break;
-        case XKB_KEY_s: hid_key = HID_KEY_S; break;
-        case XKB_KEY_t: hid_key = HID_KEY_T; break;
-        case XKB_KEY_u: hid_key = HID_KEY_U; break;
-        case XKB_KEY_v: hid_key = HID_KEY_V; break;
-        case XKB_KEY_w: hid_key = HID_KEY_W; break;
-        case XKB_KEY_x: hid_key = HID_KEY_X; break;
-        case XKB_KEY_y: hid_key = HID_KEY_Y; break;
-        case XKB_KEY_z: hid_key = HID_KEY_Z; break;
-        case XKB_KEY_0: hid_key = HID_KEY_0; break;
-        case XKB_KEY_1: hid_key = HID_KEY_1; break;
-        case XKB_KEY_2: hid_key = HID_KEY_2; break;
-        case XKB_KEY_3: hid_key = HID_KEY_3; break;
-        case XKB_KEY_4: hid_key = HID_KEY_4; break;
-        case XKB_KEY_5: hid_key = HID_KEY_5; break;
-        case XKB_KEY_6: hid_key = HID_KEY_6; break;
-        case XKB_KEY_7: hid_key = HID_KEY_7; break;
-        case XKB_KEY_8: hid_key = HID_KEY_8; break;
-        case XKB_KEY_9: hid_key = HID_KEY_9; break;
-        case XKB_KEY_Return: hid_key = HID_KEY_ENTER; break;
-        case XKB_KEY_BackSpace: hid_key = HID_KEY_BACKSPACE; break;
-        case XKB_KEY_Tab: hid_key = HID_KEY_TAB; break;
-        case XKB_KEY_space: hid_key = HID_KEY_SPACE; break;
-        case XKB_KEY_F1: hid_key = HID_KEY_F1; break;
-        case XKB_KEY_F2: hid_key = HID_KEY_F2; break;
-        case XKB_KEY_F3: hid_key = HID_KEY_F3; break;
-        case XKB_KEY_F4: hid_key = HID_KEY_F4; break;
-        case XKB_KEY_F5: hid_key = HID_KEY_F5; break;
-        case XKB_KEY_F6: hid_key = HID_KEY_F6; break;
-        case XKB_KEY_F7: hid_key = HID_KEY_F7; break;
-        case XKB_KEY_F8: hid_key = HID_KEY_F8; break;
-        case XKB_KEY_F9: hid_key = HID_KEY_F9; break;
-        case XKB_KEY_F10: hid_key = HID_KEY_F10; break;
-        case XKB_KEY_F11: hid_key = HID_KEY_F11; break;
-        case XKB_KEY_F12: hid_key = HID_KEY_F12; break;
-        case XKB_KEY_minus: hid_key = HID_KEY_MINUS; break;
-        case XKB_KEY_equal: hid_key = HID_KEY_EQUAL; break;
-        case XKB_KEY_bracketleft: hid_key = HID_KEY_LEFTBRACE; break;
-        case XKB_KEY_bracketright: hid_key = HID_KEY_RIGHTBRACE; break;
-        case XKB_KEY_backslash: hid_key = HID_KEY_BACKSLASH; break;
-        case XKB_KEY_semicolon: hid_key = HID_KEY_SEMICOLON; break;
-        case XKB_KEY_apostrophe: hid_key = HID_KEY_APOSTROPHE; break;
-        case XKB_KEY_grave: hid_key = HID_KEY_GRAVE; break;
-        case XKB_KEY_comma: hid_key = HID_KEY_COMMA; break;
-        case XKB_KEY_period: hid_key = HID_KEY_DOT; break;
-        case XKB_KEY_slash: hid_key = HID_KEY_SLASH; break;
-        case XKB_KEY_Caps_Lock: hid_key = HID_KEY_CAPSLOCK; break;
-        case XKB_KEY_Shift_L: hid_key = HID_KEY_LEFTSHIFT; break;
-        case XKB_KEY_Shift_R: hid_key = HID_KEY_RIGHTSHIFT; break;
-        case XKB_KEY_Control_L: hid_key = HID_KEY_LEFTCTRL; break;
-        case XKB_KEY_Control_R: hid_key = HID_KEY_RIGHTCTRL; break;
-        case XKB_KEY_Alt_L: hid_key = HID_KEY_LEFTALT; break;
-        case XKB_KEY_Alt_R: hid_key = HID_KEY_RIGHTALT; break;
-        case XKB_KEY_Super_L: hid_key = HID_KEY_LEFTMETA; break;
-        case XKB_KEY_Super_R: hid_key = HID_KEY_RIGHTMETA; break;
-        case XKB_KEY_Sys_Req: hid_key = HID_KEY_SYSRQ; break;
-        case XKB_KEY_Scroll_Lock: hid_key = HID_KEY_SCROLLLOCK; break;
-        case XKB_KEY_Pause: hid_key = HID_KEY_PAUSE; break;
-        case XKB_KEY_Insert: hid_key = HID_KEY_INSERT; break;
-        case XKB_KEY_Home: hid_key = HID_KEY_HOME; break;
-        case XKB_KEY_Page_Up: hid_key = HID_KEY_PAGEUP; break;
-        case XKB_KEY_Delete: hid_key = HID_KEY_DELETE; break;
-        case XKB_KEY_End: hid_key = HID_KEY_END; break;
-        case XKB_KEY_Page_Down: hid_key = HID_KEY_PAGEDOWN; break;
-        case XKB_KEY_Up: hid_key = HID_KEY_UP; break;
-        case XKB_KEY_Down: hid_key = HID_KEY_DOWN; break;
-        case XKB_KEY_Left: hid_key = HID_KEY_LEFT; break;
-        case XKB_KEY_Right: hid_key = HID_KEY_RIGHT; break;
-        case XKB_KEY_Num_Lock: hid_key = HID_KEY_NUMLOCK; break;
-        case XKB_KEY_KP_Divide: hid_key = HID_KEY_KPSLASH; break;
-        case XKB_KEY_KP_Multiply: hid_key = HID_KEY_KPASTERISK; break;
-        case XKB_KEY_KP_Subtract: hid_key = HID_KEY_KPMINUS; break;
-        case XKB_KEY_KP_Add: hid_key = HID_KEY_KPPLUS; break;
-        case XKB_KEY_KP_Enter: hid_key = HID_KEY_KPENTER; break;
-        case XKB_KEY_KP_0: hid_key = HID_KEY_KP0; break;
-        case XKB_KEY_KP_1: hid_key = HID_KEY_KP1; break;
-        case XKB_KEY_KP_2: hid_key = HID_KEY_KP2; break;
-        case XKB_KEY_KP_3: hid_key = HID_KEY_KP3; break;
-        case XKB_KEY_KP_4: hid_key = HID_KEY_KP4; break;
-        case XKB_KEY_KP_5: hid_key = HID_KEY_KP5; break;
-        case XKB_KEY_KP_6: hid_key = HID_KEY_KP6; break;
-        case XKB_KEY_KP_7: hid_key = HID_KEY_KP7; break;
-        case XKB_KEY_KP_8: hid_key = HID_KEY_KP8; break;
-        case XKB_KEY_KP_9: hid_key = HID_KEY_KP9; break;
-        case XKB_KEY_KP_Decimal: hid_key = HID_KEY_KPDOT; break;
-        case XKB_KEY_KP_Equal: hid_key = HID_KEY_KPEQUAL; break;
-        case XKB_KEY_Multi_key: hid_key = HID_KEY_COMPOSE; break;
-        case XKB_KEY_F13: hid_key = HID_KEY_F13; break;
-        case XKB_KEY_F14: hid_key = HID_KEY_F14; break;
-        case XKB_KEY_F15: hid_key = HID_KEY_F15; break;
-        case XKB_KEY_F16: hid_key = HID_KEY_F16; break;
-        case XKB_KEY_F17: hid_key = HID_KEY_F17; break;
-        case XKB_KEY_F18: hid_key = HID_KEY_F18; break;
-        case XKB_KEY_F19: hid_key = HID_KEY_F19; break;
-        case XKB_KEY_F20: hid_key = HID_KEY_F20; break;
-        case XKB_KEY_F21: hid_key = HID_KEY_F21; break;
-        case XKB_KEY_F22: hid_key = HID_KEY_F22; break;
-        case XKB_KEY_F23: hid_key = HID_KEY_F23; break;
-        case XKB_KEY_F24: hid_key = HID_KEY_F24; break;
-        case XKB_KEY_Execute: hid_key = HID_KEY_OPEN; break;
-        case XKB_KEY_Help: hid_key = HID_KEY_HELP; break;
-        case XKB_KEY_Menu: hid_key = HID_KEY_MENU; break;
-        case XKB_KEY_Select: hid_key = HID_KEY_FRONT; break;
-        case XKB_KEY_Cancel: hid_key = HID_KEY_STOP; break;
-        case XKB_KEY_Redo: hid_key = HID_KEY_AGAIN; break;
-        case XKB_KEY_Undo: hid_key = HID_KEY_UNDO; break;
-        // case XKB_KEY_Cut: hid_key = HID_KEY_CUT; break;
-        // case XKB_KEY_Copy: hid_key = HID_KEY_COPY; break;
-        // case XKB_KEY_Paste: hid_key = HID_KEY_PASTE; break;
-        case XKB_KEY_Find: hid_key = HID_KEY_FIND; break;
-        // case XKB_KEY_Mute: hid_key = HID_KEY_MUTE; break;
-        // case XKB_KEY_Volume_Mute: hid_key = HID_KEY_MUTE; break;
-        // case XKB_KEY_Volume_Down: hid_key = HID_KEY_VOLUMEDOWN; break;
-        // case XKB_KEY_Volume_Up: hid_key = HID_KEY_VOLUMEUP; break;
-        case XKB_KEY_KP_Separator: hid_key = HID_KEY_KPCOMMA; break;
-        case XKB_KEY_Romaji: hid_key = HID_KEY_RO; break;
-        case XKB_KEY_Hiragana_Katakana: hid_key = HID_KEY_KATAKANAHIRAGANA; break;
-        case XKB_KEY_yen: hid_key = HID_KEY_YEN; break;
-        case XKB_KEY_Henkan: hid_key = HID_KEY_HENKAN; break;
-        case XKB_KEY_Muhenkan: hid_key = HID_KEY_MUHENKAN; break;
-        case XKB_KEY_Hangul: hid_key = HID_KEY_HANGEUL; break;
-        case XKB_KEY_Hangul_Hanja: hid_key = HID_KEY_HANJA; break;
-        case XKB_KEY_Katakana: hid_key = HID_KEY_KATAKANA; break;
-        case XKB_KEY_Hiragana: hid_key = HID_KEY_HIRAGANA; break;
-        case XKB_KEY_Zenkaku_Hankaku: hid_key = HID_KEY_Z; break;
-        default: hid_key = HID_KEY_NONE; break;
-    }
+            if (state == WL_KEYBOARD_KEY_STATE_PRESSED) {
+                wayland_data->win->on_key_press(wayland_data->win, hid_key);
+            } else {
+                wayland_data->win->on_key_release(wayland_data->win, hid_key);
+            }
 
-    if (state == WL_KEYBOARD_KEY_STATE_PRESSED) {
-        wayland_data->win->on_key_press(wayland_data->win, hid_key);
-    } else {
-        wayland_data->win->on_key_release(wayland_data->win, hid_key);
+            wayland_data->last_key_serial = serial;
+        }
     }
-
-    wayland_data->last_key_serial = serial;
 }
 
 static void wl_keyboard_on_modifiers(void* data, struct wl_keyboard* keyboard, uint32_t serial, uint32_t mods_depressed, uint32_t mods_latched, uint32_t mods_locked, uint32_t group)
 {
-    UNUSED(data);
-    UNUSED(keyboard);
-    UNUSED(serial);
-    UNUSED(mods_depressed);
-    UNUSED(mods_latched);
-    UNUSED(mods_locked);
-    UNUSED(group);
+    UNUSED(data); UNUSED(keyboard); UNUSED(serial); UNUSED(mods_depressed); UNUSED(mods_latched); UNUSED(mods_locked); UNUSED(group);
 }
 
 static void wl_keyboard_on_repeat_info(void* data, struct wl_keyboard* keyboard, int32_t rate, int32_t delay)
 {
-    UNUSED(data);
-    UNUSED(keyboard);
-    UNUSED(rate);
-    UNUSED(delay);
+    UNUSED(data); UNUSED(keyboard); UNUSED(rate); UNUSED(delay);
 }
 
 static const struct wl_keyboard_listener keyboard_listener = {
@@ -824,11 +765,7 @@ static const struct wl_keyboard_listener keyboard_listener = {
 static void relative_pointer_on_relative_motion(void* data, struct zwp_relative_pointer_v1* relative_pointer, uint32_t utime_hi, uint32_t utime_lo, wl_fixed_t dx, wl_fixed_t dy, wl_fixed_t dx_unaccel, wl_fixed_t dy_unaccel)
 {
     struct pointer_data* pointer_data = data;
-    UNUSED(relative_pointer);
-    UNUSED(utime_hi);
-    UNUSED(utime_lo);
-    UNUSED(dx);
-    UNUSED(dy);
+    UNUSED(relative_pointer); UNUSED(utime_hi); UNUSED(utime_lo); UNUSED(dx); UNUSED(dy);
 
     if (!pointer_data->entered_surface) return;
     wayland_data_t* wayland_data = wl_surface_get_user_data(pointer_data->entered_surface);
@@ -846,6 +783,7 @@ static void zwp_locked_pointer_on_locked(void* data, struct zwp_locked_pointer_v
 {
     wayland_data_t* wayland_data = data;
     UNUSED(locked_pointer);
+
     wayland_data->grabbed = true;
 }
 
@@ -853,6 +791,7 @@ static void zwp_locked_pointer_on_unlocked(void* data, struct zwp_locked_pointer
 {
     wayland_data_t* wayland_data = data;
     UNUSED(locked_pointer);
+
     wayland_data->grabbed = false;
 }
 
@@ -898,9 +837,7 @@ static void wl_seat_on_capabilities(void* data, struct wl_seat* seat, uint32_t c
 
 static void wl_seat_on_name(void* data, struct wl_seat* seat, const char* name)
 {
-    UNUSED(data);
-    UNUSED(seat);
-    UNUSED(name);
+    UNUSED(data); UNUSED(seat); UNUSED(name);
 }
 
 static const struct wl_seat_listener seat_listener = {
@@ -947,33 +884,25 @@ static const struct xdg_surface_listener xdg_surface_listener = {
 
 static void xdg_toplevel_on_configure(void* data, struct xdg_toplevel* xdg_toplevel, int32_t width, int32_t height, struct wl_array* states)
 {
-    UNUSED(data);
-    UNUSED(xdg_toplevel);
-    UNUSED(width);
-    UNUSED(height);
-    UNUSED(states);
+    UNUSED(data); UNUSED(xdg_toplevel); UNUSED(width); UNUSED(height); UNUSED(states);
 }
 
 static void xdg_toplevel_on_close(void* data, struct xdg_toplevel* xdg_toplevel)
 {
-    UNUSED(xdg_toplevel);
     wayland_data_t* wayland_data = data;
+    UNUSED(xdg_toplevel);
+
     wayland_data->win->on_close(wayland_data->win);
 }
 
 static void xdg_toplevel_on_configure_bounds(void* data, struct xdg_toplevel* xdg_toplevel, int32_t width, int32_t height)
 {
-    UNUSED(data);
-    UNUSED(xdg_toplevel);
-    UNUSED(width);
-    UNUSED(height);
+    UNUSED(data); UNUSED(xdg_toplevel); UNUSED(width); UNUSED(height);
 }
 
 static void xdg_toplevel_on_wm_capabilities(void* data, struct xdg_toplevel* xdg_toplevel, struct wl_array* capabilities)
 {
-    UNUSED(data);
-    UNUSED(xdg_toplevel);
-    UNUSED(capabilities);
+    UNUSED(data); UNUSED(xdg_toplevel); UNUSED(capabilities);
 }
 
 static const struct xdg_toplevel_listener xdg_toplevel_listener = {
@@ -987,9 +916,8 @@ static const struct xdg_toplevel_listener xdg_toplevel_listener = {
 
 static void wl_surface_on_enter(void* data, struct wl_surface* wl_surface, struct wl_output* output)
 {
-    UNUSED(wl_surface);
-
     wayland_data_t* wayland_data = data;
+    UNUSED(wl_surface);
 
     if (wayland_data->output) {
         struct global_data* global_data = wl_output_get_user_data(wayland_data->output);
@@ -1012,9 +940,7 @@ static void wl_surface_on_enter(void* data, struct wl_surface* wl_surface, struc
 
 static void wl_surface_on_leave(void* data, struct wl_surface* wl_surface, struct wl_output* output)
 {
-    UNUSED(wl_surface);
-    UNUSED(output);
-    UNUSED(data);
+    UNUSED(wl_surface); UNUSED(output); UNUSED(data);
 }
 
 static void wl_surface_on_preferred_buffer_scale(void* data, struct wl_surface* wl_surface, int32_t scale)
@@ -1053,8 +979,7 @@ static const struct wl_surface_listener surface_listener = {
 
 static void wl_registry_on_global(void* data, struct wl_registry* registry, uint32_t name, const char* interface, uint32_t version)
 {
-    UNUSED(registry);
-    UNUSED(data);
+    UNUSED(registry); UNUSED(data);
 
     struct global_data* global_data = safe_new_obj(struct global_data);
     struct wl_proxy* proxy = NULL;
@@ -1142,39 +1067,36 @@ static void wl_registry_on_global(void* data, struct wl_registry* registry, uint
 
 static void wl_registry_on_global_remove(void* data, struct wl_registry* registry, uint32_t name)
 {
-    UNUSED(data);
-    UNUSED(registry);
-    UNUSED(name);
-
     size_t val = hashmap_get(&globals, name);
-    if (!val) return;
+    UNUSED(data); UNUSED(registry);
 
-    struct global_data* global_data = (struct global_data*)(uintptr_t)val;
-    if (global_data->global_type == GLOBAL_TYPE_OUTPUT) {
-        struct output_data* output_data = global_data->data;
-        output_data->refcounter--;
-        if (output_data->refcounter <= 0) {
-            if (output_data->xdg_output) zxdg_output_v1_destroy(output_data->xdg_output);
-            wl_output_destroy(output_data->output);
-            safe_free(output_data);
+    if (val) {
+        struct global_data* global_data = (struct global_data*)(uintptr_t)val;
+        if (global_data->global_type == GLOBAL_TYPE_OUTPUT) {
+            struct output_data* output_data = global_data->data;
+            output_data->refcounter--;
+            if (output_data->refcounter <= 0) {
+                if (output_data->xdg_output) zxdg_output_v1_destroy(output_data->xdg_output);
+                wl_output_destroy(output_data->output);
+                safe_free(output_data);
+            }
+        } else if (global_data->global_type == GLOBAL_TYPE_SEAT) {
+            struct seat_data* seat_data = global_data->data;
+            if (seat_data->pointer) {
+                struct pointer_data* pointer_data = wl_pointer_get_user_data(seat_data->pointer);
+                if (pointer_data->relative_source) zwp_relative_pointer_v1_destroy(pointer_data->relative_source);
+                wl_pointer_destroy(seat_data->pointer);
+            }
+            if (seat_data->keyboard) {
+                struct keyboard_data* keyboard_data = wl_keyboard_get_user_data(seat_data->keyboard);
+                if (keyboard_data->keymap) xkb_keymap_unref(keyboard_data->keymap);
+                if (keyboard_data->state) xkb_state_unref(keyboard_data->state);
+                wl_keyboard_destroy(seat_data->keyboard);
+            }
+            if (seat_data->touch) wl_touch_destroy(seat_data->touch);
+            safe_free(seat_data);
         }
-    } else if (global_data->global_type == GLOBAL_TYPE_SEAT) {
-        struct seat_data* seat_data = global_data->data;
-        if (seat_data->pointer) {
-            struct pointer_data* pointer_data = wl_pointer_get_user_data(seat_data->pointer);
-            if (pointer_data->relative_source) zwp_relative_pointer_v1_destroy(pointer_data->relative_source);
-            wl_pointer_destroy(seat_data->pointer);
-        }
-        if (seat_data->keyboard) {
-            struct keyboard_data* keyboard_data = wl_keyboard_get_user_data(seat_data->keyboard);
-            if (keyboard_data->keymap) xkb_keymap_unref(keyboard_data->keymap);
-            if (keyboard_data->state) xkb_state_unref(keyboard_data->state);
-            wl_keyboard_destroy(seat_data->keyboard);
-        }
-        if (seat_data->touch) wl_touch_destroy(seat_data->touch);
-        safe_free(seat_data);
     }
-
 }
 
 static const struct wl_registry_listener registry_listener = {
@@ -1192,13 +1114,18 @@ void* wayland_eventloop(void* data)
     return NULL;
 }
 
-static bool wayland_init(void)
-{
 
-    hashmap_init(&globals, 16);
-    hashmap_init(&seats, 1);
-    hashmap_init(&outputs, 1);
-#ifdef WAYLAND_DYNAMIC_LOADING
+#define WAYLAND_DLIB_RESOLVE(lib, sym) \
+do { \
+    sym = dlib_resolve(lib, #sym); \
+    success = success && !!sym; \
+} while (0)
+
+
+static bool wayland_init_libs(void)
+{
+    bool success = true;
+#if !defined(USE_FULL_LINKING)
     dlib_ctx_t* libwayland = dlib_open("wayland-client", DLIB_NAME_PROBE);
     dlib_ctx_t* libxkbcommon = dlib_open("xkbcommon", DLIB_NAME_PROBE);
 
@@ -1217,21 +1144,36 @@ static bool wayland_init(void)
     WAYLAND_DLIB_RESOLVE(libwayland, wl_display_read_events);
     WAYLAND_DLIB_RESOLVE(libwayland, wl_proxy_destroy);
 
-    XKB_DLIB_RESOLVE(libxkbcommon, xkb_context_new);
-    XKB_DLIB_RESOLVE(libxkbcommon, xkb_context_unref);
-    XKB_DLIB_RESOLVE(libxkbcommon, xkb_keymap_new_from_string);
-    XKB_DLIB_RESOLVE(libxkbcommon, xkb_keymap_unref);
-    XKB_DLIB_RESOLVE(libxkbcommon, xkb_state_new);
-    XKB_DLIB_RESOLVE(libxkbcommon, xkb_state_unref);
-    XKB_DLIB_RESOLVE(libxkbcommon, xkb_state_key_get_one_sym);
+    WAYLAND_DLIB_RESOLVE(libxkbcommon, xkb_context_new);
+    WAYLAND_DLIB_RESOLVE(libxkbcommon, xkb_context_unref);
+    WAYLAND_DLIB_RESOLVE(libxkbcommon, xkb_keymap_new_from_string);
+    WAYLAND_DLIB_RESOLVE(libxkbcommon, xkb_keymap_unref);
+    WAYLAND_DLIB_RESOLVE(libxkbcommon, xkb_state_new);
+    WAYLAND_DLIB_RESOLVE(libxkbcommon, xkb_state_unref);
+    WAYLAND_DLIB_RESOLVE(libxkbcommon, xkb_state_key_get_one_sym);
 
     dlib_close(libwayland);
     dlib_close(libxkbcommon);
 #endif
+    return success;
+}
+
+static bool wayland_init(void)
+{
+    static bool libwayland_avail = false;
+    DO_ONCE(libwayland_avail = wayland_init_libs());
+    if (!libwayland_avail) {
+        rvvm_info("Failed to load libwayland-client or libxkbcommon");
+        return false;
+    }
+
+
+    hashmap_init(&globals, 16);
+    hashmap_init(&seats, 1);
+    hashmap_init(&outputs, 1);
 
     xkb_context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
 
-    rvvm_info("Initializing wayland backend");
     display = wl_display_connect(NULL);
     if (!display) {
         rvvm_info("Wayland initialization failed: Failed to connect to Wayland display");
@@ -1263,13 +1205,6 @@ static bool wayland_init(void)
         rvvm_info("Wayland initialization failed: xdg_wm_base global of version >= 2 is never advertised.");
         return false;
     }
-
-    rvvm_info("Wayland backend initialized.");
-    rvvm_info("Available features:");
-    rvvm_info(" - Decorations: %s", xdg_decoration_manager ? "Available" : "Not available");
-    rvvm_info(" - Pointer input grab: %s", (pointer_constraints && relative_pointer_manager) ? "Available" : "Not available");
-    rvvm_info(" - Keyboard input grab: %s", keyboard_shortcuts_inhibit_manager ? "Available" : "Not available");
-    rvvm_info(" - Tearing control hints: %s", tearing_control_manager ? "Available" : "Not available");
 
     wayland_evloop_thread = thread_create(wayland_eventloop, NULL);
     if (!wayland_evloop_thread) {
@@ -1439,7 +1374,7 @@ bool wayland_window_init(gui_window_t *win)
 
 #else
 
-bool wayland_window_init(gui_window_t *win)
+bool wayland_window_init(gui_window_t* win)
 {
     UNUSED(win);
     return false;
