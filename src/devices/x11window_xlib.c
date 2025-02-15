@@ -10,21 +10,35 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "gui_window.h"
 #include "compiler.h"
 
+SOURCE_OPTIMIZATION_SIZE
+
+#define USE_XSHM
+
 // Resolve symbols at runtime
 #define X11_DLIB_SYM(sym) static typeof(sym)* sym##_dlib = NULL;
 
-#if !(CHECK_INCLUDE(X11/Xlib.h, 1) && CHECK_INCLUDE(X11/Xutil.h, 1) && CHECK_INCLUDE(X11/keysym.h, 1) && CHECK_INCLUDE(sys/time.h, 1))
+#if defined(USE_X11) && !(CHECK_INCLUDE(X11/Xlib.h, 1) && CHECK_INCLUDE(X11/Xutil.h, 1) && CHECK_INCLUDE(X11/keysym.h, 1))
 // No X11 headers found
 #undef USE_X11
 #warning Disabling X11 support as <X11/Xlib.h> is unavailable
-#elif defined(__ANDROID__)
+#endif
+
+#if defined(USE_XSHM) && defined(__ANDROID__)
 // There's no SysV SHM on Android
 #warning Disabling XShm support on Android
-#elif !(CHECK_INCLUDE(X11/extensions/XShm.h, 1) && CHECK_INCLUDE(sys/ipc.h, 1) && CHECK_INCLUDE(sys/shm.h, 1))
+#undef USE_XSHM
+#endif
+
+#if defined(USE_XSHM) && !CHECK_INCLUDE(X11/extensions/XShm.h, 1)
 // No XShm headers found
 #warning Disabling XShm support as <X11/extensions/XShm.h> is unavailable
-#else
-#define USE_XSHM
+#undef USE_XSHM
+#endif
+
+#if defined(USE_XSHM) && !(CHECK_INCLUDE(sys/ipc.h, 1) && CHECK_INCLUDE(sys/shm.h, 1))
+// No SysV SHM headers found
+#warning Disabling XShm support as <X11/extensions/XShm.h> is unavailable
+#undef USE_XSHM
 #endif
 
 #ifdef USE_X11
@@ -152,8 +166,6 @@ X11_DLIB_SYM(XCloseDisplay)
 #include "vector.h"
 #include "utils.h"
 #include "dlib.h"
-
-SOURCE_OPTIMIZATION_SIZE
 
 // X11 window state
 typedef struct {
@@ -775,12 +787,13 @@ static void x11_window_remove(gui_window_t* win)
 
 #define X11_DLIB_RESOLVE(lib, sym) \
 do { \
-    sym = dlib_resolve(lib, #sym);\
-    if (sym == NULL) return false; \
+    sym = dlib_resolve(lib, #sym); \
+    success = success && !!sym; \
 } while (0)
 
 static bool x11_init_libs(void)
 {
+    bool success = true;
 #if !defined(USE_FULL_LINKING)
     dlib_ctx_t* libx11 = dlib_open("X11", DLIB_NAME_PROBE);
 
@@ -838,7 +851,7 @@ static bool x11_init_libs(void)
 #endif
 
 #endif
-    return true;
+    return success;
 }
 
 bool x11_window_init(gui_window_t* win)
