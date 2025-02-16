@@ -111,7 +111,7 @@ static size_t term_write_raw(chardev_term_t* term, const char* buffer, size_t si
 
 static size_t term_read_raw(chardev_term_t* term, char* buffer, size_t size)
 {
-    UNUSED(term);
+    UNUSED(term); UNUSED(buffer); UNUSED(size);
 #if defined(POSIX_TERM_IMPL)
     int rfd = term ? term->rfd : 0;
     int tmp = read(rfd, buffer, size);
