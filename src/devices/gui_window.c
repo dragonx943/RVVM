@@ -308,6 +308,8 @@ bool gui_window_init_auto(rvvm_machine_t* machine, uint32_t width, uint32_t heig
         return false;
     }
 
+    gui_window_update_title(win);
+
     rvvm_mmio_dev_t* fb = framebuffer_init_auto(machine, &win->fb);
     if (!fb) {
         gui_window_free(win);
