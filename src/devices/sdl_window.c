@@ -218,6 +218,12 @@ SDL_DLIB_SYM(SDL_SetWindowKeyboardGrab)
 
 #define SDL_LIB_NAME "SDL2"
 
+#if SDL_MAJOR_VERSION == 2 && SDL_MINOR_VERSION < 14
+// Support pre SDL 2.14
+#define SDL_PIXELFORMAT_XRGB8888 SDL_PIXELFORMAT_RGB888
+#define SDL_PIXELFORMAT_XBGR8888 SDL_PIXELFORMAT_BGR888
+#endif
+
 #if !defined(USE_FULL_LINKING)
 
 SDL_DLIB_SYM(SDL_RenderCopy)
@@ -416,7 +422,7 @@ typedef struct {
     uint32_t id;
 } sdl_window_t;
 
-static vector_t(gui_window_t*) sdl_windows;
+static vector_t(gui_window_t*) sdl_windows = {0};
 
 static hid_key_t sdl_key_to_hid(uint32_t sdl_key)
 {
@@ -566,7 +572,7 @@ static bool sdl_set_framebuffer(sdl_window_t* sdl, const fb_ctx_t* fb)
                 texture = SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_RGB565, SDL_TEXTUREACCESS_STREAMING, fb->width, fb->height);
                 break;
             case RGB_FMT_R8G8B8:
-                texture = SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, fb->width, fb->height);
+                texture = SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_BGR24, SDL_TEXTUREACCESS_STREAMING, fb->width, fb->height);
                 break;
             case RGB_FMT_A8R8G8B8:
                 texture = SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, fb->width, fb->height);
@@ -606,7 +612,9 @@ static bool sdl_set_framebuffer(sdl_window_t* sdl, const fb_ctx_t* fb)
         if (texture && fb && (fb->width != sdl->fb.width || fb->height != sdl->fb.height)) {
             sdl->fb = *fb;
 #if USE_SDL >= 2
-            SDL_SetWindowSize(sdl->window, fb->width, fb->height);
+            if (sdl->window) {
+                SDL_SetWindowSize(sdl->window, fb->width, fb->height);
+            }
 #else
             sdl->window = SDL_SetVideoMode(fb->width, fb->height, rgb_format_bpp(fb->format), SDL_ANYFORMAT);
 #endif
@@ -620,7 +628,7 @@ static void sdl_window_draw(gui_window_t* win)
 {
     sdl_window_t* sdl = win->win_data;
 
-    if (sdl->window && sdl->texture) {
+    if (sdl && sdl->window && sdl->texture) {
 #if USE_SDL == 3
         SDL_UpdateTexture(sdl->texture, NULL, sdl->fb.buffer, framebuffer_stride(&sdl->fb));
         SDL_RenderTexture(sdl->renderer, sdl->texture, NULL, NULL);
@@ -706,59 +714,62 @@ static void sdl_window_poll(gui_window_t* win)
 static void sdl_window_grab_input(gui_window_t* win, bool grab)
 {
     sdl_window_t* sdl = win->win_data;
-    sdl->grab = grab;
-
+    if (sdl) {
+        sdl->grab = grab;
 #if USE_SDL == 3
-    SDL_SetWindowMouseGrab(sdl->window, grab);
-    SDL_SetWindowKeyboardGrab(sdl->window, grab);
-    SDL_SetWindowRelativeMouseMode(sdl->window, grab);
+        SDL_SetWindowMouseGrab(sdl->window, grab);
+        SDL_SetWindowKeyboardGrab(sdl->window, grab);
+        SDL_SetWindowRelativeMouseMode(sdl->window, grab);
 #elif USE_SDL == 2
-    SDL_SetWindowGrab(sdl->window, grab);
-    SDL_SetRelativeMouseMode(grab);
+        SDL_SetWindowGrab(sdl->window, grab);
+        SDL_SetRelativeMouseMode(grab);
 #else
-    SDL_WM_GrabInput(grab ? SDL_GRAB_ON : SDL_GRAB_OFF);
+        SDL_WM_GrabInput(grab ? SDL_GRAB_ON : SDL_GRAB_OFF);
 #endif
+    }
 }
 
 static void sdl_window_set_title(gui_window_t* win, const char* title)
 {
-#if USE_SDL >= 2
     sdl_window_t* sdl = win->win_data;
-    SDL_SetWindowTitle(sdl->window, title);
+    if (sdl) {
+#if USE_SDL >= 2
+        SDL_SetWindowTitle(sdl->window, title);
 #else
-    UNUSED(win);
-    SDL_WM_SetCaption(title, NULL);
+        SDL_WM_SetCaption(title, NULL);
 #endif
+    }
 }
 
 static void sdl_window_remove(gui_window_t* win)
 {
     sdl_window_t* sdl = win->win_data;
-
-    sdl_window_grab_input(win, false);
-    sdl_set_framebuffer(sdl, NULL);
-
-#if USE_SDL >= 2
-    if (sdl->renderer) {
-        SDL_DestroyRenderer(sdl->renderer);
-    }
-    if (sdl->window) {
-        SDL_DestroyWindow(sdl->window);
-    }
-#else
-    if (sdl->window) {
-        SDL_FreeSurface(sdl->window);
-    }
-#endif
-
-    vector_foreach_back(sdl_windows, i) {
-        if (vector_at(sdl_windows, i) == win) {
-            vector_erase(sdl_windows, i);
-            break;
+    if (sdl) {
+        sdl_window_grab_input(win, false);
+        sdl_set_framebuffer(sdl, NULL);
+        if (win->fb.buffer) {
+            vma_free(win->fb.buffer, framebuffer_size(&win->fb));
         }
+#if USE_SDL >= 2
+        if (sdl->renderer) {
+            SDL_DestroyRenderer(sdl->renderer);
+        }
+        if (sdl->window) {
+            SDL_DestroyWindow(sdl->window);
+        }
+#else
+        if (sdl->window) {
+            SDL_FreeSurface(sdl->window);
+        }
+#endif
+        vector_foreach_back(sdl_windows, i) {
+            if (vector_at(sdl_windows, i) == win) {
+                vector_erase(sdl_windows, i);
+                break;
+            }
+        }
+        free(sdl);
     }
-
-    free(sdl);
 }
 
 #define SDL_DLIB_RESOLVE(lib, sym) \
@@ -825,26 +836,31 @@ static bool sdl_init(void)
         return false;
     }
 
-#ifdef __unix__
-    setenv("SDL_DEBUG", "1", false);
+#if defined(__linux__)
+    // Force X11 over Wayland
+    // SDL Wayland backend doesn't support software rendering,
+    // and Nvidia driver isn't compatible with isolation (See #178)
+    setenv("SDL_VIDEODRIVER", "x11,wayland,kmsdrm,directfb,fbcon", true);
+    setenv("SDL_VIDEO_DRIVER", "x11,wayland,kmsdrm,directfb,fbcon", true);
 #endif
 
 #if USE_SDL == 3
     if (!SDL_Init(SDL_INIT_VIDEO)) {
-        rvvm_error("Failed to initialize SDL");
-        return false;
-    }
 #else
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+#endif
         rvvm_error("Failed to initialize SDL");
         return false;
     }
-#endif
 
 #if USE_SDL >= 2 && defined(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR)
     if (rvvm_strcmp(SDL_GetCurrentVideoDriver(), "x11")) {
         // Prevent messing with the compositor
         SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");
+        // Force software rendering, because it's actually faster in our case,
+        // and because Nvidia driver isn't compatible with isolation (See #178)
+        SDL_SetHint(SDL_HINT_FRAMEBUFFER_ACCELERATION, "0");
+        SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
     }
 #endif
 
@@ -893,7 +909,6 @@ bool sdl_window_init(gui_window_t* win)
 #if USE_SDL >= 2
     if (!sdl->window) {
         rvvm_error("SDL_CreateWindow() failed!");
-        sdl_window_remove(win);
         return false;
     }
 
@@ -908,14 +923,12 @@ bool sdl_window_init(gui_window_t* win)
 #if USE_SDL >= 2
     if (!sdl->renderer) {
         rvvm_error("SDL_CreateRenderer() failed!");
-        sdl_window_remove(win);
         return false;
     }
 #endif
 
     if (!sdl_set_framebuffer(sdl, &win->fb)) {
         rvvm_error("sdl_set_framebuffer() failed!");
-        sdl_window_remove(win);
         return false;
     }
 
