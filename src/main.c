@@ -271,12 +271,12 @@ static int rvvm_cli_main(int argc, char** argv)
         rvvm_dump_dtb(machine, rvvm_getarg("dumpdtb"));
     }
 
-    rvvm_start_machine(machine);
-
     if (!rvvm_has_arg("noisolation")) {
         // Preparations are done, isolate the process as much as possible
         rvvm_restrict_process();
     }
+
+    rvvm_start_machine(machine);
 
     // Returns on machine shutdown
     rvvm_run_eventloop();
