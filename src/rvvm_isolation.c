@@ -121,17 +121,21 @@ static void drop_root_user(void)
 #define __NR_riscv_flush_icache 259
 #endif
 
+// Allow specific syscall in seccomp BPF filter
 #define BPF_SECCOMP_ALLOW_SYSCALL(syscall) \
         BPF_JUMP(BPF_JMP + BPF_JEQ + BPF_K, (syscall), 0, 1), \
         BPF_STMT(BPF_RET + BPF_K, SECCOMP_RET_ALLOW),
 
+// Return errno in seccomp BPF filter
 #define BPF_SECCOMP_ERRNO(errno) \
         BPF_STMT(BPF_RET + BPF_K, SECCOMP_RET_ERRNO | ((errno) & SECCOMP_RET_DATA)),
 
+// Return errno for specific syscall in seccomp BPF filter
 #define BPF_SECCOMP_ERRNO_SYSCALL(syscall, errno) \
         BPF_JUMP(BPF_JMP + BPF_JEQ + BPF_K, (syscall), 0, 1), \
         BPF_SECCOMP_ERRNO(errno)
 
+// May be used to block RWX mmap(), mprotect()
 #define BPF_SECCOMP_BLOCK_RWX_MMAN(syscall) \
         BPF_JUMP(BPF_JMP + BPF_JEQ + BPF_K, syscall, 0, 5), \
         BPF_STMT(BPF_LD + BPF_W + BPF_ABS, offsetof(struct seccomp_data, args[2])), \
@@ -866,12 +870,12 @@ static void seccomp_setup_syscall_filter(bool all_threads) {
         BPF_SECCOMP_ALLOW_SYSCALL(__NR_riscv_flush_icache)
 #endif
 
-        // Allow limited subset of mmap() (RWX is prohibited)
+        // mmap(), mprotect()
 #ifdef __NR_mmap2
-        BPF_SECCOMP_BLOCK_RWX_MMAN(__NR_mmap2) // Used by some 32-bit arches (i386, arm)
+        BPF_SECCOMP_ALLOW_SYSCALL(__NR_mmap2) // Used by some 32-bit arches (i386, arm)
 #endif
 #ifdef __NR_mmap
-        BPF_SECCOMP_BLOCK_RWX_MMAN(__NR_mmap) // Missing on some 32-bit arches (riscv32, arm)
+        BPF_SECCOMP_ALLOW_SYSCALL(__NR_mmap) // Missing on some 32-bit arches (riscv32, arm)
 #endif
 #ifdef __NR_mprotect
         BPF_SECCOMP_BLOCK_RWX_MMAN(__NR_mprotect)
@@ -913,7 +917,7 @@ static void restrict_process_once(void)
 #elif defined(ISOLATION_SECCOMP_IMPL)
     seccomp_setup_syscall_filter(true);
 #elif defined(ISOLATION_PLEDGE_IMPL)
-    if (pledge("stdio inet tty ioctl dns audio drm vmm error", "")) {
+    if (pledge("stdio flock prot_exec inet dns unix sendfd recvfd ioctl tty audio drm vmm error", "")) {
         rvvm_warn("Failed to enforce pledge: %s!", strerror(errno));
     }
 #endif
