@@ -153,6 +153,9 @@ override ARCH = i686
 endif
 endif
 
+# For cross-compile checking
+override TARGET_CROSS := $(if $(filter-out $(ARCH),$(HOST_ARCH)),1,$(if $(filter-out $(OS_PRETTY),$(HOST_UNAME)),1,0))
+
 #
 # Set OS-specific build options
 #
@@ -173,6 +176,7 @@ override BIN_EXT := .html
 override LIB_EXT := .so
 USE_SDL ?= 2
 USE_NET ?= 0
+USE_LIB ?= 0
 else
 
 # POSIX build options
@@ -228,11 +232,6 @@ USE_SDL ?= 1
 USE_NET ?= 0
 endif
 
-ifeq ($(OS),openbsd)
-override CFLAGS += -I/usr/X11R6/include -D_POSIX_C_SOURCE=200809L
-override LDFLAGS += -L/usr/X11R6/lib
-endif
-
 endif
 endif
 
@@ -286,7 +285,7 @@ override VERSION := $(VERSION)-$(GIT_COMMIT)
 endif
 
 #
-# Set up sources, useflags, CFLAGS & LDFLAGS
+# Set up sources, libs, CFLAGS & LDFLAGS
 #
 
 # Generic compiler flags
@@ -309,18 +308,19 @@ override SRC_USE_JNI := $(SRCDIR)/bindings/jni/rvvm_jni.c
 override SRC_USE_RV64 := $(wildcard $(SRCDIR)/cpu/riscv64_*.c)
 override SRC_USE_RV32 := $(wildcard $(SRCDIR)/cpu/riscv32_*.c)
 
-override SDL_PKGCONF := sdl$(subst 1,,$(USE_SDL))
-
 # Useflag CFLAGS
-override CFLAGS_USE_SDL = $(shell pkg-config $(SDL_PKGCONF) --cflags-only-I $(NULL_STDERR))
-override CFLAGS_USE_X11 = $(shell pkg-config x11 xext --cflags-only-I $(NULL_STDERR))
 override CFLAGS_USE_DEBUG := -DDEBUG -g -fno-omit-frame-pointer
-override CFLAGS_USE_DEBUG_FULL := -DDEBUG -Og -ggdb -fno-omit-frame-pointer
+override CFLAGS_USE_DEBUG_FULL := -DUSE_DEBUG -DDEBUG -O0 -ggdb -fno-omit-frame-pointer
 override CFLAGS_USE_LIB := -fPIC
 
 # Useflag LDFLAGS
 # Needed for floating-point functions like fetestexcept/feraiseexcept
 override LDFLAGS_USE_FPU := -lm
+
+# Useflag LIBS
+override LIBS_USE_SDL := sdl$(subst 1,,$(USE_SDL))
+override LIBS_USE_X11 := x11 xext
+override LIBS_USE_WAYLAND := wayland-client xkbcommon
 
 # Useflag dependencies
 override NEED_USE_X11 := USE_GUI
@@ -329,7 +329,7 @@ override NEED_USE_WAYLAND := USE_GUI
 override NEED_USE_JNI := USE_LIB
 
 #
-# OS-specific useflag CFLAGS/LDFLAGS
+# Target-specific useflags handling
 #
 
 ifeq ($(OS),windows)
@@ -358,23 +358,6 @@ ifeq ($(OS),emscripten)
 override CFLAGS_USE_SDL := -s USE_SDL=$(USE_SDL)
 endif
 
-# Fix Nix & MacOS brew issues with non-standard library paths
-ifneq (,$(findstring linux,$(OS))$(findstring darwin,$(OS)))
-ifneq ($(USE_SDL),0)
-override SDL_LIBDIR := $(subst $(SPACE),:,$(shell pkg-config $(SDL_PKGCONF) --variable libdir $(NULL_STDERR)))
-endif
-ifneq (,$(SDL_LIBDIR))
-override LDFLAGS_USE_SDL := -Wl,-rpath,$(SDL_LIBDIR)
-endif
-
-ifneq ($(USE_X11),0)
-override X11_LIBDIR := $(subst $(SPACE),:,$(shell pkg-config x11 xext --variable libdir $(NULL_STDERR)))
-endif
-ifneq (,$(X11_LIBDIR))
-override LDFLAGS_USE_X11 := -Wl,-rpath,$(X11_LIBDIR)
-endif
-endif
-
 # Check if RVJIT supports the target architecture
 ifeq ($(USE_JIT),1)
 ifeq (,$(findstring 86,$(ARCH))$(findstring arm,$(ARCH))$(findstring riscv,$(ARCH)))
@@ -392,9 +375,9 @@ endif
 #
 
 override USEFLAGS := $(sort $(filter USE_%,$(.VARIABLES)))
-override SRC_CONDITIONAL := $(filter SRC_USE_%,$(.VARIABLES))
 
 # Filter out all conditionally compiled C/C++ sources
+override SRC_CONDITIONAL := $(filter SRC_USE_%,$(.VARIABLES))
 override SRC := $(filter-out $(foreach cond_src,$(SRC_CONDITIONAL),$($(cond_src))),$(SRC))
 override SRC_CXX := $(filter-out $(foreach cond_src,$(SRC_CONDITIONAL),$($(cond_src))),$(SRC_CXX))
 
@@ -405,6 +388,27 @@ override _ := $(foreach useflag,$(USEFLAGS),$(foreach need_useflag,$(NEED_$(usef
 override SRC += $(sort $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(SRC_$(useflag)))))
 override SRC_CXX += $(strip $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(SRC_CXX_$(useflag)))))
 
+
+# Handle library include paths / linking when not cross-compiling
+ifneq ($(TARGET_CROSS),1)
+override LIBS := $(strip $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(LIBS_$(useflag)))))
+override _ := $(foreach lib, $(LIBS),$(if $(shell pkg-config $(lib) --cflags --libs $(NULL_STDERR)),,$(info $(WARN_PREFIX) Possibly missing library: $(lib))))
+
+# Set libraries include paths
+override CFLAGS += $(sort $(foreach lib, $(LIBS),$(shell pkg-config $(lib) --cflags-only-I $(NULL_STDERR))))
+
+ifeq ($(USE_FULL_LINKING),1)
+# Proper library linking (Do not use sort here for correct linking order)
+override LDFLAGS += $(strip $(foreach lib, $(LIBS),$(shell pkg-config $(lib) --libs $(NULL_STDERR))))
+else
+# Pass libdir rpath to linker for dynamic loader to work on Nix, etc
+override WL_RPATH := -Wl,-rpath,
+override LIBDIRS += $(sort $(foreach lib, $(LIBS),$(shell pkg-config $(lib) --variable libdir $(NULL_STDERR))))
+override LDFLAGS += $(sort $(foreach libdir, $(LIBDIRS),$(WL_RPATH)$(libdir)))
+endif
+endif
+
+
 # Set useflags CFLAGS
 override CFLAGS += $(strip $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(CFLAGS_$(useflag)))))
 
@@ -413,6 +417,10 @@ override LDFLAGS += $(strip $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$(
 
 # Set useflags C definitions
 override CFLAGS += $(strip $(foreach useflag, $(USEFLAGS),$(if $(filter-out 0,$($(useflag))),-D$(useflag)=$($(useflag)))))
+
+#
+# Output & Object files handling
+#
 
 # Output directories / files
 override OBJDIR := $(BUILDDIR)/obj
@@ -700,24 +708,44 @@ includedir  ?= $(prefix)/include
 datarootdir ?= $(prefix)/share
 datadir     ?= $(datarootdir)
 
+define GEN_PKGCONFIG
+prefix=$(prefix)\n\
+exec_prefix=$(exec_prefix)\n\
+libdir=$(libdir)\n\
+includedir=$(includedir)\n\
+\n\
+Name: rvvm\n\
+Description: The RISC-V Virtual Machine Library\n\
+URL: https://github.com/LekKit/RVVM\n\
+Version: $(VERSION)\n\
+Requires.private: $(LIBS)\n\
+Libs: -L$(libdir) -lrvvm\n\
+Cflags: -I$(includedir) -DLIBRVVM_SHARED\n
+endef
+
+override GEN_PKGCONFIG := $(subst \n ,\n,$(GEN_PKGCONFIG))
+
 .PHONY: install     # Install the package
 install: all
 ifeq ($(HOST_POSIX),1)
 	$(info $(INFO_PREFIX) Installing to prefix $(DESTDIR)$(prefix)$(RESET))
 	@install -d                            $(DESTDIR)$(bindir)
 	@install -m 0755 $(BINARY)             $(DESTDIR)$(bindir)/rvvm
-ifeq ($(USE_LIB),1)
+ifneq (,$(findstring 1,$(USE_LIB)$(USE_LIB_STATIC)))
 	@install -d                            $(DESTDIR)$(libdir)
-	@install -m 0755 $(SHARED)             $(DESTDIR)$(libdir)/librvvm$(LIB_EXT)
-endif
-ifeq ($(USE_LIB_STATIC),1)
-	@install -d                            $(DESTDIR)$(libdir)
-	@install -m644 $(STATIC)               $(DESTDIR)$(libdir)/librvvm_static.a
-endif
+	@install -d                            $(DESTDIR)$(libdir)/pkgconfig
+	@printf "$(GEN_PKGCONFIG)" >           $(DESTDIR)$(libdir)/pkgconfig/rvvm.pc
 	@install -d                            $(DESTDIR)$(includedir)/rvvm/
 	@install -m 0644 $(SRCDIR)/rvvmlib.h   $(DESTDIR)$(includedir)/rvvm/rvvmlib.h
 	@install -m 0644 $(SRCDIR)/fdtlib.h    $(DESTDIR)$(includedir)/rvvm/fdtlib.h
 	@install -m 0644 $(SRCDIR)/devices/*.h $(DESTDIR)$(includedir)/rvvm/
+endif
+ifeq ($(USE_LIB),1)
+	@install -m 0755 $(SHARED)             $(DESTDIR)$(libdir)/librvvm$(LIB_EXT)
+endif
+ifeq ($(USE_LIB_STATIC),1)
+	@install -m644 $(STATIC)               $(DESTDIR)$(libdir)/librvvm_static.a
+endif
 	@install -d                            $(DESTDIR)$(datadir)/licenses/rvvm/
 	@install -m 0644 LICENSE*              $(DESTDIR)$(datadir)/licenses/rvvm/
 else
