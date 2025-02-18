@@ -46,12 +46,14 @@ endif
 
 override EMPTY :=
 override SPACE := $(EMPTY) $(EMPTY)
+
 override RESET   := $(shell tput me   $(NULL_STDERR) || tput sgr0 $(NULL_STDERR)    || printf "\\033[0m" $(NULL_STDERR))
 override BOLD    := $(shell tput md   $(NULL_STDERR) || tput bold $(NULL_STDERR)    || printf "\\033[1m" $(NULL_STDERR))
 override RED     := $(shell tput AF 1 $(NULL_STDERR) || tput setaf 1 $(NULL_STDERR) || printf "\\033[31m" $(NULL_STDERR))$(BOLD)
 override GREEN   := $(shell tput AF 2 $(NULL_STDERR) || tput setaf 2 $(NULL_STDERR) || printf "\\033[32m" $(NULL_STDERR))$(BOLD)
 override YELLOW  := $(shell tput AF 3 $(NULL_STDERR) || tput setaf 3 $(NULL_STDERR) || printf "\\033[33m" $(NULL_STDERR))$(BOLD)
 override WHITE   := $(shell tput AF 7 $(NULL_STDERR) || tput setaf 7 $(NULL_STDERR) || printf "\\033[37m" $(NULL_STDERR))$(BOLD)
+override TEXT    := $(RESET)$(BOLD)
 
 $(info $(RESET))
 ifneq (,$(findstring UTF, $(LANG)))
@@ -69,8 +71,8 @@ $(info $(EMPTY))
 endif
 
 # Message prefixes
-override INFO_PREFIX := $(WHITE)[$(YELLOW)INFO$(WHITE)]
-override WARN_PREFIX := $(WHITE)[$(RED)WARN$(WHITE)]
+override INFO_PREFIX := $(TEXT)[$(YELLOW)INFO$(TEXT)]
+override WARN_PREFIX := $(TEXT)[$(RED)WARN$(TEXT)]
 
 # Automatically parallelize build
 JOBS ?= $(HOST_CPUS)
@@ -120,11 +122,6 @@ $(info $(INFO_PREFIX) Assuming target OS=$(OS), set explicitly if cross-compilin
 endif
 endif
 
-override tolower = $(subst A,a,$(subst B,b,$(subst C,c,$(subst D,d,$(subst E,e,$(subst F,f,$(subst G,g,$(subst H,h,$(subst I,i,$(subst J,j,$(subst K,k,$(subst L,l,$(subst M,m,$(subst N,n,$(subst O,o,$(subst P,p,$(subst Q,q,$(subst R,r,$(subst S,s,$(subst T,t,$(subst U,u,$(subst V,v,$(subst W,w,$(subst X,x,$(subst Y,y,$(subst Z,z,$1))))))))))))))))))))))))))
-
-override OS_PRETTY := $(OS)
-override OS := $(call tolower,$(OS))
-
 # Detect target arch
 ifndef ARCH
 ifneq (,$(findstring -,$(CC_TRIPLET)))
@@ -139,6 +136,15 @@ endif
 endif
 endif
 
+# For cross-compile checking
+override TARGET_CROSS := $(if $(filter-out $(ARCH),$(HOST_ARCH)),1,$(if $(filter-out $(OS),$(HOST_UNAME)),1,0))
+
+override tolower = $(subst A,a,$(subst B,b,$(subst C,c,$(subst D,d,$(subst E,e,$(subst F,f,$(subst G,g,$(subst H,h,$(subst I,i,$(subst J,j,$(subst K,k,$(subst L,l,$(subst M,m,$(subst N,n,$(subst O,o,$(subst P,p,$(subst Q,q,$(subst R,r,$(subst S,s,$(subst T,t,$(subst U,u,$(subst V,v,$(subst W,w,$(subst X,x,$(subst Y,y,$(subst Z,z,$1))))))))))))))))))))))))))
+
+# Use lowercase OS name in release directory name
+override OS_PRETTY := $(OS)
+override OS := $(call tolower,$(OS))
+
 # Use common arch names (x86_64, arm64)
 ifneq (,$(findstring amd64, $(ARCH)))
 override ARCH = x86_64
@@ -152,9 +158,6 @@ ifneq (,$(findstring x86_64, $(ARCH)))
 override ARCH = i686
 endif
 endif
-
-# For cross-compile checking
-override TARGET_CROSS := $(if $(filter-out $(ARCH),$(HOST_ARCH)),1,$(if $(filter-out $(OS_PRETTY),$(HOST_UNAME)),1,0))
 
 #
 # Set OS-specific build options
@@ -392,7 +395,7 @@ override SRC_CXX += $(strip $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$(
 # Handle library include paths / linking when not cross-compiling
 ifneq ($(TARGET_CROSS),1)
 override LIBS := $(strip $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(LIBS_$(useflag)))))
-override _ := $(foreach lib, $(LIBS),$(if $(shell pkg-config $(lib) --cflags --libs $(NULL_STDERR)),,$(info $(WARN_PREFIX) Possibly missing library: $(lib))))
+override _ := $(foreach lib, $(LIBS),$(if $(shell pkg-config $(lib) --cflags --libs $(NULL_STDERR)),,$(info $(WARN_PREFIX) Possibly missing library: $(lib)$(RESET))))
 
 # Set libraries include paths
 override CFLAGS += $(sort $(foreach lib, $(LIBS),$(shell pkg-config $(lib) --cflags-only-I $(NULL_STDERR))))
@@ -579,10 +582,10 @@ endif
 # Print build information
 #
 
-$(info $(WHITE)Detected OS: $(GREEN)$(OS_PRETTY)$(RESET))
-$(info $(WHITE)Detected CC: $(GREEN)$(CC_PRETTY)$(RESET))
-$(info $(WHITE)Target arch: $(GREEN)$(ARCH)$(RESET))
-$(info $(WHITE)Version:     $(GREEN)RVVM $(VERSION)$(RESET))
+$(info $(TEXT)Detected OS: $(GREEN)$(OS_PRETTY)$(RESET))
+$(info $(TEXT)Detected CC: $(GREEN)$(CC_PRETTY)$(RESET))
+$(info $(TEXT)Target arch: $(GREEN)$(ARCH)$(RESET))
+$(info $(TEXT)Version:     $(GREEN)RVVM $(VERSION)$(RESET))
 $(info $(EMPTY))
 
 #
@@ -604,27 +607,27 @@ lib: $(if $(findstring 1,$(USE_LIB)),$(SHARED)) $(if $(findstring 1,$(USE_LIB_ST
 
 # C object files
 $(OBJDIR)/%.o: $(SRCDIR)/%.c Makefile
-	$(info $(WHITE)[$(YELLOW)CC$(WHITE)] $< $(RESET))
+	$(info $(TEXT)[$(YELLOW)CC$(TEXT)] $< $(RESET))
 	@$(DO_CC)
 
 # C++ object files
 $(OBJDIR)/%.o: $(SRCDIR)/%.cpp Makefile
-	$(info $(WHITE)[$(YELLOW)CXX$(WHITE)] $< $(RESET))
+	$(info $(TEXT)[$(YELLOW)CXX$(TEXT)] $< $(RESET))
 	@$(DO_CXX)
 
 # Main binary
 $(BINARY): $(OBJS)
-	$(info $(WHITE)[$(GREEN)LD$(WHITE)] $@ $(RESET))
+	$(info $(TEXT)[$(GREEN)LD$(TEXT)] $@ $(RESET))
 	@$(CC_LD) $(CFLAGS) $(OBJS) $(LDFLAGS) -o $@
 
 # Shared library
 $(SHARED): $(LIB_OBJS)
-	$(info $(WHITE)[$(GREEN)LD$(WHITE)] $@ $(RESET))
+	$(info $(TEXT)[$(GREEN)LD$(TEXT)] $@ $(RESET))
 	@$(CC_LD) $(CFLAGS) $(LIB_OBJS) $(LDFLAGS) -shared -o $@
 
 # Static library
 $(STATIC): $(LIB_OBJS)
-	$(info $(WHITE)[$(GREEN)AR$(WHITE)] $@ $(RESET))
+	$(info $(TEXT)[$(GREEN)AR$(TEXT)] $@ $(RESET))
 	@$(AR) -rcs $@ $(LIB_OBJS)
 
 .PHONY: test        # Run RISC-V tests
@@ -639,9 +642,9 @@ ifeq ($(USE_RV32),1)
 		result=$$($(BINARY) $$file -nonet -nogui -rv32 | tr -d '\0'); \
 		result="$${result##* }"; \
 		if [ "$$result" -eq "0" ]; then \
-		echo "$(WHITE)[$(GREEN)PASS$(WHITE)] $$file$(RESET)"; \
+		echo "$(TEXT)[$(GREEN)PASS$(TEXT)] $$file$(RESET)"; \
 		else \
-		echo "$(WHITE)[$(RED)FAIL: $$result$(WHITE)] $$file$(RESET)"; \
+		echo "$(TEXT)[$(RED)FAIL: $$result$(TEXT)] $$file$(RESET)"; \
 		exit -1; \
 		fi; \
 	done
@@ -654,9 +657,9 @@ ifeq ($(USE_RV64),1)
 		result=$$($(BINARY) $$file -nonet -nogui -rv64 | tr -d '\0'); \
 		result="$${result##* }"; \
 		if [ "$$result" -eq "0" ]; then \
-		echo "$(WHITE)[$(GREEN)PASS$(WHITE)] $$file$(RESET)"; \
+		echo "$(TEXT)[$(GREEN)PASS$(TEXT)] $$file$(RESET)"; \
 		else \
-		echo "$(WHITE)[$(RED)FAIL: $$result$(WHITE)] $$file$(RESET)"; \
+		echo "$(TEXT)[$(RED)FAIL: $$result$(TEXT)] $$file$(RESET)"; \
 		exit -1; \
 		fi; \
 	done
