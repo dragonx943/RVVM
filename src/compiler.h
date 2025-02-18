@@ -16,12 +16,12 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  * Compiler feature detection
  */
 
-#if defined(__GNUC__) || defined(__llvm__) || defined(__INTEL_COMPILER)
+#if defined(__GNUC__) || defined(__clang__) || defined(__llvm__) || defined(__INTEL_COMPILER)
 #define GNU_EXTS 1
 #endif
 
 // GCC version checking
-#if defined(__GNUC__) && !defined(__llvm__) && !defined(__INTEL_COMPILER)
+#if defined(__GNUC__) && !defined(__clang__) && !defined(__llvm__) && !defined(__INTEL_COMPILER)
 #define GCC_CHECK_VER(major, minor) (__GNUC__ > major || \
         (__GNUC__ == major && __GNUC_MINOR__ >= minor))
 #else
@@ -29,7 +29,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #endif
 
 // Clang version checking
-#ifdef __clang__
+#if defined(__clang__)
 #define CLANG_CHECK_VER(major, minor) (__clang_major__ > major || \
           (__clang_major__ == major && __clang_minor__ >= minor))
 #else
@@ -64,10 +64,12 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #endif
 
 // Check header presence
-#ifdef __has_include
+#if defined(__has_include)
 #define CHECK_INCLUDE(include, urgent) __has_include(#include)
+#elif defined(GNU_EXTS)
+#define CHECK_INCLUDE(include, urgent) (urgent)
 #else
-#define CHECK_INCLUDE(include, urgent) urgent
+#define CHECK_INCLUDE(include, urgent) 1
 #endif
 
 /*
