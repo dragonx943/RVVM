@@ -1,7 +1,7 @@
 # CMake configuration file for those who don't like Make
 # Prev-maintainer: cerg2010cerg2010
 
-cmake_minimum_required(VERSION 3.9)
+cmake_minimum_required(VERSION 3.9...3.30)
 
 set(RVVM_VERSION 0.7)
 set(CMAKE_C_STANDARD 11)
@@ -20,9 +20,10 @@ project(RVVM VERSION ${RVVM_VERSION}
 option(USE_RV32 "Enable riscv32 CPU" ON)
 option(USE_RV64 "Enable riscv64 CPU" ON)
 option(USE_FPU "Enable floating-point instructions" ON)
-option(USE_PRECISE_FS "Enable precise FPU status tracking" OFF)
+option(USE_RVV "Enable vector instructions" OFF)
 
 # Infrastructure
+option(USE_DEBUG "Enable debug logging / sanity checks" OFF)
 option(USE_SPINLOCK_DEBUG "Enable deadlock debugging" ON)
 option(USE_ISOLATION "Enable seccomp/pledge isolation measures" ON)
 option(USE_JNI "Enable JNI bindings in librvvm (Very tiny size impact)" ON)
@@ -31,11 +32,28 @@ option(USE_JNI "Enable JNI bindings in librvvm (Very tiny size impact)" ON)
 option(USE_JIT "Enable RVJIT Just-in-time compiler" ON)
 option(USE_GUI "Enable VM display GUI" ON)
 option(USE_NET "Enable userland networking stack" ON)
+option(USE_GDBSTUB "Enable GDB server stub" ON)
 
+# Devices
+option(USE_FDT "Enable Flattened Device Tree generation" ON)
+option(USE_VFIO "Enable VFIO PCIe passthrough on Linux hosts" ON)
+
+# Deprecated features
+option(USE_TAP_LINUX "Use Linux TAP (deprecated)" OFF)
+
+# Libraries to build
+option(BUILD_SHARED_LIBS "Build shared librvvm library" ON)
+option(BUILD_STATIC_LIBS "Build static librvvm library" OFF)
+
+# Libretro core
+option(BUILD_LIBRETRO "Build libretro core" OFF)
+option(LIBRETRO_STATIC "Statically link the libretro core" OFF)
+
+# GUI backends
 if (APPLE OR SERENITY)
-	option(USE_SDL "Enable SDL2 GUI backend" 2)
+	option(USE_SDL "Enable SDL GUI backend" 2)
 else()
-	option(USE_SDL "Enable SDL2 GUI backend" OFF)
+	option(USE_SDL "Enable SDL GUI backend" OFF)
 endif()
 
 if (WIN32)
@@ -44,29 +62,15 @@ endif()
 
 if (LINUX OR BSD OR CMAKE_SYSTEM_NAME STREQUAL "SunOS")
 	option(USE_X11 "Enable X11 GUI backend" ON)
-else()
-	option(USE_X11 "Enable X11 GUI backend" OFF)
+endif()
+
+if (LINUX)
+	option(USE_WAYLAND "Enable Wayland GUI backend" ON)
 endif()
 
 if (HAIKU)
-	option(USE_HAIKU_GUI "Enable Haiku windowing backend" ON)
+	option(USE_HAIKU_GUI "Enable Haiku GUI backend" ON)
 endif()
-
-# Devices
-option(USE_FDT "Enable Flattened Device Tree generation" ON)
-option(USE_PCI "Use ATA over PCI, PIO mode is used otherwise" ON)
-option(USE_VFIO "Enable VFIO PCIe passthrough on Linux hosts" ON)
-
-# Deprecated features
-option(USE_TAP_LINUX "Use Linux TAP (deprecated)" OFF)
-
-# Libraries to build
-option(BUILD_STATIC_LIBS "Build a static librvvm library" OFF)
-option(BUILD_SHARED_LIBS "Build a static librvvm library" ON)
-
-# Libretro core
-option(BUILD_LIBRETRO "Build a libretro core" OFF)
-option(LIBRETRO_STATIC "Statically link the libretro core" OFF)
 
 #
 # Set up source & binary dirs, compiler & target specific build options
@@ -92,9 +96,13 @@ endif()
 
 # Set build type
 if (NOT CMAKE_BUILD_TYPE OR NOT EXISTS ${CMAKE_BINARY_DIR}/CMakeCache.txt)
-	message(STATUS "${COLLOR_YELLOW}Setting build type to Release as none was specified${COLOR_RESET}")
-	set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build." FORCE)
+	if (USE_DEBUG)
+		set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Choose the type of build." FORCE)
+	else()
+		set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build." FORCE)
+	endif()
 	set(CMAKE_CONFIGURATION_TYPES "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
+	message(STATUS "${COLLOR_YELLOW}Setting build type to ${CMAKE_BUILD_TYPE} as none was specified${COLOR_RESET}")
 endif()
 
 # Get git commit hash, append to version
@@ -229,6 +237,18 @@ endif()
 
 set(LIBS_USE_WIN32_GUI "gdi32")
 set(LIBS_USE_HAIKU_GUI "be")
+
+if (USE_FULL_LINKING)
+	if (USE_SDL EQUAL 1)
+		set(LIBS_USE_SDL "SDL")
+	elseif (USE_SDL EQUAL 2)
+		set(LIBS_USE_SDL "SDL2")
+	elseif (USE_SDL EQUAL 3)
+		set(LIBS_USE_SDL "SDL3")
+	endif()
+	set(LIBS_USE_X11 "X11" "Xext")
+	set(LIBS_USE_WAYLAND "wayland-client" "xkbcommon")
+endif()
 
 # Useflag dependencies
 set(NEED_USE_X11 "USE_GUI")
