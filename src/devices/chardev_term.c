@@ -147,11 +147,12 @@ static void term_rawmode(void)
 {
 #if defined(POSIX_TERM_IMPL)
     struct termios term_opts = {
-        .c_oflag = OPOST | ONLCR,
         .c_cflag = CLOCAL | CREAD | CS8,
         .c_cc[VMIN] = 1,
     };
     tcgetattr(0, &orig_term_opts);
+    cfsetispeed(&term_opts, cfgetispeed(&orig_term_opts));
+    cfsetospeed(&term_opts, cfgetospeed(&orig_term_opts));
     tcsetattr(0, TCSANOW, &term_opts);
 #elif defined(WIN32_TERM_IMPL)
     SetConsoleOutputCP(CP_UTF8);
@@ -166,6 +167,8 @@ static void term_rawmode(void)
     SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), 0x200);
     // ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING
     SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), 0x5);
+#else
+    setbuf(stdout, NULL);
 #endif
     call_at_deinit(term_origmode);
 }
