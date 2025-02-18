@@ -128,7 +128,9 @@ static size_t term_read_raw(chardev_term_t* term, char* buffer, size_t size)
 #endif
 }
 
-static void term_origmode(void)
+static uint32_t term_count = 0;
+
+static void term_orig_mode(void)
 {
     // Perfom terminal reset to a sensible state, without clearing the screen
     // Don't send Mouse X & Y; Don't send FocusIn/FocusOut; Disable Alternate Scroll Mode;
@@ -143,10 +145,11 @@ static void term_origmode(void)
 #endif
 }
 
-static void term_rawmode(void)
+static void term_raw_mode(void)
 {
 #if defined(POSIX_TERM_IMPL)
     struct termios term_opts = {
+        .c_oflag = OPOST | ONLCR,
         .c_cflag = CLOCAL | CREAD | CS8,
         .c_cc[VMIN] = 1,
     };
@@ -170,7 +173,20 @@ static void term_rawmode(void)
 #else
     setbuf(stdout, NULL);
 #endif
-    call_at_deinit(term_origmode);
+}
+
+static void term_attach(void)
+{
+    if (!atomic_add_uint32(&term_count, 1)) {
+        term_raw_mode();
+    }
+}
+
+static void term_detach(void)
+{
+    if (atomic_sub_uint32(&term_count, 1) == 0) {
+        term_orig_mode();
+    }
 }
 
 /*
@@ -193,6 +209,8 @@ static void term_process_input(chardev_term_t* term, char* buffer, size_t size)
         if (term->ctrl_a) {
             if (buffer[i] == 'x') {
                 // Exit on Ctrl+A, x
+                spin_unlock(&term->lock);
+                term_orig_mode();
                 exit(0);
             }
         }
@@ -295,12 +313,15 @@ static void term_remove(chardev_t* dev)
         close(term->wfd);
     }
 #endif
+    if (term->rfd == 0) {
+        term_detach();
+    }
     free(term);
 }
 
 PUBLIC chardev_t* chardev_term_create(void)
 {
-    DO_ONCE(term_rawmode());
+    term_attach();
     return chardev_fd_create(0, 1);
 }
 
