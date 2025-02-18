@@ -917,7 +917,7 @@ static void restrict_process_once(void)
 #elif defined(ISOLATION_SECCOMP_IMPL)
     seccomp_setup_syscall_filter(true);
 #elif defined(ISOLATION_PLEDGE_IMPL)
-    if (pledge("stdio flock prot_exec inet dns unix sendfd recvfd ioctl tty audio drm vmm error", "")) {
+    if (pledge("stdio tmppath flock prot_exec inet dns unix sendfd recvfd tty audio drm vmm error", "")) {
         rvvm_warn("Failed to enforce pledge: %s!", strerror(errno));
     }
 #endif
