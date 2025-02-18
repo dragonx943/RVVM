@@ -253,7 +253,11 @@ endif()
 # Useflag dependencies
 set(NEED_USE_X11 "USE_GUI")
 set(NEED_USE_SDL "USE_GUI")
+set(NEED_USE_WAYLAND "USE_GUI")
+set(NEED_USE_WIN32_GUI "USE_GUI")
+set(NEED_USE_HAIKU_GUI "USE_GUI")
 set(NEED_USE_JNI "USE_LIB")
+set(NEED_USE_GDBSTUB "USE_NET")
 
 # Get all variables as a list
 get_cmake_property(RVVM_CMAKE_VARIABLES VARIABLES)
