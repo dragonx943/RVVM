@@ -135,7 +135,7 @@ static void term_orig_mode(void)
     // Perfom terminal reset to a sensible state, without clearing the screen
     // Don't send Mouse X & Y; Don't send FocusIn/FocusOut; Disable Alternate Scroll Mode;
     // Use Normal Screen Buffer; Soft terminal reset
-    const char* reset = "\033[?1000l\e[?1004l\e[?1007l\e[?47l\e[!p";
+    const char* reset = "\x1B[?1000l\x1B[?1004l\x1B[?1007l\x1B[?47l\x1B[!p";
     fputs(reset, stderr);
 #if defined(POSIX_TERM_IMPL)
     tcsetattr(0, TCSAFLUSH, &orig_term_opts);
