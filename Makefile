@@ -329,6 +329,8 @@ override LIBS_USE_WAYLAND := wayland-client xkbcommon
 override NEED_USE_X11 := USE_GUI
 override NEED_USE_SDL := USE_GUI
 override NEED_USE_WAYLAND := USE_GUI
+override NEED_USE_WIN32_GUI := USE_GUI
+override NEED_USE_HAIKU_GUI := USE_GUI
 override NEED_USE_JNI := USE_LIB
 override NEED_USE_GDBSTUB := USE_NET
 
