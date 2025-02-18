@@ -242,9 +242,32 @@ endif
 # Default build configuration
 #
 
-# Debugging options
+# CPU features
+USE_RV32 ?= 1
+USE_RV64 ?= 1
+USE_FPU ?= 1
+USE_RVV ?= 0
+
+# Infrastructure
 USE_DEBUG ?= 0
 USE_DEBUG_FULL ?= 0
+USE_SPINLOCK_DEBUG ?= 1
+USE_LIB ?= 1
+USE_LIB_STATIC ?= 0
+USE_JNI ?= 1
+USE_ISOLATION ?= 1
+
+# Acceleration/accessibility
+USE_JIT ?= 1
+USE_GUI ?= 1
+USE_SDL ?= 0
+USE_NET ?= 1
+USE_GDBSTUB ?= 1
+
+# Devices
+USE_FDT ?= 1
+USE_PCI ?= 1
+USE_VFIO ?= 1
 
 override BUILD_TYPE := release
 ifeq ($(USE_DEBUG_FULL),1)
@@ -257,29 +280,6 @@ BUILDDIR ?= $(BUILD_TYPE).$(OS).$(ARCH)
 
 # Executable file name
 BINARY ?= $(NAME)_$(ARCH)$(BIN_EXT)
-
-# CPU features
-USE_RV32 ?= 1
-USE_RV64 ?= 1
-USE_FPU ?= 1
-
-# Infrastructure
-USE_SPINLOCK_DEBUG ?= 1
-USE_LIB ?= 1
-USE_LIB_STATIC ?= 0
-USE_JNI ?= 1
-USE_ISOLATION ?= 1
-
-# Acceleration/accessibility
-USE_JIT ?= 1
-USE_GUI ?= 1
-USE_SDL ?= 0
-USE_NET ?= 1
-
-# Devices
-USE_FDT ?= 1
-USE_PCI ?= 1
-USE_VFIO ?= 1
 
 # Determine build commit id
 GIT_COMMIT ?= $(firstword $(shell git describe --match=NeVeRmAtCh_TaG --always --dirty $(NULL_STDERR)))
@@ -308,8 +308,8 @@ override SRC_USE_TAP_LINUX := $(SRCDIR)/devices/tap_linux.c
 override SRC_USE_NET := $(SRCDIR)/networking.c $(SRCDIR)/devices/tap_user.c
 override SRC_USE_JIT := $(SRCDIR)/rvjit/rvjit.c $(SRCDIR)/rvjit/rvjit_emit.c
 override SRC_USE_JNI := $(SRCDIR)/bindings/jni/rvvm_jni.c
-override SRC_USE_RV64 := $(wildcard $(SRCDIR)/cpu/riscv64_*.c)
-override SRC_USE_RV32 := $(wildcard $(SRCDIR)/cpu/riscv32_*.c)
+override SRC_USE_RV32 := $(SRCDIR)/cpu/riscv32_interpreter.c
+override SRC_USE_RV64 := $(SRCDIR)/cpu/riscv64_interpreter.c
 
 # Useflag CFLAGS
 override CFLAGS_USE_DEBUG := -DDEBUG -g -fno-omit-frame-pointer
@@ -330,6 +330,7 @@ override NEED_USE_X11 := USE_GUI
 override NEED_USE_SDL := USE_GUI
 override NEED_USE_WAYLAND := USE_GUI
 override NEED_USE_JNI := USE_LIB
+override NEED_USE_GDBSTUB := USE_NET
 
 #
 # Target-specific useflags handling
