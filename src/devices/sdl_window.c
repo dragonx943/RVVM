@@ -12,27 +12,34 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 SOURCE_OPTIMIZATION_SIZE
 
-#if defined(__EMSCRIPTEN__) || defined(_MSC_VER) || defined(__redox__)
+#if !defined(USE_FULL_LINKING) && (defined(__EMSCRIPTEN__) || defined(_MSC_VER) || defined(__redox__))
 // Emscripten, MSVC and Redox OS can't handle dynamic library loading
 #define USE_FULL_LINKING
 #endif
 
-// Check for SDL1 header presence
-#if USE_SDL == 1 && !CHECK_INCLUDE(SDL/SDL.h, 1)
-#undef USE_SDL
-#warning Disabling USE_SDL as <SDL/SDL.h> is unavailable
-#endif
+#if defined(USE_SDL) && USE_SDL == 1 && CHECK_INCLUDE(SDL/SDL.h, 1)
+// SDL1 headers available system wide
+#include <SDL/SDL.h>
 
-// Check for SDL2 header presence
-#if USE_SDL == 2 && !CHECK_INCLUDE(SDL2/SDL.h, 1)
-#undef USE_SDL
-#warning Disabling USE_SDL as <SDL2/SDL.h> is unavailable
-#endif
+#elif defined(USE_SDL) && USE_SDL == 2 && CHECK_INCLUDE(SDL2/SDL.h, 1)
+// SDL2 headers available system wide
+#include <SDL2/SDL.h>
 
-// Check for SDL3 header presence
-#if USE_SDL == 3 && !CHECK_INCLUDE(SDL3/SDL.h, 1)
+#elif defined(USE_SDL) && USE_SDL == 3 && CHECK_INCLUDE(SDL3/SDL.h, 1)
+// SDL3 headers available system wide
+#include <SDL3/SDL.h>
+
+#elif defined(USE_SDL) && CHECK_INCLUDE(SDL.h, 1)
+// Specific SDL version provided by pkg-config
+#include <SDL.h>
 #undef USE_SDL
-#warning Disabling USE_SDL as <SDL3/SDL.h> is unavailable
+#define USE_SDL SDL_MAJOR_VERSION
+
+#elif defined(USE_SDL)
+// No SDL headers available
+#warning Disabling USE_SDL as <SDL.h> is unavailable
+#undef USE_SDL
+
 #endif
 
 /*
@@ -50,8 +57,6 @@ SOURCE_OPTIMIZATION_SIZE
 #define SDL_DLIB_SYM(sym) static typeof(sym)* sym##_dlib = NULL;
 
 #if USE_SDL == 1
-
-#include <SDL/SDL.h>
 
 #define SDL_LIB_NAME "SDL"
 
@@ -192,8 +197,6 @@ static const hid_key_t sdl_key_to_hid_byte_map[] = {
 
 #if USE_SDL == 3
 
-#include <SDL3/SDL.h>
-
 #define SDL_LIB_NAME "SDL3"
 
 #if !defined(USE_FULL_LINKING)
@@ -213,8 +216,6 @@ SDL_DLIB_SYM(SDL_SetWindowKeyboardGrab)
 #endif
 
 #elif USE_SDL == 2
-
-#include <SDL2/SDL.h>
 
 #define SDL_LIB_NAME "SDL2"
 
