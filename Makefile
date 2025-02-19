@@ -128,7 +128,7 @@ ifneq (,$(findstring -,$(CC_TRIPLET)))
 # Get target arch from target triplet
 override ARCH := $(firstword $(subst -, ,$(CC_TRIPLET)))
 else
-# This may fail on older compilers, fallback to host arch then
+# This may fail on some compilers, fallback to host arch then
 override ARCH := $(HOST_ARCH)
 ifneq ($(CC),cc)
 $(info $(INFO_PREFIX) Assuming target ARCH=$(ARCH), set explicitly if cross-compiling$(RESET))
@@ -136,31 +136,30 @@ endif
 endif
 endif
 
-# For cross-compile checking
-override TARGET_CROSS := $(if $(filter-out $(ARCH),$(HOST_ARCH)),1,$(if $(filter-out $(OS),$(HOST_UNAME)),1,0))
-
+# Lower-case the string
 override tolower = $(subst A,a,$(subst B,b,$(subst C,c,$(subst D,d,$(subst E,e,$(subst F,f,$(subst G,g,$(subst H,h,$(subst I,i,$(subst J,j,$(subst K,k,$(subst L,l,$(subst M,m,$(subst N,n,$(subst O,o,$(subst P,p,$(subst Q,q,$(subst R,r,$(subst S,s,$(subst T,t,$(subst U,u,$(subst V,v,$(subst W,w,$(subst X,x,$(subst Y,y,$(subst Z,z,$1))))))))))))))))))))))))))
 
-# Use lowercase OS name in release directory name
+# Canonize architecture name
+# amd64 -> x86_64
+# aarch64 -> arm64
+# x86 -> i386
+# x86_64 -> i386 (If -m32 is used)
+override canonize_arch = $(patsubst x86_64,$(if $(filter -m32,$(CFLAGS)),i386,x86_64),$(patsubst amd64,x86_64,$(patsubst aarch64,arm64,$(patsubst x64,x86_64,$(patsubst x86,i386,$1)))))
+
+# Use canonic architecture naming
+override ARCH := $(call canonize_arch,$(ARCH))
+override HOST_ARCH := $(call canonize_arch,$(HOST_ARCH))
+
+# Use lower-case OS name in release directory name
 override OS_PRETTY := $(OS)
 override OS := $(call tolower,$(OS))
 
-# Use common arch names (x86_64, arm64)
-ifneq (,$(findstring amd64, $(ARCH)))
-override ARCH = x86_64
-endif
-ifneq (,$(findstring aarch64, $(ARCH)))
-override ARCH = arm64
-endif
-# x86 compilers sometimes fail to report -m32 multiarch
-ifneq (,$(findstring -m32, $(CFLAGS)))
-ifneq (,$(findstring x86_64, $(ARCH)))
-override ARCH = i686
-endif
-endif
+# For cross-compile checking
+override TARGET_CROSS := $(if $(filter-out $(ARCH),$(HOST_ARCH))$(filter-out $(OS_PRETTY),$(HOST_UNAME)),yes)
+override TARGET_PKGCONFIG := $(if $(TARGET_CROSS),$(if $(PKG_CONFIG_LIBDIR),yes),yes)
 
 #
-# Set OS-specific build options
+# Set up target-specific build options
 #
 
 # Windows-specific build options
@@ -339,6 +338,7 @@ override NEED_USE_GDBSTUB := USE_NET
 #
 
 ifeq ($(OS),windows)
+# Windows-specific libraries to link to
 ifneq (,$(findstring main, $(subst WinMain,main,$(shell $(CC) $(CFLAGS) $(LDFLAGS) -lgdi32 2>&1))))
 # On WinCE it's not expected to link gdi32
 override LDFLAGS_USE_WIN32_GUI := -lgdi32
@@ -352,15 +352,18 @@ endif
 endif
 
 ifeq ($(OS),haiku)
+# Haiku-specific libraries to link to
 override LDFLAGS_USE_HAIKU_GUI := -lbe
 override LDFLAGS_USE_NET := -lnetwork
 endif
 
 ifeq ($(OS),sunos)
+# Solaris-specific libraries to link to
 override LDFLAGS_USE_NET := -lsocket
 endif
 
 ifeq ($(OS),emscripten)
+# Request SDL port to be enabled in Emscripten
 override CFLAGS_USE_SDL := -s USE_SDL=$(USE_SDL)
 endif
 
@@ -395,8 +398,8 @@ override SRC += $(sort $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(use
 override SRC_CXX += $(strip $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(SRC_CXX_$(useflag)))))
 
 
-# Handle library include paths / linking when not cross-compiling
-ifneq ($(TARGET_CROSS),1)
+# Handle library include paths / linking when pkg-config is available
+ifneq (,$(TARGET_PKGCONFIG))
 override LIBS := $(strip $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(LIBS_$(useflag)))))
 override _ := $(foreach lib, $(LIBS),$(if $(shell pkg-config $(lib) --cflags --libs $(NULL_STDERR)),,$(info $(WARN_PREFIX) Possibly missing library: $(lib)$(RESET))))
 
