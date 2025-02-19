@@ -128,8 +128,6 @@ static size_t term_read_raw(chardev_term_t* term, char* buffer, size_t size)
 #endif
 }
 
-static uint32_t term_count = 0;
-
 static void term_orig_mode(void)
 {
     // Perfom terminal reset to a sensible state, without clearing the screen
@@ -175,16 +173,18 @@ static void term_raw_mode(void)
 #endif
 }
 
+static uint32_t term_count = 0;
+
 static void term_attach(void)
 {
-    if (!atomic_add_uint32(&term_count, 1)) {
+    if (atomic_add_uint32(&term_count, 1) == 0) {
         term_raw_mode();
     }
 }
 
 static void term_detach(void)
 {
-    if (atomic_sub_uint32(&term_count, 1) == 0) {
+    if (atomic_sub_uint32(&term_count, 1) == 1) {
         term_orig_mode();
     }
 }
