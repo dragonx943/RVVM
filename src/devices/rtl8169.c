@@ -1,5 +1,5 @@
 /*
-rtl8169.c - Realtek RTL8169 NIC
+rtl8169.c - Realtek RTL8169 (8168B) NIC
 Copyright (C) 2022  LekKit <github.com/LekKit>
 
 This Source Code Form is subject to the terms of the Mozilla Public
@@ -18,13 +18,17 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "utils.h"
 
 /*
+ * See https://people.freebsd.org/~wpaul/RealTek/RTL8111B_8168B_Registers_DataSheet_1.0.pdf
+ */
+
+/*
  * RTL8169 Registers
  */
 
-#define RTL8169_REG_IDR0  0x0  // ID Register 0-3 (For MAC Address)
-#define RTL8169_REG_IDR4  0x4  // ID Register 4-5
-#define RTL8169_REG_MAR0  0x8  // Multicast Address Register 0-3
-#define RTL8169_REG_MAR4  0xC  // Multicast Address Register 4-7
+#define RTL8169_REG_IDR0  0x00 // ID Register 0-3 (For MAC Address)
+#define RTL8169_REG_IDR4  0x04 // ID Register 4-5
+#define RTL8169_REG_MAR0  0x08 // Multicast Address Register 0-3
+#define RTL8169_REG_MAR4  0x0C // Multicast Address Register 4-7
 #define RTL8169_REG_DTCR1 0x10 // Dump Tally Counter Command Register (64-byte alignment)
 #define RTL8169_REG_DTCR2 0x14
 #define RTL8169_REG_TXDA1 0x20 // Transmit Descriptors Address (64-bit, 256-byte alignment)
@@ -49,11 +53,12 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define RTL8169_REG_PHYS  0x6C // PHY Status Register
 #define RTL8169_REG_ERIDR 0x70 // ERI GPHY Data Register, rtl8168b specific
 #define RTL8169_REG_ERIAR 0x74 // ERI GPHY Access Register, rtl8168b specific
+#define RTL8169_REG_EPHAR 0x80 // EPHY GPHY Data Register, rtl816cp specific
 #define RTL8169_REG_OCPDR 0xB0 // OCP GPHY Data Register, rtl8168dp specific
 #define RTL8169_REG_OCPAR 0xB4 // OCP GPHY Access Register, rtl8168dp specific
 #define RTL8169_REG_RMS32 0xD8 // RX Packet Maximum Size (Aligned to 32-bit boundary for ease)
 #define RTL8169_REG_RMS   0xDA // RX Packet Maximum Size (Actual offset in spec)
-#define RTL8169_REG_C_CR  0xE0 // C+ Command Register
+#define RTL8169_REG_CPCR  0xE0 // C+ Command Register
 #define RTL8169_REG_RXDA1 0xE4 // Receive Descriptor Address (64-bit, 256-byte alignment)
 #define RTL8169_REG_RXDA2 0xE8
 #define RTL8169_REG_MTPS  0xEC // TX Packet Maximum Size
@@ -74,14 +79,14 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define RTL8169_TPOLL_HPQ 0x80 // High Priority Queue Polling
 
 // Interrupt Status bits
-#define RTL8169_IRQ_ROK  0x0  // Receive OK
-#define RTL8169_IRQ_RER  0x1  // Receiver Error
-#define RTL8169_IRQ_TOK  0x2  // Transmit OK
-#define RTL8169_IRQ_TER  0x3  // Transmitter Error
-#define RTL8169_IRQ_RDU  0x4  // RX Descriptor Unavailable
-#define RTL8169_IRQ_LCG  0x5  // Link Change
-#define RTL8169_IRQ_FOVW 0x6  // RX FIFO Overflow
-#define RTL8169_IRQ_TDU  0x7  // TX Descriptor Unavailable
+#define RTL8169_IRQ_ROK  0x00 // Receive OK
+#define RTL8169_IRQ_RER  0x01 // Receiver Error
+#define RTL8169_IRQ_TOK  0x02 // Transmit OK
+#define RTL8169_IRQ_TER  0x03 // Transmitter Error
+#define RTL8169_IRQ_RDU  0x04 // RX Descriptor Unavailable
+#define RTL8169_IRQ_LCG  0x05 // Link Change
+#define RTL8169_IRQ_FOVW 0x06 // RX FIFO Overflow (For RX ring overflow, use RDU)
+#define RTL8169_IRQ_TDU  0x07 // TX Descriptor Unavailable
 #define RTL8169_IRQ_SWI  0x10 // Software Interrupt
 
 // Transmit Configuration bits
@@ -98,19 +103,37 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define RTL8169_XID_RTL8168EP 0x50200000 // RTL_GIGA_MAC_VER_51
 #define RTL8169_XID_RTL8117   0x54B00000 // RTL_GIGA_MAC_VER_53
 
+// Receive Configuration bits
+#define RTL8169_RCR_AAP   0x0001 // Accept All Packets with Destination Address
+#define RTL8169_RCR_APM   0x0002 // Accept Physical Match Packets
+#define RTL8169_RCR_AMP   0x0004 // Accept Multicast Packets
+#define RTL8169_RCR_ABP   0x0008 // Accept Broadcast Packets
+#define RTL8169_RCR_9356  0x0040 // EEPROM is 9356
+#define RTL8169_RCR_MXDMA 0x0700 // Unlimited DMA Burst
+#define RTL8169_RCR_RXFTH 0xE000 // No Rx threshold
+#define RTL8169_RCR_DEFAULT 0xE70F // Default RX config
+
 // PHY Access bits
 #define RTL8169_PHY_DATA 0xFFFF
 
 // PHY Status bits
 #define RTL8169_PHY_STATUS 0x73 // Link up, full duplex, 1Gbit, flow control ON
 
+// RX Packet Maximum Size
 #define RTL8169_RMS  0x1FFF // RX Packet Maximum Size: 8191
-#define RTL8169_MTPS 0x3B   // TX Packet Maximum Size: 7552
+
+// TX Packet Maximum Size
+#define RTL8169_MTPS 0x3B // TX Packet Maximum Size: 7552
+
+// C+ Command bits
+#define RTL8169_CPCR_RXCSUM 0x20 // Receive Checksum Offload Enabled
+#define RTL8169_CPCR_RXVLAN 0x40 // Receive VLAN De-tagging Enabled
 
 /*
  * Descriptor flags
  */
 
+// Common TX/RX flags
 #define RTL8169_DESC_OWN 0x80000000 // Descriptor owned by RTL8169
 #define RTL8169_DESC_EOR 0x40000000 // End of Descriptor Ring
 #define RTL8169_DESC_FS  0x20000000 // First Segment Descriptor
@@ -119,28 +142,30 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 // TX Descriptor flags
 #define RTL8169_DESC_LGSEN 0x08000000 // Enable Large Send Offload
 
+// TX Status flags mask
+#define RTL8169_DESC_TXSTA (RTL8169_DESC_EOR | RTL8169_DESC_FS | RTL8169_DESC_LS)
+
 // RX Descriptor flags
 #define RTL8169_DESC_PAM  0x04000000 // Physical Address Matched
 #define RTL8169_DESC_BAR  0x02000000 // Broadcast Address Received
-#define RTL8169_DESC_BOVF 0x01000000 // Buffer Overflow
-#define RTL8169_DESC_FOVF 0x00800000 // FIFO Overflow
+#define RTL8169_DESC_RSV1 0x00800000 // Reserved (Always 1)
 #define RTL8169_DESC_UDP  0x00040000 // UDP/IP Received
 #define RTL8169_DESC_TCP  0x00020000 // TCP/IP Received
 
-// Generic RX packet flags
-#define RTL8169_DESC_GENERIC_RX 0x34020000
+// Generic RX packet flags (FS & LS, PAM, TCP/IP received)
+#define RTL8169_DESC_RXSTA 0x34820000
 
 /*
  * PHY registers
  */
 
-#define RTL8169_PHY_BMCR  0x0
-#define RTL8169_PHY_BMSR  0x1
-#define RTL8169_PHY_ID1   0x2
-#define RTL8169_PHY_ID2   0x3
-#define RTL8169_PHY_GBCR  0x9
-#define RTL8169_PHY_GBSR  0xA
-#define RTL8169_PHY_GBESR 0xF
+#define RTL8169_PHY_BMCR  0x00
+#define RTL8169_PHY_BMSR  0x01
+#define RTL8169_PHY_ID1   0x02
+#define RTL8169_PHY_ID2   0x03
+#define RTL8169_PHY_GBCR  0x09
+#define RTL8169_PHY_GBSR  0x0A
+#define RTL8169_PHY_GBESR 0x0F
 
 /*
  * EEPROM pins
@@ -376,39 +401,37 @@ static bool rtl8169_feed_rx(void* net_dev, const void* data, size_t size)
         spin_lock(&rtl8169->rx.lock);
         uint8_t* desc = pci_get_dma_ptr(rtl8169->pci_func, ring_addr + (rtl8169->rx.index << 4), 0x10);
         if (unlikely(!desc)) {
-            // FIFO DMA error
+            // RX descriptor DMA error
             spin_unlock(&rtl8169->rx.lock);
-            rvvm_debug("rtl8169 RX FIFO DMA error");
+            rvvm_debug("rtl8169 RX descriptor DMA error");
             return false;
         }
 
         uint32_t flags = read_uint32_le(desc);
         if (unlikely(!(flags & RTL8169_DESC_OWN))) {
-            // FIFO overflow
+            // RX descriptor unavailable
             spin_unlock(&rtl8169->rx.lock);
-            rtl8169_interrupt(rtl8169, RTL8169_IRQ_FOVW);
+            rtl8169_interrupt(rtl8169, RTL8169_IRQ_RDU);
             return false;
         }
 
         rvvm_addr_t packet_addr = read_uint64_le(desc + 8);
         size_t packet_size = flags & 0x3FFF;
         uint8_t* packet_ptr = pci_get_dma_ptr(rtl8169->pci_func, packet_addr, packet_size);
-        if (unlikely(packet_ptr == NULL || packet_size < size + 4)) {
-            // Packet DMA error
-            spin_unlock(&rtl8169->rx.lock);
+        if (likely(packet_ptr && packet_size >= size + 4)) {
+            memcpy(packet_ptr, data, size);
+            memset(packet_ptr + size, 0, 4); // Append fake CRC32
+        } else {
+            // Keep going as if nothing happened, maybe next descriptor will be OK
             rvvm_debug("rtl8169 RX packet DMA error");
-            return false;
         }
-
-        memcpy(packet_ptr, data, size);
-        memset(packet_ptr + size, 0, 4); // Append fake CRC32
 
         rtl8169->rx.index++;
         if ((flags & RTL8169_DESC_EOR) || rtl8169->rx.index >= RTL8169_MAX_FIFO_SIZE) {
             rtl8169->rx.index = 0;
         }
 
-        atomic_store_uint32_le(desc, (flags & RTL8169_DESC_EOR) | RTL8169_DESC_GENERIC_RX | (size + 4));
+        atomic_store_uint32_le(desc, (flags & RTL8169_DESC_EOR) | RTL8169_DESC_RXSTA | (size + 4));
         spin_unlock(&rtl8169->rx.lock);
         rtl8169_interrupt(rtl8169, RTL8169_IRQ_ROK);
         return true;
@@ -426,8 +449,8 @@ static void rtl8169_tx_doorbell(rtl8169_dev_t* rtl8169, rtl8169_ring_t* ring)
         while (true) {
             uint8_t* desc = pci_get_dma_ptr(rtl8169->pci_func, ring_addr + (ring->index << 4), 0x10);
             if (unlikely(!desc)) {
-                // FIFO DMA error
-                rvvm_debug("rtl8169 TX FIFO DMA error");
+                // TX descriptor DMA error
+                rvvm_debug("rtl8169 TX descriptor DMA error");
                 break;
             }
             uint32_t flags = read_uint32_le(desc);
@@ -450,7 +473,7 @@ static void rtl8169_tx_doorbell(rtl8169_dev_t* rtl8169, rtl8169_ring_t* ring)
                         // Start assembling a new packet
                         rtl8169->seg_size = 0;
                     }
-                    if (rtl8169->seg_size + size <= RTL8169_MAX_PKT_SIZE) {
+                    if (rtl8169->seg_size < RTL8169_MAX_PKT_SIZE - size) {
                         memcpy(rtl8169->seg_buff + rtl8169->seg_size, ptr, size);
                         rtl8169->seg_size += size;
                         if (flags & RTL8169_DESC_LS) {
@@ -464,6 +487,10 @@ static void rtl8169_tx_doorbell(rtl8169_dev_t* rtl8169, rtl8169_ring_t* ring)
                         rtl8169->seg_size = -1;
                     }
                 }
+            } else {
+                // Keep going as if nothing happened, maybe next descriptor will be OK
+                rvvm_debug("rtl8169 TX packet DMA error");
+                rtl8169->seg_size = -1;
             }
 
             ring->index++;
@@ -471,7 +498,7 @@ static void rtl8169_tx_doorbell(rtl8169_dev_t* rtl8169, rtl8169_ring_t* ring)
                 ring->index = 0;
             }
 
-            atomic_store_uint32_le(desc, flags & ~RTL8169_DESC_OWN);
+            atomic_store_uint32_le(desc, flags & RTL8169_DESC_TXSTA);
             tx_irq = true;
         }
         spin_unlock(&ring->lock);
@@ -508,7 +535,10 @@ static bool rtl8169_pci_read(rvvm_mmio_dev_t* dev, void* data, size_t offset, ui
             val = atomic_load_uint32_relax(&rtl8169->cr) << 24;
             break;
         case RTL8169_REG_TCR:
-            val = RTL8169_TCR_DEFAULT | RTL8169_XID_RTL8168DP;
+            val = RTL8169_TCR_DEFAULT | RTL8169_XID_RTL8168B;
+            break;
+        case RTL8169_REG_RCR:
+            val = RTL8169_RCR_DEFAULT;
             break;
         case RTL8169_REG_9346:
             val = rtl8169_93c56_read_pins(rtl8169);
@@ -519,6 +549,7 @@ static bool rtl8169_pci_read(rvvm_mmio_dev_t* dev, void* data, size_t offset, ui
             break;
         case RTL8169_REG_PHYAR:
         case RTL8169_REG_ERIAR:
+        case RTL8169_REG_EPHAR:
         case RTL8169_REG_OCPAR:
             val = atomic_load_uint32_relax(&rtl8169->phyar);
             break;
@@ -536,6 +567,9 @@ static bool rtl8169_pci_read(rvvm_mmio_dev_t* dev, void* data, size_t offset, ui
             break;
         case RTL8169_REG_TXHA2:
             val = atomic_load_uint32_relax(&rtl8169->txp.addr_h);
+            break;
+        case RTL8169_REG_CPCR:
+            val = RTL8169_CPCR_RXCSUM | RTL8169_CPCR_RXVLAN;
             break;
         case RTL8169_REG_RXDA1:
             val = atomic_load_uint32_relax(&rtl8169->rx.addr);
@@ -623,6 +657,7 @@ static bool rtl8169_pci_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, u
             atomic_store_uint32_relax(&rtl8169->rx.addr_h, val);
             break;
         case RTL8169_REG_PHYAR:
+        case RTL8169_REG_EPHAR:
             rtl8169_handle_phy(rtl8169, val);
             break;
         case RTL8169_REG_ERIAR:
