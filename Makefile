@@ -167,10 +167,11 @@ ifneq (,$(PKG_CONFIG))
 override PKG_CONFIG := $(PKG_CONFIG) $(filter -static,$(LDFLAGS))
 endif
 
-ifeq (0,$(USE_FULL_LINKING))
-override HAS_PKG_CONFIG := 1
-else
+# For fully linked build, pkg-config presence may be ignored via IGNORE_PKG_CONFIG=1
+ifneq (,$(if $(IGNORE_PKG_CONFIG),,$(filter-out 0,$(USE_FULL_LINKING))))
 override HAS_PKG_CONFIG := $(if $(PKG_CONFIG),$(if $(shell $(PKG_CONFIG) --version $(NULL_STDERR)),1,0),0)
+else
+override HAS_PKG_CONFIG := 1
 endif
 
 #
