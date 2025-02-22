@@ -155,8 +155,19 @@ override OS_PRETTY := $(OS)
 override OS := $(call tolower,$(OS))
 
 # For cross-compile checking
-override TARGET_CROSS := $(if $(filter-out $(ARCH),$(HOST_ARCH))$(filter-out $(OS_PRETTY),$(HOST_UNAME)),yes)
-override TARGET_PKGCONFIG := $(if $(TARGET_CROSS),$(if $(PKG_CONFIG_LIBDIR),yes),yes)
+override TARGET_CROSS := $(if $(filter-out $(ARCH),$(HOST_ARCH))$(filter-out $(OS_PRETTY),$(HOST_UNAME)),$(ARCH)-$(OS))
+
+# If PKG_CONFIG is not set, default to pkg-config for properly set up cross-compilation or native build
+ifneq (,$(if $(PKG_CONFIG),,$(if $(TARGET_CROSS),$(PKG_CONFIG_LIBDIR)$(PKG_CONFIG_SYSROOT_DIR),yes)))
+override PKG_CONFIG := pkg-config
+endif
+
+# Pass -static to pkg-config if needed
+ifneq (,$(PKG_CONFIG))
+override PKG_CONFIG += $(filter -static,$(LDFLAGS))
+endif
+
+override HAS_PKG_CONFIG := $(if $(PKG_CONFIG),1,0)
 
 #
 # Set up target-specific build options
@@ -325,9 +336,9 @@ override LIBS_USE_X11 := x11 xext
 override LIBS_USE_WAYLAND := wayland-client xkbcommon
 
 # Useflag dependencies
-override NEED_USE_X11 := USE_GUI
-override NEED_USE_SDL := USE_GUI
-override NEED_USE_WAYLAND := USE_GUI
+override NEED_USE_X11 := USE_GUI HAS_PKG_CONFIG
+override NEED_USE_SDL := USE_GUI HAS_PKG_CONFIG
+override NEED_USE_WAYLAND := USE_GUI HAS_PKG_CONFIG
 override NEED_USE_WIN32_GUI := USE_GUI
 override NEED_USE_HAIKU_GUI := USE_GUI
 override NEED_USE_JNI := USE_LIB
@@ -391,7 +402,8 @@ override SRC := $(filter-out $(foreach cond_src,$(SRC_CONDITIONAL),$($(cond_src)
 override SRC_CXX := $(filter-out $(foreach cond_src,$(SRC_CONDITIONAL),$($(cond_src))),$(SRC_CXX))
 
 # Disable all useflags which depend on another disabled useflags
-override _ := $(foreach useflag,$(USEFLAGS),$(foreach need_useflag,$(NEED_$(useflag)),$(if $(filter 0,$($(need_useflag))),$(eval override $(useflag) := 0))))
+override _ := $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(foreach need_useflag,$(NEED_$(useflag)),\
+$(if $(filter 0,$($(need_useflag))),$(eval override $(useflag) := 0)$(info $(WARN_PREFIX) $(useflag) depends on $(need_useflag)$(RESET))))))
 
 # Include actually enabled C/C++ sources
 override SRC += $(sort $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(SRC_$(useflag)))))
@@ -399,7 +411,7 @@ override SRC_CXX += $(strip $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$(
 
 
 # Handle library include paths / linking when pkg-config is available
-ifneq (,$(TARGET_PKGCONFIG))
+ifneq (,$(PKG_CONFIG))
 override LIBS := $(strip $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(LIBS_$(useflag)))))
 override _ := $(foreach lib, $(LIBS),$(if $(shell pkg-config $(lib) --cflags --libs $(NULL_STDERR)),,$(info $(WARN_PREFIX) Possibly missing library: $(lib)$(RESET))))
 
