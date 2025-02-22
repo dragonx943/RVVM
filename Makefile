@@ -164,7 +164,7 @@ endif
 
 # Pass -static to pkg-config if needed
 ifneq (,$(PKG_CONFIG))
-override PKG_CONFIG += $(filter -static,$(LDFLAGS))
+override PKG_CONFIG := $(PKG_CONFIG) $(filter -static,$(LDFLAGS))
 endif
 
 override HAS_PKG_CONFIG := $(if $(PKG_CONFIG),1,$(if $(filter 0,$(USE_FULL_LINKING)),0,1))
@@ -381,7 +381,7 @@ endif
 # Check if RVJIT supports the target architecture
 ifeq ($(USE_JIT),1)
 ifeq (,$(findstring 86,$(ARCH))$(findstring arm,$(ARCH))$(findstring riscv,$(ARCH)))
-override USE_JIT = 0
+override USE_JIT := 0
 $(info $(INFO_PREFIX) No RVJIT support for current target$(RESET))
 endif
 endif
@@ -406,8 +406,8 @@ override _ := $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$
 $(if $(filter 0,$($(need_useflag))),$(eval override $(useflag) := 0)$(info $(WARN_PREFIX) $(useflag) depends on $(need_useflag)$(RESET))))))
 
 # Include actually enabled C/C++ sources
-override SRC += $(sort $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(SRC_$(useflag)))))
-override SRC_CXX += $(strip $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(SRC_CXX_$(useflag)))))
+override SRC := $(SRC) $(sort $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(SRC_$(useflag)))))
+override SRC_CXX := $(SRC_CXX) $(strip $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(SRC_CXX_$(useflag)))))
 
 
 # Handle library include paths / linking when pkg-config is available
@@ -416,30 +416,30 @@ override LIBS := $(strip $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(u
 override _ := $(foreach lib, $(LIBS),$(if $(shell $(PKG_CONFIG) $(lib) --cflags --libs $(NULL_STDERR)),,$(info $(WARN_PREFIX) Possibly missing library: $(lib)$(RESET))))
 
 # Set libraries include paths
-override CFLAGS += $(sort $(foreach lib, $(LIBS),$(shell $(PKG_CONFIG) $(lib) --cflags-only-I $(NULL_STDERR))))
+override CFLAGS := $(CFLAGS) $(sort $(foreach lib, $(LIBS),$(shell $(PKG_CONFIG) $(lib) --cflags-only-I $(NULL_STDERR))))
 
 ifeq ($(USE_FULL_LINKING),1)
 # Proper library linking (Do not use sort here for correct linking order)
-override LDFLAGS += $(strip $(foreach lib, $(LIBS),$(shell $(PKG_CONFIG) $(lib) --libs $(NULL_STDERR))))
+override LDFLAGS := $(LDFLAGS) $(strip $(foreach lib, $(LIBS),$(shell $(PKG_CONFIG) $(lib) --libs $(NULL_STDERR))))
 else
 # Pass libdir rpath to linker for dynamic loader to work on Nix, etc
 ifneq (,$(findstring linux,$(OS))$(findstring darwin,$(OS)))
 override WL_RPATH := -Wl,-rpath,
-override LIBDIRS += $(sort $(foreach lib, $(LIBS),$(shell $(PKG_CONFIG) $(lib) --variable libdir $(NULL_STDERR))))
-override LDFLAGS += $(sort $(foreach libdir, $(LIBDIRS),$(WL_RPATH)$(libdir)))
+override LIBDIRS := $(sort $(foreach lib, $(LIBS),$(shell $(PKG_CONFIG) $(lib) --variable libdir $(NULL_STDERR))))
+override LDFLAGS := $(LDFLAGS) $(sort $(foreach libdir, $(LIBDIRS),$(WL_RPATH)$(libdir)))
 endif
 endif
 endif
 
 
 # Set useflags CFLAGS
-override CFLAGS += $(strip $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(CFLAGS_$(useflag)))))
+override CFLAGS := $(CFLAGS) $(strip $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(CFLAGS_$(useflag)))))
 
 # Set useflags LDFLAGS
-override LDFLAGS += $(strip $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(LDFLAGS_$(useflag)))))
+override LDFLAGS := $(LDFLAGS) $(strip $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(LDFLAGS_$(useflag)))))
 
 # Set useflags C definitions
-override CFLAGS += $(strip $(foreach useflag, $(USEFLAGS),$(if $(filter-out 0,$($(useflag))),-D$(useflag)=$($(useflag)))))
+override CFLAGS := $(CFLAGS) $(strip $(foreach useflag, $(USEFLAGS),$(if $(filter-out 0,$($(useflag))),-D$(useflag)=$($(useflag)))))
 
 #
 # Output & Object files handling
