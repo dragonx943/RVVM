@@ -413,19 +413,21 @@ override SRC_CXX += $(strip $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$(
 # Handle library include paths / linking when pkg-config is available
 ifneq (,$(PKG_CONFIG))
 override LIBS := $(strip $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(LIBS_$(useflag)))))
-override _ := $(foreach lib, $(LIBS),$(if $(shell pkg-config $(lib) --cflags --libs $(NULL_STDERR)),,$(info $(WARN_PREFIX) Possibly missing library: $(lib)$(RESET))))
+override _ := $(foreach lib, $(LIBS),$(if $(shell $(PKG_CONFIG) $(lib) --cflags --libs $(NULL_STDERR)),,$(info $(WARN_PREFIX) Possibly missing library: $(lib)$(RESET))))
 
 # Set libraries include paths
-override CFLAGS += $(sort $(foreach lib, $(LIBS),$(shell pkg-config $(lib) --cflags-only-I $(NULL_STDERR))))
+override CFLAGS += $(sort $(foreach lib, $(LIBS),$(shell $(PKG_CONFIG) $(lib) --cflags-only-I $(NULL_STDERR))))
 
 ifeq ($(USE_FULL_LINKING),1)
 # Proper library linking (Do not use sort here for correct linking order)
-override LDFLAGS += $(strip $(foreach lib, $(LIBS),$(shell pkg-config $(lib) --libs $(NULL_STDERR))))
+override LDFLAGS += $(strip $(foreach lib, $(LIBS),$(shell $(PKG_CONFIG) $(lib) --libs $(NULL_STDERR))))
 else
 # Pass libdir rpath to linker for dynamic loader to work on Nix, etc
+ifneq (,$(findstring linux,$(OS))$(findstring darwin,$(OS)))
 override WL_RPATH := -Wl,-rpath,
-override LIBDIRS += $(sort $(foreach lib, $(LIBS),$(shell pkg-config $(lib) --variable libdir $(NULL_STDERR))))
+override LIBDIRS += $(sort $(foreach lib, $(LIBS),$(shell $(PKG_CONFIG) $(lib) --variable libdir $(NULL_STDERR))))
 override LDFLAGS += $(sort $(foreach libdir, $(LIBDIRS),$(WL_RPATH)$(libdir)))
+endif
 endif
 endif
 
