@@ -167,7 +167,11 @@ ifneq (,$(PKG_CONFIG))
 override PKG_CONFIG := $(PKG_CONFIG) $(filter -static,$(LDFLAGS))
 endif
 
-override HAS_PKG_CONFIG := $(if $(PKG_CONFIG),1,$(if $(filter 0,$(USE_FULL_LINKING)),0,1))
+ifeq (0,$(USE_FULL_LINKING))
+override HAS_PKG_CONFIG := 1
+else
+override HAS_PKG_CONFIG := $(if $(PKG_CONFIG),$(if $(shell $(PKG_CONFIG) --version $(NULL_STDERR)),1,0),0)
+endif
 
 #
 # Set up target-specific build options
