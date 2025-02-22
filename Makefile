@@ -162,16 +162,15 @@ ifneq (,$(if $(PKG_CONFIG),,$(if $(TARGET_CROSS),$(PKG_CONFIG_LIBDIR)$(PKG_CONFI
 override PKG_CONFIG := pkg-config
 endif
 
+# Check pkg-config presence via pkg-config --version
+override PKG_CONFIG := $(if $(PKG_CONFIG),$(if $(shell $(PKG_CONFIG) --version $(NULL_STDERR)),$(PKG_CONFIG)))
+
+# For fully linked build, pkg-config dependency may be ignored via IGNORE_PKG_CONFIG=1
+override HAS_PKG_CONFIG := $(if $(IGNORE_PKG_CONFIG),1,$(if $(filter-out 0,$(USE_FULL_LINKING)),$(if $(PKG_CONFIG),1,0),1))
+
 # Pass -static to pkg-config if needed
 ifneq (,$(PKG_CONFIG))
 override PKG_CONFIG := $(PKG_CONFIG) $(filter -static,$(LDFLAGS))
-endif
-
-# For fully linked build, pkg-config presence may be ignored via IGNORE_PKG_CONFIG=1
-ifneq (,$(if $(IGNORE_PKG_CONFIG),,$(filter-out 0,$(USE_FULL_LINKING))))
-override HAS_PKG_CONFIG := $(if $(PKG_CONFIG),$(if $(shell $(PKG_CONFIG) --version $(NULL_STDERR)),1,0),0)
-else
-override HAS_PKG_CONFIG := 1
 endif
 
 #
