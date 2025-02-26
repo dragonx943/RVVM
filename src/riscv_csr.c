@@ -613,6 +613,10 @@ static forceinline bool riscv_csr_op_internal(rvvm_hart_t* vm, uint32_t csr_id, 
         case CSR_SENVCFG:
             return riscv_csr_helper_l(vm, &vm->csr.envcfg[RISCV_PRIV_SUPERVISOR], dest, CSR_SENVCFG_MASK, op);
 
+        // Supervisor Counter Setup
+        case CSR_SCOUNTINHIBIT:
+            return riscv_csr_zero(dest);
+
         // Supervisor Indirect CSR Access (Sscsrind)
         case CSR_SISELECT:
             return riscv_csr_helper(vm, &vm->csr.iselect[RISCV_PRIV_SUPERVISOR], dest, op);
