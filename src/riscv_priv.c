@@ -37,7 +37,9 @@ slow_path void riscv_emulate_opc_system(rvvm_hart_t* vm, const uint32_t insn)
             return;
         case RISCV_PRIV_S_SRET:
             // Executing sret should trap in S-mode when mstatus.TSR is enabled
-            if (likely((vm->priv_mode >= RISCV_PRIV_SUPERVISOR && !(vm->csr.status & CSR_STATUS_TSR)) || vm->priv_mode == RISCV_PRIV_MACHINE)) {
+            if (likely((vm->priv_mode >= RISCV_PRIV_SUPERVISOR
+                    && !(vm->csr.status & CSR_STATUS_TSR))
+                    || vm->priv_mode == RISCV_PRIV_MACHINE)) {
                 uint8_t next_priv = bit_cut(vm->csr.status, 8, 1);
                 // Set SPP to U
                 vm->csr.status = bit_replace(vm->csr.status, 8, 1, RISCV_PRIV_USER);
@@ -72,7 +74,9 @@ slow_path void riscv_emulate_opc_system(rvvm_hart_t* vm, const uint32_t insn)
             break;
         case RISCV_PRIV_S_WFI:
             // Executing wfi should trap in S-mode when mstatus.TSR is enabled, and in U-mode
-            if (likely((vm->priv_mode >= RISCV_PRIV_SUPERVISOR && !(vm->csr.status & CSR_STATUS_TW)) || vm->priv_mode == RISCV_PRIV_MACHINE)) {
+            if (likely((vm->priv_mode >= RISCV_PRIV_SUPERVISOR
+                    && !(vm->csr.status & CSR_STATUS_TW))
+                    || vm->priv_mode == RISCV_PRIV_MACHINE)) {
                 // Resume execution for locally enabled interrupts pending at any privilege level
                 if (!riscv_interrupts_pending(vm)) {
                     while (atomic_load_uint32_ex(&vm->running, ATOMIC_RELAXED)) {
@@ -104,8 +108,10 @@ slow_path void riscv_emulate_opc_system(rvvm_hart_t* vm, const uint32_t insn)
         case 0x0:
             switch (insn & RV_PRIV_S_FENCE_MASK) {
                 case RV_PRIV_S_SFENCE_VMA:
-                    // Allow sfence.vma only when in S-mode or more privileged, and TVM isn't enabled
-                    if (vm->priv_mode >= RISCV_PRIV_SUPERVISOR && !(vm->csr.status & CSR_STATUS_TVM)) {
+                    // Allow sfence.vma only when in S-mode and TVM isn't enabled, or more privileged
+                    if (likely((vm->priv_mode >= RISCV_PRIV_SUPERVISOR
+                            && !(vm->csr.status & CSR_STATUS_TVM))
+                            || vm->priv_mode == RISCV_PRIV_MACHINE)) {
                         if (rs1) {
                             riscv_tlb_flush_page(vm, vm->registers[rs1]);
                         } else {
