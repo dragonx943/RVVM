@@ -702,7 +702,7 @@ PUBLIC pci_dev_t* rtl8169_init(pci_bus_t* pci_bus, tap_dev_t* tap)
 
     pci_func_desc_t rtl8169_desc = {
         .vendor_id = 0x10EC,  // Realtek
-        .device_id = 0x8169,  // RTL8169 Gigabit NIC
+        .device_id = 0x8168,  // RTL8168 Gigabit NIC
         .class_code = 0x0200, // Ethernet
         .irq_pin = PCI_IRQ_PIN_INTA,
         .bar[1] = {
