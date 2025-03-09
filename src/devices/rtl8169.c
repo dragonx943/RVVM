@@ -678,10 +678,20 @@ static void rtl8169_remove(rvvm_mmio_dev_t* dev)
     free(rtl8169);
 }
 
+static void rtl8169_remove_dummy(rvvm_mmio_dev_t* dev)
+{
+    UNUSED(dev);
+}
+
 static rvvm_mmio_type_t rtl8169_type = {
     .name = "rtl8169",
     .remove = rtl8169_remove,
     .reset = rtl8169_reset,
+};
+
+static rvvm_mmio_type_t rtl8169_type_dummy = {
+    .name = "rtl8169",
+    .remove = rtl8169_remove_dummy,
 };
 
 PUBLIC pci_dev_t* rtl8169_init(pci_bus_t* pci_bus, tap_dev_t* tap)
@@ -705,7 +715,16 @@ PUBLIC pci_dev_t* rtl8169_init(pci_bus_t* pci_bus, tap_dev_t* tap)
         .device_id = 0x8168,  // RTL8168 Gigabit NIC
         .class_code = 0x0200, // Ethernet
         .irq_pin = PCI_IRQ_PIN_INTA,
-        .bar[1] = {
+        .bar[0] = {
+            .size = 0x100,
+            .min_op_size = 1,
+            .max_op_size = 4,
+            .read = rtl8169_pci_read,
+            .write = rtl8169_pci_write,
+            .data = rtl8169,
+            .type = &rtl8169_type_dummy,
+        },
+        .bar[2] = {
             .size = 0x1000,
             .min_op_size = 1,
             .max_op_size = 4,
