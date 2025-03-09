@@ -288,7 +288,7 @@ static void handle_icmp(tap_dev_t* tap, const uint8_t* buffer, size_t size, net_
     }
 }
 
-static void handle_dhcp(tap_dev_t* tap, const uint8_t* buffer, size_t size, net_addr_t* dst, net_addr_t* src)
+static void handle_dhcp(tap_dev_t* tap, const uint8_t* buffer, size_t size, net_addr_t* src)
 {
     if (unlikely(size < 240)) {
         // Packet too small
@@ -310,8 +310,8 @@ static void handle_dhcp(tap_dev_t* tap, const uint8_t* buffer, size_t size, net_
 
     uint8_t frame[TAP_FRAME_SIZE];
     uint8_t* ipv4 = create_eth_frame(tap, frame, ETH2_IPv4);
-    uint8_t* udp = create_ipv4_frame(ipv4, 277 + UDP_HDR_SIZE, IP_PROTO_UDP, (const uint8_t*)"\xFF\xFF\xFF\xFF", GATEWAY_IP);
-    uint8_t* dhcp = create_udp_datagram(udp, 277, src->port, dst->port);
+    uint8_t* udp = create_ipv4_frame(ipv4, 278 + UDP_HDR_SIZE, IP_PROTO_UDP, (const uint8_t*)"\xFF\xFF\xFF\xFF", GATEWAY_IP);
+    uint8_t* dhcp = create_udp_datagram(udp, 278, 68, 67);
 
     dhcp[0] = OP_RESPONSE;
     dhcp[1] = HTYPE_ETHER;
@@ -360,8 +360,9 @@ static void handle_dhcp(tap_dev_t* tap, const uint8_t* buffer, size_t size, net_
     dhcp[268] = 8;
     write_uint32_be_m(dhcp + 269, 0x01010101);
     write_uint32_be_m(dhcp + 273, 0x08080808);
+    dhcp[277] = DHCP_ENDMARK;
 
-    eth_send(tap, frame, 277 + UDP_HDR_SIZE + IPv4_HDR_SIZE + ETH2_HDR_SIZE);
+    eth_send(tap, frame, 278 + UDP_HDR_SIZE + IPv4_HDR_SIZE + ETH2_HDR_SIZE);
 }
 
 // Filter unwanted outbound traffic to special IPs
@@ -412,7 +413,7 @@ static void handle_udp(tap_dev_t* tap, const uint8_t* buffer, size_t size, net_a
     if (ts == NULL) {
         if (dst->port == 67 && (read_uint32_be_m(src->ip) == 0)) {
             spin_unlock(&tap->lock);
-            handle_dhcp(tap, udb_buff, udp_size, dst, src);
+            handle_dhcp(tap, udb_buff, udp_size, src);
             return;
         }
 
