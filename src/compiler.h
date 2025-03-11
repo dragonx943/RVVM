@@ -257,9 +257,17 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  * Macro helpers
  */
 
-// Unwrap a token or a token value into a string literal
-#define MACRO_MKSTRING(x) #x
-#define MACRO_TOSTRING(x) MACRO_MKSTRING(x)
+// Unwrap a token or a token value into a literal
+#define MACRO_TOSTRING_INTERNAL(x) #x
+#define MACRO_TOSTRING(x) MACRO_TOSTRING_INTERNAL(x)
+
+// Concatenate tokens or token values into a literal
+#define MACRO_CONCAT_INTERNAL(a, b) a ## b
+#define MACRO_CONCAT(a, b) MACRO_CONCAT_INTERNAL(a, b)
+
+// Give a unique variable identifier for each macro instantiation
+#define MACRO_IDENT(identifier) MACRO_CONCAT(identifier, __LINE__)
+#define MACRO_IDENT_NAME(identifier, name) MACRO_CONCAT(name, MACRO_CONCAT(identifier, __LINE__))
 
 // GNU extension that omits file path, use if available
 #ifndef __FILE_NAME__
@@ -269,23 +277,90 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 // Unwraps to example.c@128
 #define SOURCE_LINE __FILE_NAME__ "@" MACRO_TOSTRING(__LINE__)
 
-#define MACRO_ASSERT_NAMED(cond, name) typedef char static_assert_at_line_##name[(cond) ? 1 : -1]
-#define MACRO_ASSERT_UNWRAP(cond, tok) MACRO_ASSERT_NAMED(cond, tok)
-
 // Static build-time assertions
-#ifdef IGNORE_BUILD_ASSERTS
+#if defined(USE_NO_BUILD_ASSERTS)
 #define BUILD_ASSERT(cond)
 #elif __STDC_VERSION__ >= 201112LL && !defined(__chibicc__)
 #define BUILD_ASSERT(cond) _Static_assert(cond, MACRO_TOSTRING(cond))
 #else
-#define BUILD_ASSERT(cond) MACRO_ASSERT_UNWRAP(cond, __LINE__)
+#define BUILD_ASSERT(cond) typedef char MACRO_CONCAT(static_assert_at_line_, __LINE__)[(cond) ? 1 : -1]
 #endif
 
 // Same as BUILD_ASSERT, but produces an expression with value 0
-#ifdef IGNORE_BUILD_ASSERTS
+#if defined(USE_NO_BUILD_ASSERTS)
 #define BUILD_ASSERT_EXPR(cond) 0
 #else
 #define BUILD_ASSERT_EXPR(cond) (sizeof(char[(cond) ? 1 : -1]) - 1)
 #endif
+
+/*
+ * Conditional scoped statement helpers
+ *
+ * When 'cond' is true:
+ * - Execute 'expr_pre' at entry
+ * - Execute the statement body
+ * - Execute 'expr_post' on scope exit, break or continue
+ *
+ * When using *_COND family of helpers,
+ * an else-clause may be used for when 'cond' is false
+ *
+ * Named variants exist for instatiating multiple scopes from a single macro
+ *
+ * SCOPED_HELPER(spin_lock(&lock), spin_unlock(&lock)) {
+ *     do_something_under_lock();
+ *
+ *     if (need_exit_under_lock()) {
+ *         break;
+ *     }
+ *
+ *     do_something_else_under_lock();
+ * }
+ *
+ * POST_COND(spin_try_lock(&lock), spin_unlock(&lock)) {
+ *     do_something_under_lock();
+ * } else {
+ *     do_something_when_locking_failed();
+ * }
+ */
+
+#define BREAKABLE_SCOPE(name) \
+    for (int MACRO_IDENT_NAME(breakable_scope_iter, name) = 1; \
+        MACRO_IDENT_NAME(breakable_scope_iter, name); \
+        MACRO_IDENT_NAME(breakable_scope_iter, name) = 0)
+
+#define SCOPED_COND_NAMED(cond, expr_pre, expr_post, name) \
+    for (int MACRO_IDENT_NAME(scoped_cond_iter, name) = 1, \
+        MACRO_IDENT_NAME(scoped_cond, name) = !!(cond) && (expr_pre, 1); \
+        MACRO_IDENT_NAME(scoped_cond_iter, name); \
+        MACRO_IDENT_NAME(scoped_cond_iter, name) = MACRO_IDENT_NAME(scoped_cond, name) && (expr_post, 0)) \
+        BREAKABLE_SCOPE(name) if (MACRO_IDENT_NAME(scoped_cond, name))
+
+#define POST_COND_NAMED(cond, expr_post, name) \
+    for (int MACRO_IDENT_NAME(post_cond_iter, name) = 1, MACRO_IDENT_NAME(post_cond, name) = !!(cond); \
+        MACRO_IDENT_NAME(post_cond_iter, name); \
+        MACRO_IDENT_NAME(post_cond_iter, name) = MACRO_IDENT_NAME(post_cond, name) && (expr_post, 0)) \
+        BREAKABLE_SCOPE(name) if (MACRO_IDENT_NAME(post_cond, name))
+
+#define SCOPED_STMT_NAMED(cond, expr_pre, expr_post, name) \
+    for (int MACRO_IDENT_NAME(scoped_stmt_iter, name) = !!(cond) && (expr_pre, 1); \
+        MACRO_IDENT_NAME(scoped_stmt_iter, name); \
+        MACRO_IDENT_NAME(scoped_stmt_iter, name) = (expr_post, 0)) \
+        BREAKABLE_SCOPE(name)
+
+#define POST_STMT_NAMED(cond, expr_post, name) \
+    for (int MACRO_IDENT_NAME(post_stmt_iter, name) = !!(cond); \
+        MACRO_IDENT_NAME(post_stmt_iter, name); \
+        MACRO_IDENT_NAME(post_stmt_iter, name) = (expr_post, 0)) \
+        BREAKABLE_SCOPE(name)
+
+#define SCOPED_COND(cond, expr_pre, expr_post) SCOPED_COND_NAMED(cond, expr_pre, expr_post, )
+
+#define POST_COND(cond, expr_post)             POST_COND_NAMED(cond, expr_post, )
+
+#define SCOPED_STMT(cond, expr_pre, expr_post) SCOPED_STMT_NAMED(cond, expr_pre, expr_post, )
+
+#define POST_STMT(cond, expr_post)             POST_STMT_NAMED(cond, expr_post, )
+
+#define SCOPED_HELPER(expr_pre, expr_post)     SCOPED_STMT(1, expr_pre, expr_post)
 
 #endif
