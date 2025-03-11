@@ -37,7 +37,7 @@ typedef struct {
 #endif
 } spinlock_t;
 
-// Slow path for kernel wait/wake on contended lock
+// Slow path for kernel wait / wake on contended lock, and lock misuse detection
 slow_path void spin_lock_wait(spinlock_t* lock, const char* location);
 slow_path void spin_lock_wake(spinlock_t* lock, uint32_t prev);
 
@@ -96,7 +96,8 @@ static forceinline void spin_lock_slow_internal(spinlock_t* lock, const char* lo
 static forceinline void spin_unlock(spinlock_t* lock)
 {
     uint32_t prev = atomic_swap_uint32_ex(&lock->flag, 0x0, ATOMIC_RELEASE);
-    if (unlikely(((int32_t)prev) <= 0)) {
+    if (unlikely(prev > 0x1)) {
+        // Waiters are present, or incorrectly locked as a reader
         spin_lock_wake(lock, prev);
     }
 }
@@ -108,14 +109,14 @@ static forceinline void spin_unlock(spinlock_t* lock)
 // Try to claim the reader lock
 static forceinline bool spin_try_read_lock(spinlock_t* lock)
 {
-    uint32_t prev = 0;
+    uint32_t prev;
     do {
         prev = atomic_load_uint32_ex(&lock->flag, ATOMIC_RELAXED);
-        if (unlikely((prev & 0x1) || ((int32_t)prev) < 0)) {
+        if (unlikely(prev && ((int32_t)prev) < 0x2)) {
             // Writer owns the lock, writer waiters are present or too much readers (sic!)
             return false;
         }
-    } while (unlikely(!atomic_cas_uint32_ex(&lock->flag, prev, prev + 2, true, ATOMIC_ACQUIRE, ATOMIC_RELAXED)));
+    } while (unlikely(!atomic_cas_uint32_ex(&lock->flag, prev, prev + 0x2, true, ATOMIC_ACQUIRE, ATOMIC_RELAXED)));
     return true;
 }
 
@@ -136,10 +137,37 @@ static forceinline void spin_read_lock_internal(spinlock_t* lock, const char* lo
 // Release the reader lock
 static forceinline void spin_read_unlock(spinlock_t* lock)
 {
-    uint32_t prev = atomic_sub_uint32_ex(&lock->flag, 0x2, ATOMIC_RELEASE);
-    if (unlikely(((int32_t)prev) <= 0)) {
+    int32_t prev = atomic_sub_uint32_ex(&lock->flag, 0x2, ATOMIC_RELEASE);
+    if (unlikely(prev < 0x2)) {
+        // Waiters are present, or incorrectly locked as a writer
         spin_read_lock_wake(lock, prev);
     }
 }
+
+/*
+ * Scoped locking helpers, may be exited via break
+ *
+ * scoped_spin_lock(&lock) {
+ *     do_something_under_lock();
+ *
+ *     if (need_exit_under_lock()) {
+ *         break;
+ *     }
+ *
+ *     do_something_under_lock();
+ * }
+ *
+ * scoped_spin_try_lock(&lock) {
+ *     do_something_under_lock();
+ * } else {
+ *     do_something_when_locking_failed();
+ * }
+ */
+
+#define scoped_spin_lock(lock)          SCOPED_HELPER(spin_lock(lock),      spin_unlock(lock))
+#define scoped_spin_try_lock(lock)      POST_COND(spin_try_lock(lock),      spin_unlock(lock))
+#define scoped_spin_read_lock(lock)     SCOPED_HELPER(spin_read_lock(lock), spin_read_unlock(lock))
+#define scoped_spin_try_read_lock(lock) POST_COND(spin_try_read_lock(lock), spin_read_unlock(lock))
+#define scoped_spin_lock_slow(lock)     SCOPED_HELPER(spin_lock_slow(lock), spin_unlock(lock))
 
 #endif
