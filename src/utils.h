@@ -167,16 +167,31 @@ PRINT_FORMAT void rvvm_fatal(const char* format_str, ...); // Aborts the process
 
 slow_path void do_once_finalize(uint32_t* ticket);
 
-// Run expression only once (In a thread-safe way), for lazy init, etc
-#define DO_ONCE(expression) \
+/*
+ * Run scoped statement once per library lifetime (In a thread-safe way)
+ *
+ * DO_ONCE_SCOPED {
+ *     if (!feature_avail()) {
+ *         break;
+ *     }
+ *
+ *     global_feature_init();
+ * }
+ */
+#define DO_ONCE_SCOPED \
+    static uint32_t MACRO_IDENT(do_once_ticket) = 0; \
+    POST_STMT_NAMED(unlikely(atomic_load_uint32(&MACRO_IDENT(do_once_ticket)) != 2), do_once_finalize(&MACRO_IDENT(do_once_ticket)), ticket) \
+        POST_STMT_NAMED(atomic_cas_uint32(&MACRO_IDENT(do_once_ticket), 0, 1), atomic_store_uint32(&MACRO_IDENT(do_once_ticket), 2), claim)
+
+/*
+ * Run an expression once per library lifetime (In a thread-safe way)
+ *
+ * DO_ONCE(rvvm_warn("This will only be printed once!"));
+ */
+#define DO_ONCE(expr_once) \
 do { \
-    static uint32_t already_done_once = 0; \
-    if (unlikely(atomic_load_uint32_ex(&already_done_once, ATOMIC_ACQUIRE) != 2)) { \
-        if (atomic_cas_uint32(&already_done_once, 0, 1)) { \
-            expression; \
-            atomic_store_uint32_ex(&already_done_once, 2, ATOMIC_RELEASE); \
-        } \
-        do_once_finalize(&already_done_once); \
+    DO_ONCE_SCOPED { \
+        expr_once; \
     } \
 } while (0)
 
