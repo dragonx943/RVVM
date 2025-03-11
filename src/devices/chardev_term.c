@@ -49,10 +49,11 @@ SOURCE_OPTIMIZATION_SIZE
 
 typedef struct {
     chardev_t chardev;
+    ringbuf_t rx, tx;
     spinlock_t lock;
+
     uint32_t flags;
     int rfd, wfd;
-    ringbuf_t rx, tx;
     bool ctrl_a;
 } chardev_term_t;
 
@@ -195,11 +196,15 @@ static void term_detach(void)
 
 static uint32_t term_update_flags(chardev_term_t* term)
 {
-    uint32_t flags = 0;
-    if (ringbuf_avail(&term->rx)) flags |= CHARDEV_RX;
-    if (ringbuf_space(&term->tx)) flags |= CHARDEV_TX;
-
-    return flags & ~atomic_swap_uint32(&term->flags, flags);
+    uint32_t flags = 0, flags_orig = atomic_load_uint32_relax(&term->flags);
+    if (ringbuf_avail(&term->rx)) {
+        flags |= CHARDEV_RX;
+    }
+    if (ringbuf_space(&term->tx)) {
+        flags |= CHARDEV_TX;
+    }
+    atomic_store_uint32_relax(&term->flags, flags);
+    return flags & ~flags_orig;
 }
 
 // Handles VM-related hotkeys
@@ -245,8 +250,9 @@ static void term_push_tx(chardev_term_t* term)
 static void term_update(chardev_t* dev)
 {
     chardev_term_t* term = dev->data;
+    uint32_t flags = 0;
 
-    if (spin_try_lock(&term->lock)) {
+    scoped_spin_try_lock(&term->lock) {
         if (ringbuf_space(&term->rx)) {
             term_pull_rx(term);
         }
@@ -255,12 +261,11 @@ static void term_update(chardev_t* dev)
             term_push_tx(term);
         }
 
-        uint32_t flags = term_update_flags(term);
-        spin_unlock(&term->lock);
+        flags = term_update_flags(term);
+    }
 
-        if (flags) {
-            chardev_notify(&term->chardev, flags);
-        }
+    if (flags) {
+        chardev_notify(&term->chardev, flags);
     }
 }
 
@@ -272,30 +277,31 @@ static uint32_t term_poll(chardev_t* dev)
 
 static size_t term_read(chardev_t* dev, void* buf, size_t nbytes)
 {
+    size_t ret = 0;
     if (term_poll(dev) & CHARDEV_RX) {
         chardev_term_t* term = dev->data;
-        spin_lock(&term->lock);
-        size_t ret = ringbuf_read(&term->rx, buf, nbytes);
-        if (!ringbuf_avail(&term->rx)) {
-            term_pull_rx(term);
+        scoped_spin_lock(&term->lock) {
+            ret = ringbuf_read(&term->rx, buf, nbytes);
+            if (!ringbuf_avail(&term->rx)) {
+                term_pull_rx(term);
+            }
+            term_update_flags(term);
         }
-        term_update_flags(term);
-        spin_unlock(&term->lock);
-        return ret;
     }
-    return 0;
+    return ret;
 }
 
 static size_t term_write(chardev_t* dev, const void* buf, size_t nbytes)
 {
+    size_t ret = 0;
     chardev_term_t* term = dev->data;
-    spin_lock(&term->lock);
-    size_t ret = ringbuf_write(&term->tx, buf, nbytes);
-    if (!ringbuf_space(&term->tx)) {
-        term_push_tx(term);
+    scoped_spin_lock(&term->lock) {
+        ret = ringbuf_write(&term->tx, buf, nbytes);
+        if (!ringbuf_space(&term->tx)) {
+            term_push_tx(term);
+        }
+        term_update_flags(term);
     }
-    term_update_flags(term);
-    spin_unlock(&term->lock);
     return ret;
 }
 
