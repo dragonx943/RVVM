@@ -120,6 +120,10 @@ static void vma_page_size_init_once(void)
 #elif defined(VMA_MMAP_IMPL)
     host_pagesize = sysconf(_SC_PAGESIZE);
     host_granularity = host_pagesize;
+#if defined(_SC_GRANSIZE)
+    // Support Windows allocation granularity on Cosmopolitan
+    host_granularity = sysconf(_SC_GRANSIZE);
+#endif
 #else
     // Non-paging fallback via malloc/free, disable alignment
     host_pagesize = 1;
