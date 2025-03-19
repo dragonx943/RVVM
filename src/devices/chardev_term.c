@@ -150,7 +150,6 @@ static void term_raw_mode(void)
     struct termios term_opts = {
         .c_oflag = OPOST | ONLCR,
         .c_cflag = CLOCAL | CREAD | CS8,
-        .c_cc[VMIN] = 1,
     };
     tcgetattr(0, &orig_term_opts);
     cfsetispeed(&term_opts, cfgetispeed(&orig_term_opts));
