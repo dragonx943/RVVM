@@ -154,8 +154,8 @@ override HOST_ARCH := $(call canonize_arch,$(HOST_ARCH))
 override OS_PRETTY := $(OS)
 override OS := $(call tolower,$(OS))
 
-# For cross-compile checking
-override TARGET_CROSS := $(if $(filter-out $(ARCH),$(HOST_ARCH))$(filter-out $(OS_PRETTY),$(HOST_UNAME)),$(ARCH)-$(OS))
+# For cross-compile checking (Cosmopolitan is treated as non-cross target)
+override TARGET_CROSS := $(if $(filter-out cosmopolitan,$(OS)),$(if $(filter-out $(ARCH),$(HOST_ARCH))$(filter-out $(OS_PRETTY),$(HOST_UNAME)),$(ARCH)-$(OS)))
 
 # If PKG_CONFIG is not set, default to pkg-config for properly set up cross-compilation or native build
 ifneq (,$(if $(PKG_CONFIG),,$(if $(TARGET_CROSS),$(PKG_CONFIG_LIBDIR)$(PKG_CONFIG_SYSROOT_DIR),yes)))
@@ -476,8 +476,12 @@ override CC_INFO := $(shell $(CC) -v 2>&1)
 override CC_INFO_TMP := $(CC_INFO)
 override CC_FULL_VERSION := $(strip $(foreach cc_word,$(CC_INFO),$(if $(filter version,$(word 2,$(CC_INFO_TMP))),$(wordlist 1,3,$(CC_INFO_TMP)))\
 $(eval override CC_INFO_TMP := $(wordlist 2,$(words $(CC_INFO_TMP)),$(CC_INFO_TMP)))))
+ifneq (,$(CC_FULL_VERSION))
 override CC_BRAND := $(firstword $(CC_FULL_VERSION))
 override CC_VERSION := $(word 3,$(CC_FULL_VERSION))
+else
+override CC_BRAND := $(call tolower,$(CC_BRAND))
+endif
 ifeq (,$(findstring .,$(CC_VERSION)))
 override CC_VERSION := $(shell $(CC) -dumpfullversion -dumpversion $(NULL_STDERR))
 endif
