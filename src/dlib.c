@@ -10,27 +10,25 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #include "dlib.h"
 
-#ifndef DLIB_DISABLED
+#if !defined(USE_NO_DLIB)
 
 #if defined(_WIN32) && !defined(UNDER_CE)
 #include <windows.h>
 #define DLIB_WIN32_IMPL
-#define DLIB_FILE_EXT ".dll"
 
 #elif (defined(__unix__) || defined(__APPLE__) || defined(__HAIKU__)) && !defined(__EMSCRIPTEN__)
 #include <dlfcn.h>
 #define DLIB_POSIX_IMPL
-#ifdef __APPLE__
-#define DLIB_FILE_EXT ".dylib"
-#else
-#define DLIB_FILE_EXT ".so"
-#endif
+
+#if defined(__COSMOPOLITAN__)
+// Support Cosmopolitan libc & foreign ABI (MSABI, etc) via cosmo_dltramp()
+#define dlopen(lib, flags) cosmo_dlopen(lib, flags)
+#define dlsym(lib, symbol) cosmo_dltramp(cosmo_dlsym(lib, symbol))
+#define dlclose(lib)       cosmo_dlclose(lib)
 #endif
 
 #endif
 
-#ifndef DLIB_FILE_EXT
-#define DLIB_FILE_EXT ""
 #endif
 
 // RVVM internal headers come after system headers because of safe_free()
@@ -69,8 +67,10 @@ static dlib_ctx_t* dlib_open_internal(const char* lib_name, uint32_t flags)
     lib->flags = flags;
     return lib;
 #elif defined(DLIB_POSIX_IMPL)
-    void* handle = dlopen(lib_name, RTLD_LAZY | RTLD_GLOBAL);
-    if (handle == NULL) return NULL;
+    void* handle = dlopen(lib_name, RTLD_LAZY | RTLD_LOCAL);
+    if (handle == NULL) {
+        return NULL;
+    }
     dlib_ctx_t* lib = safe_new_obj(dlib_ctx_t);
     lib->handle = handle;
     lib->flags = flags;
@@ -91,14 +91,26 @@ static dlib_ctx_t* dlib_open_named(const char* prefix, const char* lib_name, con
     return dlib_open_internal(name, flags);
 }
 
+#define DLIB_PROBE_NAMED(prefix, lib_name, suffix, flags) \
+do { \
+    dlib_ctx_t* lib = dlib_open_named(prefix, lib_name, suffix, flags); \
+    if (lib) { \
+        return lib; \
+    } \
+} while (0);
+
 dlib_ctx_t* dlib_open(const char* lib_name, uint32_t flags)
 {
+#if defined(DLIB_WIN32_IMPL) || defined(DLIB_POSIX_IMPL)
     if ((flags & DLIB_NAME_PROBE) && !rvvm_strfind(lib_name, "/")) {
-        dlib_ctx_t* lib = dlib_open_named("lib", lib_name, DLIB_FILE_EXT, flags);
-        if (lib) return lib;
-        lib = dlib_open_named("", lib_name, DLIB_FILE_EXT, flags);
-        if (lib) return lib;
+        DLIB_PROBE_NAMED("lib", lib_name, ".so", flags);
+        DLIB_PROBE_NAMED("lib", lib_name, ".dll", flags);
+        DLIB_PROBE_NAMED("lib", lib_name, ".dylib", flags);
+        DLIB_PROBE_NAMED("", lib_name, ".so", flags);
+        DLIB_PROBE_NAMED("", lib_name, ".dll", flags);
+        DLIB_PROBE_NAMED("", lib_name, ".dylib", flags);
     }
+#endif
     return dlib_open_internal(lib_name, flags);
 }
 
@@ -118,13 +130,15 @@ void dlib_close(dlib_ctx_t* lib)
 
 void* dlib_resolve(dlib_ctx_t* lib, const char* symbol_name)
 {
-    // Silently propagate load error
-    if (lib == NULL) return NULL;
     void* ret = NULL;
+    if (!lib) {
+        // Silently propagate load error
+        return NULL;
+    }
 #if defined(DLIB_WIN32_IMPL)
     ret = (void*)GetProcAddress(lib->handle, symbol_name);
 #elif defined(DLIB_POSIX_IMPL)
-    ret = dlsym(lib->handle, symbol_name);
+    ret = (void*)dlsym(lib->handle, symbol_name);
 #else
     UNUSED(symbol_name);
 #endif
@@ -143,5 +157,5 @@ bool dlib_load_weak(const char* lib_name)
 {
     dlib_ctx_t* lib = dlib_open(lib_name, DLIB_NAME_PROBE);
     dlib_close(lib);
-    return lib != NULL;
+    return !!lib;
 }
