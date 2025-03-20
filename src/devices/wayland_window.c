@@ -34,7 +34,7 @@ SOURCE_OPTIMIZATION_SIZE
 #if !defined(USE_FULL_LINKING)
 
 // Resolve symbols at runtime
-#define WAYLAND_DLIB_SYM(sym) static typeof(sym)* sym##_dlib = NULL;
+#define WAYLAND_DLIB_SYM(sym) static __typeof__(sym)* MACRO_CONCAT(sym, _dlib) = NULL;
 
 // Functions
 WAYLAND_DLIB_SYM(wl_display_connect)
