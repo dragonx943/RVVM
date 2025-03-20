@@ -54,7 +54,7 @@ SOURCE_OPTIMIZATION_SIZE
 #include "utils.h"
 
 // Resolve symbols at runtime
-#define SDL_DLIB_SYM(sym) static typeof(sym)* sym##_dlib = NULL;
+#define SDL_DLIB_SYM(sym) static __typeof__(sym)* MACRO_CONCAT(sym, _dlib) = NULL;
 
 #if USE_SDL == 1
 
