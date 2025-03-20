@@ -7,6 +7,11 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
+// Needed for setenv() when not passing -std=gnu..
+#define _GNU_SOURCE
+#define _BSD_SOURCE
+#define _DEFAULT_SOURCE
+
 #include "gui_window.h"
 #include "compiler.h"
 
