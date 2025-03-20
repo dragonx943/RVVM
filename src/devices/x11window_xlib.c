@@ -15,7 +15,7 @@ SOURCE_OPTIMIZATION_SIZE
 #define USE_XSHM
 
 // Resolve symbols at runtime
-#define X11_DLIB_SYM(sym) static typeof(sym)* sym##_dlib = NULL;
+#define X11_DLIB_SYM(sym) static __typeof__(sym)* MACRO_CONCAT(sym, _dlib) = NULL;
 
 #if defined(USE_X11) && !(CHECK_INCLUDE(X11/Xlib.h, 1) && CHECK_INCLUDE(X11/Xutil.h, 1) && CHECK_INCLUDE(X11/keysym.h, 1))
 // No X11 headers found
