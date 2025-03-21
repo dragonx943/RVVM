@@ -33,7 +33,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define RVVM_TLB_MASK (RVVM_TLB_SIZE - 1)
 
 BUILD_ASSERT(RVVM_TLB_SIZE);
-BUILD_ASSERT(!((RVVM_TLB_SIZE - 1) & RVVM_TLB_SIZE));
+BUILD_ASSERT(!(RVVM_TLB_SIZE & RVVM_TLB_MASK));
 
 #define RISCV_REG_ZERO 0
 #define RISCV_REG_X0   0
@@ -116,16 +116,14 @@ typedef int32_t  rvvm_sxlen_t;
 #endif
 
 /*
- * Address translation cache
- * In future, it would be nice to verify if cache-line alignment
- * gives any profit (entries scattered between cachelines waste L1)
+ * Address translation cache (TLB)
  */
 
-typedef struct {
+typedef randomized_struct align_type(32) {
     // Pointer to page (With vaddr subtracted, for faster TLB translation)
     size_t ptr;
-#if !defined(HOST_64BIT)
-    // Make entry size a power of 2 (32 bytes)
+#if defined(HOST_32BIT)
+    // Make structure size a power of 2 (32 bytes) regardless of align_type() support
     size_t align;
 #endif
     // Virtual page number per each op type (vaddr >> 12)
@@ -136,16 +134,19 @@ typedef struct {
 
 #ifdef USE_JIT
 
-typedef struct {
+typedef randomized_struct align_type(16) {
     // Pointer to code block
     rvjit_func_t block;
-#if !defined(HOST_64BIT)
+#if defined(HOST_32BIT)
+    // Make structure size a power of 2 (16 bytes) regardless of align_type() support
     size_t align;
 #endif
     // Virtual PC of this entry
     rvvm_addr_t pc;
 } rvvm_jit_tlb_entry_t;
 
+// Those structure sizes are mandatory if we are going to use JIT
+// For pure interpreter this doesn't matter, so obscure architectures are fine
 BUILD_ASSERT(sizeof(rvvm_tlb_entry_t) == 32);
 BUILD_ASSERT(sizeof(rvvm_jit_tlb_entry_t) == 16);
 
@@ -155,7 +156,7 @@ BUILD_ASSERT(sizeof(rvvm_jit_tlb_entry_t) == 16);
  * Physical RAM region
  */
 
-typedef struct {
+typedef randomized_struct {
     rvvm_addr_t addr; // Physical memory base address (Should be page-aligned)
     size_t      size; // Physical memory amount (Should be page-aligned)
     void*       data; // Pointer to memory data (Preferably page-aligned)
@@ -169,7 +170,7 @@ typedef struct {
 #define RVVM_AIA_IRQ_LIMIT 256
 #define RVVM_AIA_ARR_LEN (RVVM_AIA_IRQ_LIMIT >> 5)
 
-typedef struct {
+typedef randomized_struct {
     uint32_t eidelivery;
     uint32_t eithreshold;
     uint32_t eip[RVVM_AIA_ARR_LEN];
@@ -180,7 +181,7 @@ typedef struct {
  * Hart structure
  */
 
-struct rvvm_hart_t {
+struct align_cacheline rvvm_hart_t {
     uint32_t running;
 
     rvvm_uxlen_t registers[RISCV_REGS_MAX];
@@ -195,6 +196,8 @@ struct rvvm_hart_t {
 #endif
 
     // Everything below here isn't accessed by JIT
+    randomized_fields_start
+
     rvvm_ram_t mem;
     rvvm_machine_t* machine;
     rvvm_addr_t root_page_table;
@@ -211,7 +214,7 @@ struct rvvm_hart_t {
     rvvm_uxlen_t lrsc_addr;
     rvvm_uxlen_t lrsc_cas;
 
-    struct {
+    randomized_struct {
         uint32_t fcsr;
         uint32_t hartid;
 
@@ -257,11 +260,10 @@ struct rvvm_hart_t {
     uint32_t pending_events;
     uint32_t preempt_ms;
 
-    // Cacheline alignment
-    uint8_t align[64];
+    randomized_fields_end
 };
 
-struct rvvm_machine_t {
+randomized_struct rvvm_machine_t {
     rvvm_ram_t mem;
     vector_t(rvvm_hart_t*) harts;
     vector_t(rvvm_mmio_dev_t*) mmio_devs;
