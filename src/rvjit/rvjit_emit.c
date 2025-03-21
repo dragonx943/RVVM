@@ -32,6 +32,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #define VM_REG_OFFSET(reg) (offsetof(rvvm_hart_t, registers) + (sizeof(rvvm_uxlen_t) * reg))
 #define VM_TLB_OFFSET      offsetof(rvvm_hart_t, tlb)
+#define VM_TLB_P           offsetof(rvvm_tlb_entry_t, ptr)
 #define VM_TLB_R           offsetof(rvvm_tlb_entry_t, r)
 #define VM_TLB_W           offsetof(rvvm_tlb_entry_t, w)
 #define VM_TLB_E           offsetof(rvvm_tlb_entry_t, e)
@@ -799,7 +800,7 @@ static void rvjit_tlb_lookup(rvjit_block_t* block, regid_t haddr, regid_t vaddr,
     rvjit_emit_end(block, LINKAGE_NONE);
 
     rvjit64_native_beqz(block, a3, l1, BRANCH_TARGET);
-    rvjit64_native_ld(block, haddr, a2, VM_TLB_OFFSET);
+    rvjit64_native_ld(block, haddr, a2, VM_TLB_OFFSET + VM_TLB_P);
     rvjit64_native_add(block, haddr, haddr, hvaddr);
 
     rvjit_free_hreg(block, a2);
@@ -839,10 +840,10 @@ static void rvjit_tlb_lookup(rvjit_block_t* block, regid_t haddr, regid_t vaddr,
 
     rvjit32_native_beqz(block, a3, l1, BRANCH_TARGET);
 #ifdef RVJIT_NATIVE_64BIT
-    rvjit64_native_ld(block, haddr, a2, VM_TLB_OFFSET);
+    rvjit64_native_ld(block, haddr, a2, VM_TLB_OFFSET + VM_TLB_P);
     rvjit64_native_add(block, haddr, haddr, hvaddr);
 #else
-    rvjit32_native_lw(block, haddr, a2, VM_TLB_OFFSET);
+    rvjit32_native_lw(block, haddr, a2, VM_TLB_OFFSET + VM_TLB_P);
     rvjit32_native_add(block, haddr, haddr, hvaddr);
 #endif
 
