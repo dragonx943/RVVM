@@ -11,16 +11,12 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 SOURCE_OPTIMIZATION_SIZE
 
-typedef struct {
-    void* data;
-    size_t size;
-    size_t count;
-} vector_punned_t;
+typedef vector_t(void) safe_aliasing vector_punned_t;
 
 // Grow factor: 1.5 (Better memory reusage), initial capacity: 2
 slow_path void vector_grow_internal(void* vec, size_t elem_size, size_t pos)
 {
-    safe_aliasing vector_punned_t* vector = vec;
+    vector_punned_t* vector = vec;
     if (!vector->size) {
         // Allocate the vector buffer
         vector->size = 2;
@@ -36,7 +32,7 @@ slow_path void vector_grow_internal(void* vec, size_t elem_size, size_t pos)
     }
 }
 
-static void vector_move_elem_internal(safe_aliasing vector_punned_t* vector, size_t elem_size, size_t pos, bool erase)
+static void vector_move_elem_internal(vector_punned_t* vector, size_t elem_size, size_t pos, bool erase)
 {
     size_t move_count = (vector->count - pos) * elem_size;
     void* move_from = ((uint8_t*)vector->data) + ((pos + (erase ? 1 : 0)) * elem_size);
@@ -46,7 +42,7 @@ static void vector_move_elem_internal(safe_aliasing vector_punned_t* vector, siz
 
 void vector_emplace_internal(void* vec, size_t elem_size, size_t pos)
 {
-    safe_aliasing vector_punned_t* vector = vec;
+    vector_punned_t* vector = vec;
     if (pos < vector->count) {
         vector_move_elem_internal(vector, elem_size, pos, false);
         vector->count++;
@@ -63,7 +59,7 @@ void vector_emplace_internal(void* vec, size_t elem_size, size_t pos)
 
 void vector_erase_internal(void* vec, size_t elem_size, size_t pos)
 {
-    safe_aliasing vector_punned_t* vector = vec;
+    vector_punned_t* vector = vec;
     if (pos < vector->count) {
         vector->count--;
         vector_move_elem_internal(vector, elem_size, pos, true);
