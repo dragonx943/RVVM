@@ -89,11 +89,11 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #undef likely
 #undef unlikely
 #if !defined(USE_NO_LIKELY) && GNU_BUILTIN(__builtin_expect)
-#define likely(x)     __builtin_expect(!!(x),1)
-#define unlikely(x)   __builtin_expect(!!(x),0)
+#define likely(x)   __builtin_expect(!!(x),1)
+#define unlikely(x) __builtin_expect(!!(x),0)
 #else
-#define likely(x)     (x)
-#define unlikely(x)   (x)
+#define likely(x)   (x)
+#define unlikely(x) (x)
 #endif
 
 // Memory prefetch hints
@@ -157,8 +157,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #undef SOURCE_OPTIMIZATION_O3
 #if GCC_CHECK_VER(4, 4)
 #define SOURCE_OPTIMIZATION_NONE _Pragma("GCC optimize(\"O0\")")
-#define SOURCE_OPTIMIZATION_O2 _Pragma("GCC optimize(\"O2\")")
-#define SOURCE_OPTIMIZATION_O3 _Pragma("GCC optimize(\"O3\")")
+#define SOURCE_OPTIMIZATION_O2   _Pragma("GCC optimize(\"O2\")")
+#define SOURCE_OPTIMIZATION_O3   _Pragma("GCC optimize(\"O3\")")
 #else
 #define SOURCE_OPTIMIZATION_NONE
 #define SOURCE_OPTIMIZATION_O2
@@ -177,10 +177,10 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #undef POP_OPTIMIZATION_SIZE
 #if CLANG_CHECK_VER(12, 0) && GNU_ATTRIBUTE(__minsize__)
 #define PUSH_OPTIMIZATION_SIZE _Pragma("clang attribute push (__attribute__((__minsize__)), apply_to=function)")
-#define POP_OPTIMIZATION_SIZE _Pragma("clang attribute pop")
+#define POP_OPTIMIZATION_SIZE  _Pragma("clang attribute pop")
 #elif GCC_CHECK_VER(4, 4)
 #define PUSH_OPTIMIZATION_SIZE _Pragma("GCC push_options") SOURCE_OPTIMIZATION_SIZE
-#define POP_OPTIMIZATION_SIZE _Pragma("GCC pop_options")
+#define POP_OPTIMIZATION_SIZE  _Pragma("GCC pop_options")
 #else
 #define PUSH_OPTIMIZATION_SIZE
 #define POP_OPTIMIZATION_SIZE
@@ -203,7 +203,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #undef randomized_fields_start
 #undef randomized_fields_end
 #define randomized_struct struct randomize_layout
-#if defined(GNU_EXTS)
+#if __STDC_VERSION__ >= 201112LL || (defined(GNU_EXTS) && !defined(__STRICT_ANSI__))
 #define randomized_fields_start randomized_struct {
 #define randomized_fields_end   };
 #else
@@ -243,7 +243,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define deallocate_with(deallocator) warn_unused_ret
 #endif
 
-// Suppress ThreadSanitizer in places with false positives (Emulated load/stores or RCU)
+// Suppress ThreadSanitizer in places with false positives
 #undef TSAN_SUPPRESS
 #if defined(__SANITIZE_THREAD__) && !defined(USE_SANITIZE_FULL) && GNU_ATTRIBUTE(__no_sanitize__)
 #define TSAN_SUPPRESS __attribute__((__no_sanitize__("thread")))
