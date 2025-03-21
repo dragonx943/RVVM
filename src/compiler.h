@@ -191,11 +191,24 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
 // Randomize the structure layout (Requires Clang 15+ or GCC randstruct plugin)
-#undef randomize_struct
+#undef randomize_layout
 #if !defined(USE_NO_RANDSTRUCT) && GNU_ATTRIBUTE(__randomize_layout__)
-#define randomize_struct __attribute__((__randomize_layout__))
+#define randomize_layout __attribute__((__randomize_layout__))
 #else
-#define randomize_struct GNU_DUMMY_ATTRIBUTE
+#define randomize_layout GNU_DUMMY_ATTRIBUTE
+#endif
+
+// Structure randomization helpers: randomized_struct keyword, randomized fields start/end
+#undef randomized_struct
+#undef randomized_fields_start
+#undef randomized_fields_end
+#define randomized_struct struct randomize_layout
+#if defined(GNU_EXTS)
+#define randomized_fields_start randomized_struct {
+#define randomized_fields_end   };
+#else
+#define randomized_fields_start
+#define randomized_fields_end
 #endif
 
 // Assume the pointer is aligned to specific constant pow2 size
