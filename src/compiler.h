@@ -275,6 +275,18 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define GNU_CONSTRUCTOR GNU_DUMMY_ATTRIBUTE
 #endif
 
+// Mark unused arguments or variables to suppress warnings
+#undef UNUSED
+#define UNUSED(x) ((void)x)
+
+// Portable struct zero-initializer that doesn't violate __designated_init__
+#undef ZERO_INIT
+#if defined(GNU_EXTS)
+#define ZERO_INIT {}
+#else
+#define ZERO_INIT {0}
+#endif
+
 /*
  * Host platform feature detection
  */
@@ -299,10 +311,6 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 // Not sure about other arches, misaligns may be very slow or crash
 #define HOST_NO_MISALIGN 1
 #endif
-
-// Mark unused arguments or variables to suppress warnings
-#undef UNUSED
-#define UNUSED(x) ((void)x)
 
 // Determine host bitness (Hint)
 #undef HOST_64BIT
