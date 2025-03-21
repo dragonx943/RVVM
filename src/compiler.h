@@ -54,10 +54,13 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // Check GNU attribute presence
 #undef GNU_ATTRIBUTE
+#undef GNU_DUMMY_ATTRIBUTE
 #if defined(GNU_EXTS) && defined(__has_attribute)
 #define GNU_ATTRIBUTE(attr) __has_attribute(attr)
+#define GNU_DUMMY_ATTRIBUTE __attribute__(())
 #else
 #define GNU_ATTRIBUTE(attr) 0
+#define GNU_DUMMY_ATTRIBUTE
 #endif
 
 // Check GNU builtin presence
@@ -85,7 +88,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 // Branch optimization hints
 #undef likely
 #undef unlikely
-#if GNU_BUILTIN(__builtin_expect)
+#if !defined(USE_NO_LIKELY) && GNU_BUILTIN(__builtin_expect)
 #define likely(x)     __builtin_expect(!!(x),1)
 #define unlikely(x)   __builtin_expect(!!(x),0)
 #else
@@ -98,52 +101,53 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #if GNU_BUILTIN(__builtin_prefetch) && !defined(NO_PREFETCH)
 #define mem_prefetch(addr, rw, loc) __builtin_prefetch(addr, !!(rw), loc)
 #else
-#define mem_prefetch(addr, rw, loc)
+#define mem_prefetch(addr, rw, loc) do {} while (0)
 #endif
 
 // Force-inline function attribute
 #undef forceinline
-#if GNU_ATTRIBUTE(__always_inline__) && !defined(USE_RELAXED_INLINING) && !defined(__SANITIZE_THREAD__)
+#if !defined(USE_NO_FORCEINLINE) && GNU_ATTRIBUTE(__always_inline__) && !defined(__SANITIZE_THREAD__)
 // ThreadSanitizer doesn't play well with __always_inline__
 #define forceinline inline __attribute__((__always_inline__))
-#elif defined(_MSC_VER) && !defined(USE_RELAXED_INLINING)
+#elif !defined(USE_NO_FORCEINLINE) && defined(_MSC_VER)
 #define forceinline __forceinline
 #else
-#define forceinline inline
+#define forceinline inline GNU_DUMMY_ATTRIBUTE
 #endif
 
 // Never inline this function
 #undef no_inline
 #if GNU_ATTRIBUTE(__noinline__)
-#define no_inline      __attribute__((__noinline__))
+#define no_inline __attribute__((__noinline__))
 #elif defined(_MSC_VER)
-#define no_inline      __declspec(noinline)
+#define no_inline __declspec(noinline)
 #else
-#define no_inline
+#define no_inline GNU_DUMMY_ATTRIBUTE
 #endif
 
-// Never inline a function, assume it's a slow path, and minimize pessimizations at the call size
-#undef slow_path
-#if CLANG_CHECK_VER(17, 0) && GNU_ATTRIBUTE(__preserve_most__) && (defined(__x86_64__) || defined(__aarch64__))
 /*
- * This is used to remove unnecessary register spills from algorithm fast path
- * when a slow path call is present. Hopefully one day similar thing will appear in GCC.
+ * Never inline a function, consider it a slow path, and minimize pessimizations at the call site
  *
- * This attribute is BROKEN before Clang 17 and generates broken binaries if used <17!!!
+ * This is used to remove unnecessary register spills at the slow path call site. Requires
+ * Clang 17+ for full effect, otherwise __cold__ attribute is used, which moves spills away.
+ * Hopefully one day __preserve_most__ makes it's way into GCC.
  */
+#undef slow_path
+#if CLANG_CHECK_VER(17, 0) && GNU_ATTRIBUTE(__preserve_most__) && GNU_ATTRIBUTE(__noinline__) \
+ && GNU_ATTRIBUTE(__cold__) && (defined(__x86_64__) || defined(__aarch64__))
 #define slow_path __attribute__((__preserve_most__,__noinline__,__cold__))
-#elif GNU_ATTRIBUTE(__cold__)
-#define slow_path no_inline __attribute__((__cold__))
+#elif GNU_ATTRIBUTE(__noinline__) && GNU_ATTRIBUTE(__cold__)
+#define slow_path __attribute__((__noinline__,__cold__))
 #else
 #define slow_path no_inline
 #endif
 
 // Inline all function calls into the caller marked with flatten_calls. Use with care!
 #undef flatten_calls
-#if GNU_ATTRIBUTE(__flatten__)
+#if !defined(USE_NO_FLATTEN) && GNU_ATTRIBUTE(__flatten__)
 #define flatten_calls __attribute__((__flatten__))
 #else
-#define flatten_calls
+#define flatten_calls GNU_DUMMY_ATTRIBUTE
 #endif
 
 // Whole-source optimization pragmas (Clang doesn't support this)
@@ -186,6 +190,14 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  * Instrumentation helpers, compiler promises
  */
 
+// Randomize the structure layout (Requires Clang 15+ or GCC randstruct plugin)
+#undef randomize_struct
+#if !defined(USE_NO_RANDSTRUCT) && GNU_ATTRIBUTE(__randomize_layout__)
+#define randomize_struct __attribute__((__randomize_layout__))
+#else
+#define randomize_struct GNU_DUMMY_ATTRIBUTE
+#endif
+
 // Assume the pointer is aligned to specific constant pow2 size
 #undef assume_aligned_ptr
 #if GNU_BUILTIN(__builtin_assume_aligned)
@@ -199,7 +211,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #if GNU_ATTRIBUTE(__may_alias__)
 #define safe_aliasing __attribute__((__may_alias__))
 #else
-#define safe_aliasing
+#define safe_aliasing GNU_DUMMY_ATTRIBUTE
 #endif
 
 // Warn if return value is unused
@@ -207,7 +219,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #if GNU_ATTRIBUTE(__warn_unused_result__)
 #define warn_unused_ret __attribute__((__warn_unused_result__))
 #else
-#define warn_unused_ret
+#define warn_unused_ret GNU_DUMMY_ATTRIBUTE
 #endif
 
 // Explicitly mark deallocator for an allocator function
@@ -223,7 +235,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #if defined(__SANITIZE_THREAD__) && !defined(USE_SANITIZE_FULL) && GNU_ATTRIBUTE(__no_sanitize__)
 #define TSAN_SUPPRESS __attribute__((__no_sanitize__("thread")))
 #else
-#define TSAN_SUPPRESS
+#define TSAN_SUPPRESS GNU_DUMMY_ATTRIBUTE
 #endif
 
 // Suppress MemorySanitizer in places with false positives (Non-instrumented syscalls, external libs, etc)
@@ -231,7 +243,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #if defined(__SANITIZE_MEMORY__) && !defined(USE_SANITIZE_FULL) && GNU_ATTRIBUTE(__no_sanitize__)
 #define MSAN_SUPPRESS __attribute__((__no_sanitize__("memory")))
 #else
-#define MSAN_SUPPRESS
+#define MSAN_SUPPRESS GNU_DUMMY_ATTRIBUTE
 #endif
 
 // Call this function upon exit / library unload (GNU compilers only)
@@ -239,7 +251,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #if GNU_ATTRIBUTE(__destructor__)
 #define GNU_DESTRUCTOR __attribute__((__destructor__))
 #else
-#define GNU_DESTRUCTOR
+#define GNU_DESTRUCTOR GNU_DUMMY_ATTRIBUTE
 #endif
 
 // Call this function upon startup / library load (GNU compilers only)
@@ -247,7 +259,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #if GNU_ATTRIBUTE(__constructor__)
 #define GNU_CONSTRUCTOR __attribute__((__constructor__))
 #else
-#define GNU_CONSTRUCTOR
+#define GNU_CONSTRUCTOR GNU_DUMMY_ATTRIBUTE
 #endif
 
 /*
