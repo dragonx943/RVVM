@@ -84,9 +84,9 @@ void rvvm_randomserial(char* serial, size_t size);
 #define SAFE_CALLOC  __attribute__((__returns_nonnull__, __warn_unused_result__, __malloc__, __alloc_size__(1, 2)))
 #define SAFE_REALLOC __attribute__((__returns_nonnull__, __warn_unused_result__, __alloc_size__(2)))
 #else
-#define SAFE_MALLOC
-#define SAFE_CALLOC
-#define SAFE_REALLOC
+#define SAFE_MALLOC  GNU_DUMMY_ATTRIBUTE
+#define SAFE_CALLOC  GNU_DUMMY_ATTRIBUTE
+#define SAFE_REALLOC GNU_DUMMY_ATTRIBUTE
 #endif
 
 // These never return NULL
@@ -145,7 +145,7 @@ void rvvm_set_loglevel(int loglevel);
 #if GNU_ATTRIBUTE(__format__)
 #define PRINT_FORMAT __attribute__((__format__(printf, 1, 2)))
 #else
-#define PRINT_FORMAT
+#define PRINT_FORMAT GNU_DUMMY_ATTRIBUTE
 #endif
 
 // Debug logger
