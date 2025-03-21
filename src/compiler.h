@@ -190,6 +190,18 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  * Instrumentation helpers, compiler promises
  */
 
+// Align type to specific offset & size
+#undef align_type
+#if !defined(USE_NO_ALIGN_TYPE) && GNU_ATTRIBUTE(__aligned__)
+#define align_type(alignment) __attribute__((__aligned__(alignment)))
+#else
+#define align_type(alignment) GNU_DUMMY_ATTRIBUTE
+#endif
+
+// Align type to cacheline to prevent false sharing
+#undef align_cacheline
+#define align_cacheline align_type(64)
+
 // Randomize the structure layout (Requires Clang 15+ or GCC randstruct plugin)
 #undef randomize_layout
 #if !defined(USE_NO_RANDSTRUCT) && GNU_ATTRIBUTE(__randomize_layout__)
