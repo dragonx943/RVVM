@@ -322,7 +322,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 // Portably cast to a non-constant pointer without triggering -Wconst-qual. Use with care!
 #undef NONCONST_CAST
 #if defined(GNU_EXTS)
-#define NONCONST_CAST(type, x) (((union { const void* _constptr; type _ptr; }){ ._constptr = (const void*)(x), })._ptr)
+#define NONCONST_CAST(type, x) ((type)((union { const void* _constptr; void* _ptr; }){ ._constptr = (const void*)(x), })._ptr)
 #else
 #define NONCONST_CAST(type, x) ((type)(void*)(x))
 #endif
