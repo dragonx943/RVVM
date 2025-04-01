@@ -231,7 +231,7 @@ PUBLIC void* rvvm_get_dma_ptr(rvvm_machine_t* machine, rvvm_addr_t addr, size_t 
 PUBLIC rvvm_addr_t rvvm_mmio_zone_auto(rvvm_machine_t* machine, rvvm_addr_t addr, size_t size);
 
 //! \brief   Attach (custom-written) MMIO device to the machine by it's description, free it's state on failure
-//! \param   mmio MMIO region description, doesn't need to be kept
+//! \param   mmio_desc MMIO region description, doesn't need to be kept
 //! \return  Valid MMIO region handle, or NULL on failure
 //! \warning Dereferencing an attached rvvm_mmio_dev_t* should be done thread-safely using atomics/fences
 PUBLIC rvvm_mmio_dev_t* rvvm_attach_mmio(rvvm_machine_t* machine, const rvvm_mmio_dev_t* mmio_desc);
