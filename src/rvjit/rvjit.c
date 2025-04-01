@@ -222,7 +222,7 @@ void rvjit_block_init(rvjit_block_t* block)
 rvjit_func_t rvjit_block_finalize(rvjit_block_t* block)
 {
     void* dest = block->heap.data + block->heap.curr;
-    const void* code = block->heap.code + block->heap.curr;
+    void* code = block->heap.code + block->heap.curr;
 
     rvjit_emit_end(block, block->linkage);
 

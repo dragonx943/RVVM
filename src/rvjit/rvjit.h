@@ -93,7 +93,7 @@ typedef size_t   rvjit_addr_t;
 
 typedef struct {
     uint8_t* data;
-    const uint8_t* code;
+    uint8_t* code;
     size_t curr;
     size_t size;
     hashmap_t blocks;
