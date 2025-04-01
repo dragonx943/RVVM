@@ -71,6 +71,22 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define GNU_BUILTIN(builtin) 0
 #endif
 
+// Check GNU feature presence
+#undef GNU_FEATURE
+#if defined(GNU_EXTS) && defined(__has_feature)
+#define GNU_FEATURE(feature) __has_feature(feature)
+#else
+#define GNU_FEATURE(feature) 0
+#endif
+
+// Check GNU extension presence
+#undef GNU_EXTENSION
+#if defined(GNU_EXTS) && defined(__has_extension)
+#define GNU_EXTENSION(extension) __has_extension(extension)
+#else
+#define GNU_EXTENSION(extension) GNU_FEATURE(extension)
+#endif
+
 // Check header presence
 #undef CHECK_INCLUDE
 #if defined(__has_include)
@@ -287,6 +303,10 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define GNU_CONSTRUCTOR GNU_DUMMY_ATTRIBUTE
 #endif
 
+/*
+ * Warning suppression helpers
+ */
+
 // Mark unused arguments or variables to suppress warnings
 #undef UNUSED
 #define UNUSED(x) ((void)x)
@@ -297,6 +317,14 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define ZERO_INIT {}
 #else
 #define ZERO_INIT {0}
+#endif
+
+// Portably cast to a non-constant pointer without triggering -Wconst-qual. Use with care!
+#undef NONCONST_CAST
+#if defined(GNU_EXTS)
+#define NONCONST_CAST(type, x) (((union { const void* _constptr; type _ptr; }){ ._constptr = (const void*)(x), })._ptr)
+#else
+#define NONCONST_CAST(type, x) ((type)(void*)(x))
 #endif
 
 /*
