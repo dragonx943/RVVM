@@ -66,7 +66,7 @@ static void gdb_byte_to_hex(char* hex, uint8_t byte)
 static size_t gdb_bytes_to_hex_le(char* hex, const void* data, size_t bytes)
 {
     for (size_t i = 0; i < bytes; ++i) {
-        gdb_byte_to_hex(hex + (i * 2), ((uint8_t*)data)[i]);
+        gdb_byte_to_hex(hex + (i * 2), ((const uint8_t*)data)[i]);
     }
     return bytes * 2;
 }
