@@ -520,7 +520,7 @@ override CXX_STD :=
 # Need at least GCC 7.0 or Clang 7.0
 # -Wbad-function-cast, -Wcast-align, need fixes in codebase
 ifneq (,$(CC_AT_LEAST_7_0))
-override WARN_OPTS := -Wall -Wextra -Wshadow -Wvla -Wpointer-arith -Walloca -Wduplicated-cond \
+override WARN_OPTS := -Wall -Wextra -Wcast-qual -Wshadow -Wvla -Wpointer-arith -Walloca -Wduplicated-cond \
 -Wtrampolines -Wlarger-than=1048576 -Wframe-larger-than=32768 -Wdouble-promotion -Werror=return-type
 else
 # Conservative warning options for older compilers
@@ -540,7 +540,8 @@ endif
 
 override CFLAGS := -O2 $(if $(LTO_SUPPORTED),-flto) $(if $(CC_AT_LEAST_4_0),-frounding-math) -fvisibility=hidden -fno-math-errno \
 $(WARN_OPTS) -Wno-unknown-warning-option -Wno-unsupported-floating-point-opt -Wno-ignored-optimization-argument \
--Wno-missing-braces -Wno-missing-field-initializers -Wno-ignored-pragmas -Wno-atomic-alignment $(CFLAGS)
+-Wno-missing-braces -Wno-missing-field-initializers -Wno-ignored-pragmas -Wno-atomic-alignment \
+$(if $(CC_AT_LEAST_4_0),-Wdocumentation) $(CFLAGS)
 
 else
 ifeq ($(CC_BRAND),gcc)
