@@ -124,7 +124,7 @@ PUBLIC pci_dev_t* pci_get_bus_device(pci_bus_t* bus, pci_bus_addr_t bus_addr);
 PUBLIC pci_func_t* pci_get_bus_func(pci_bus_t* bus, pci_bus_addr_t bus_addr);
 
 //! \brief  Get a PCI bus address of a PCI device
-//! \param  func Valid PCI device handle
+//! \param  dev Valid PCI device handle
 //! \return PCI bus address
 PUBLIC pci_bus_addr_t pci_get_device_bus_addr(pci_dev_t* dev);
 
@@ -134,7 +134,7 @@ PUBLIC pci_bus_addr_t pci_get_device_bus_addr(pci_dev_t* dev);
 PUBLIC pci_bus_addr_t pci_get_func_bus_addr(pci_func_t* func);
 
 //! \brief  Unplug a PCI device from the slot (Hot-unplug allowed)
-//! \param  func Valid PCI device handle, device data is always cleaned up automatically
+//! \param  dev Valid PCI device handle, device data is always cleaned up automatically
 PUBLIC void pci_remove_device(pci_dev_t* dev);
 
 /** @}*/
