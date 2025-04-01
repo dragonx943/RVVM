@@ -196,7 +196,7 @@ static forceinline uint32_t atomic_load_uint32_ex(const void* addr, int memorder
 {
     UNUSED(memorder);
 #if defined(C11_ATOMICS_IMPL)
-    return atomic_load_explicit((_Atomic uint32_t*)addr, memorder);
+    return atomic_load_explicit(NONCONST_CAST(_Atomic uint32_t*, addr), memorder);
 #elif defined(GNU_ATOMICS_IMPL)
     return __atomic_load_4((const uint32_t*)addr, memorder);
 #elif defined(_WIN32)
@@ -448,7 +448,7 @@ static forceinline uint64_t atomic_load_uint64_ex(const void* addr, int memorder
 {
     UNUSED(memorder);
 #if defined(C11_ATOMICS_IMPL)
-    return atomic_load_explicit((_Atomic uint64_t*)addr, memorder);
+    return atomic_load_explicit(NONCONST_CAST(_Atomic uint64_t*, addr), memorder);
 #elif defined(GNU_ATOMICS_IMPL)
     return __atomic_load_8((const uint64_t*)addr, memorder);
 #elif defined(_WIN32)
@@ -699,7 +699,7 @@ static forceinline uint64_t atomic_or_uint64(void* addr, uint64_t val)
 static forceinline void* atomic_load_pointer_ex(const void* addr, int memorder)
 {
 #if defined(C11_ATOMICS_IMPL)
-    return atomic_load_explicit((void* _Atomic *)addr, memorder);
+    return atomic_load_explicit(NONCONST_CAST(void* _Atomic *, addr), memorder);
 #elif defined(GNU_ATOMICS_IMPL) && defined(GNU_ATOMICS_INTRINS)
     return __atomic_load_n((void**)addr, memorder);
 #elif defined(HOST_64BIT)
