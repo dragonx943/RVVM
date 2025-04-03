@@ -1,0 +1,203 @@
+#
+# Clang-format config enforcing the established RVVM codestyle.
+# (Obviously with minor differences, but not for the worse usually)
+#
+# Requires clang-format 16 or newer.
+# Each new added option should document whether it requires a similarly modern version.
+#
+# Commented out options are helpful in rare situations (Like formatting huge switches),
+# and otherwise introduce unwanted codestyle changes.
+# Those should be used with care and the code in question later covered with // clang-format off
+#
+# NOTE: This WILL mess up formatting in some rare cases, namely multi-line macros and
+# short case statements like keycode translations. Older clang-format versions might also
+# mess everything up on detecting unknown config key, so please update/disable it then.
+#
+# Please review formatting results before commits, at least for now, and use /**/ for manual
+# multi-line macro breaks, or cover in // clang-format off as you see fit.
+#
+
+# Use this config for C, C++ code
+Language: Cpp
+
+#
+# File settings
+#
+
+# Wrap at column width 120
+ColumnLimit: 120
+
+# Force LF line ending (clang-format 16)
+LineEnding: LF
+
+# Insert newline at EOF if missing (clang-format 16)
+InsertNewlineAtEOF: true
+
+#
+# Language settings
+#
+
+# Always use `type* val` pointer style
+PointerAlignment: Left
+
+# Align pointer qualifiers
+SpaceAroundPointerQualifiers: Both
+
+# Always insert a single newline between function/struct bodies (clang-format 14)
+SeparateDefinitionBlocks: Always
+
+# Keep up to 3 consecutive empty lines between declarations (For header structuring)
+MaxEmptyLinesToKeep: 3
+
+# Break before an operator on arithmetic/logic wrapping
+BreakBeforeBinaryOperators: true
+BreakBeforeTernaryOperators: true
+
+# Align arithmetic operands after wrapped operator
+AlignOperands: AlignAfterOperator
+
+# Set to ControlStatementsExceptControlMacros if you ever wish to remove space in vector_foreach() and the likes
+SpaceBeforeParens: ControlStatements
+
+# Allow single-line function declaration for empty body (Stubs)
+AllowShortFunctionsOnASingleLine: Empty
+
+# Never allow single-line loops
+AllowShortLoopsOnASingleLine: false
+
+# No spaces around elements in a braced list initializer, {0, 1, 2, 3}
+Cpp11BracedListStyle: true
+SpaceBeforeCpp11BracedList: true
+
+#
+# Indentation settings
+#
+
+# Always use 4 spaces for indentation
+TabWidth: 4
+IndentWidth: 4
+ContinuationIndentWidth: 4
+UseTab: Never
+
+# Indent switch case labels
+IndentCaseLabels: true
+
+#
+# Braces handling
+#
+
+# Enforce braces after control flow statements
+InsertBraces: true
+
+# Only break before function body braces, distantly similar to Linux
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterCaseLabel: false
+  AfterClass: false
+  AfterControlStatement: Never
+  AfterEnum: false
+  AfterFunction: true
+  AfterNamespace: false
+  AfterStruct: false
+  AfterUnion: false
+  AfterExternBlock: false
+  BeforeCatch: false
+  BeforeElse: false
+  BeforeWhile: false
+  IndentBraces: false
+
+#
+# Pretty alignment
+#
+
+# Table-like alignment for function declarations and function pointers
+AlignConsecutiveDeclarations:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: false
+  AlignFunctionPointers: true
+
+# Table-like alignment for assignments (With operator padding)
+AlignConsecutiveAssignments:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: false
+  AlignCompound: true
+  PadOperators: true
+
+# Table-like alignment for definitions and comments
+AlignConsecutiveMacros: AcrossEmptyLinesAndComments
+AlignTrailingComments: true
+
+# Uniformly spread function arguments on wrapping
+BinPackArguments: true
+BinPackParameters: true
+
+# Indent function arguments to open bracket on wrapping
+AlignAfterOpenBracket: Align
+
+# Right-align structure fields in structure array initializer (clang-format 13)
+AlignArrayOfStructures: Right
+
+#
+# Formatting rules specifically for C++ code
+#
+
+# Format range-based for loops as `for (auto v : vector) {}`
+SpaceBeforeRangeBasedForLoopColon: true
+
+# Always split template declarations into separate lines
+AlwaysBreakTemplateDeclarations: true
+
+# Do not indent class access modifiers
+AccessModifierOffset: -4
+
+#
+# Possibly helpful, but not yet used options
+#
+
+# Allow short case labels to fit onto a single line, helps with huge translation switches
+# NOTE: This messes up a lot of code, disable and use occasionally, then clang-format off
+#AllowShortCaseLabelsOnASingleLine: true
+
+# Align short case statements (clang-format 17)
+#AlignConsecutiveShortCaseStatements:
+#  Enabled: true
+#  AcrossEmptyLines: true
+#  AcrossComments: true
+#  AlignCaseColons: false
+
+# Do not format macro bodies, might be useful sometimes (clang-format 18)
+# NOTE: This breaks AlignConsecutiveMacros as of clang-format 19
+#SkipMacroDefinitionBody: true
+
+#
+# RVVM-specific handling of attribute, foreach-like and scoped macros.
+#
+# The vector_foreach(), vector_foreach_back() macros are from `src/vector.h`
+# The hashmap_foreach() macro is from `src/hashmap.h`
+#
+# Scoped locking helpers are from `src/spinlock.h` and `src/rcu_lib.h` respectively
+#
+# DO_ONCE_SCOPED {} macro is from `src/utils.h`
+#
+# All other macros (attributes, CHECK_INCLUDE() and scoped helpers) are found in `src/compiler.h`
+#
+
+# Do not break before braces for following foreach-like macros
+ForEachMacros: [vector_foreach, vector_foreach_back, hashmap_foreach, scoped_spin_lock,
+                scoped_spin_try_lock, scoped_spin_read_lock, scoped_spin_try_read_lock,
+                scoped_spin_lock_slow, scoped_rcu_reader, DO_ONCE_SCOPED,
+                BREAKABLE_SCOPE, SCOPED_COND_NAMED. POST_COND_NAMED, SCOPED_STMT_NAMED,
+                POST_STMT_NAMED, SCOPED_COND, POST_COND, SCOPED_STMT, POST_STMT, SCOPED_HELPER]
+
+# Template vector type
+TypenameMacros: [vector_t]
+
+# Do not mess up my string-handling macros!
+WhitespaceSensitiveMacros: [CHECK_INCLUDE, MACRO_TOSTRING, MACRO_CONCAT]
+
+# Attribute-like macros
+StatementAttributeLikeMacros: [forceinline, no_inline, slow_path, flatten_calls, align_cacheline,
+                               randomize_layout, safe_aliasing, warn_unused_ret, deallocate_with,
+                               TSAN_SUPPRESS, MSAN_SUPPRESS, GNU_DESTRUCTOR, GNU_CONSTRUCTOR]
