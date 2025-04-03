@@ -10,92 +10,107 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef RVJIT_H
 #define RVJIT_H
 
-#include "rvvm_types.h"
 #include "hashmap.h"
+#include "rvvm_types.h"
+#include "utils.h"
 #include "vector.h"
 
 // RISC-V register allocator details
-#define RVJIT_REGISTERS 32
+#define RVJIT_REGISTERS     32
 #define RVJIT_REGISTER_ZERO 0
 
 #if defined(__x86_64__) || defined(_M_AMD64)
-    #ifdef _WIN32
-        #ifdef __MINGW64__
-            #define RVJIT_CALL __attribute__((sysv_abi))
-            #define RVJIT_ABI_SYSV 1
-        #else
-            #define RVJIT_ABI_WIN64 1
-        #endif
-    #else
-        #if GNU_ATTRIBUTE(sysv_abi)
-            #define RVJIT_CALL __attribute__((sysv_abi))
-        #endif
-        #define RVJIT_ABI_SYSV 1
-    #endif
-    #define RVJIT_NATIVE_64BIT 1
-    #define RVJIT_NATIVE_LINKER 1
-    #define RVJIT_X86 1
-#elif defined(__i386__) || defined(_M_IX86)
-    #ifdef _WIN32
-        #ifdef __MINGW32__
-            #define RVJIT_CALL __attribute__((fastcall))
-        #else
-            #define RVJIT_CALL __fastcall
-        #endif
-    #else
-        #define RVJIT_CALL __attribute__((fastcall))
-    #endif
-    #define RVJIT_ABI_FASTCALL 1
-    #define RVJIT_NATIVE_LINKER 1
-    #define RVJIT_X86 1
-#elif defined(__riscv)
-    #if __riscv_xlen == 64
-        #define RVJIT_NATIVE_64BIT 1
-    #elif __riscv_xlen != 32
-        #error No JIT support for RV128!
-    #endif
-    #define RVJIT_ABI_SYSV 1
-    #define RVJIT_NATIVE_LINKER 1
-    #define RVJIT_RISCV 1
-#elif defined(__aarch64__) || defined(_M_ARM64)
-    #define RVJIT_NATIVE_64BIT 1
-    #define RVJIT_ABI_SYSV 1
-    #define RVJIT_NATIVE_LINKER 1
-    #define RVJIT_ARM64 1
-#elif defined(__arm__) || defined(_M_ARM)
-    #define RVJIT_ABI_SYSV 1
-    #define RVJIT_ARM 1
+
+// Target: x86_64, ABI: SystemV (preferred) / Win64
+#define RVJIT_X86           1
+#define RVJIT_NATIVE_64BIT  1
+#define RVJIT_NATIVE_LINKER 1
+
+#if GNU_ATTRIBUTE(__sysv_abi__)
+// Force SystemV ABI whenever possible
+#define RVJIT_CALL     __attribute__((__sysv_abi__))
+#define RVJIT_ABI_SYSV 1
+#elif defined(_WIN32)
+// Win64 ABI will be used
+#define RVJIT_ABI_WIN64 1
 #else
-    #error No JIT support for the target platform!!!
+// Non-GNU compiler on non-Windows target, let's assume SysV ABI
+#define RVJIT_ABI_SYSV 1
+#endif
+
+#elif defined(__i386__) || defined(_M_IX86)
+
+// Target: i386, ABI: fastcall
+#define RVJIT_X86           1
+#define RVJIT_ABI_FASTCALL  1
+#define RVJIT_NATIVE_LINKER 1
+
+#if GNU_ATTRIBUTE(__fastcall__)
+#define RVJIT_CALL __attribute__((__fastcall__))
+#elif defined(_WIN32)
+#define RVJIT_CALL __fastcall
+#endif
+
+#elif defined(__riscv)
+
+// Target: riscv64/riscv32, ABI: SystemV
+#define RVJIT_RISCV         1
+#define RVJIT_ABI_SYSV      1
+#define RVJIT_NATIVE_LINKER 1
+
+#if __riscv_xlen == 64
+#define RVJIT_NATIVE_64BIT 1
+#elif __riscv_xlen != 32
+#error No JIT support for riscv128!
+#endif
+
+#elif defined(__aarch64__) || defined(_M_ARM64)
+
+// Target: arm64, ABI: SystemV
+#define RVJIT_ARM64         1
+#define RVJIT_ABI_SYSV      1
+#define RVJIT_NATIVE_64BIT  1
+#define RVJIT_NATIVE_LINKER 1
+
+#elif defined(__arm__) || defined(_M_ARM)
+
+// Target: arm32, ABI: SystemV
+#define RVJIT_ARM      1
+#define RVJIT_ABI_SYSV 1
+
+#else
+
+#error No JIT support for the target platform!!!
+
 #endif
 
 // No specific calling convention requirements
 #ifndef RVJIT_CALL
-#define RVJIT_CALL
+#define RVJIT_CALL GNU_DUMMY_ATTRIBUTE
 #endif
 
-typedef void (* RVJIT_CALL rvjit_func_t)(void*);
+typedef void (*RVJIT_CALL rvjit_func_t)(void*);
 
 typedef uint8_t  regflags_t;
 typedef uint32_t regmask_t;
 typedef size_t   branch_t;
 typedef size_t   rvjit_addr_t;
 
-#define BRANCH_NEW ((branch_t)-1)
+#define BRANCH_NEW    ((branch_t) - 1)
 #define BRANCH_ENTRY  false
 #define BRANCH_TARGET true
 
-#define LINKAGE_NONE 0
-#define LINKAGE_TAIL 1
-#define LINKAGE_JMP  2
+#define LINKAGE_NONE  0
+#define LINKAGE_TAIL  1
+#define LINKAGE_JMP   2
 
-#define REG_ILL 0xFF // Register is not allocated
+#define REG_ILL       0xFF // Register is not allocated
 
 typedef struct {
-    uint8_t* data;
-    uint8_t* code;
-    size_t curr;
-    size_t size;
+    uint8_t*  data;
+    uint8_t*  code;
+    size_t    curr;
+    size_t    size;
     hashmap_t blocks;
     hashmap_t block_links;
 
@@ -106,37 +121,40 @@ typedef struct {
 } rvjit_heap_t;
 
 typedef struct {
-    uint32_t last_used; // Last usage of register for LRU reclaim
-    int32_t auipc_off;
-    regid_t hreg;       // Claimed host register, REG_ILL if not mapped
-    regflags_t flags;   // Register allocation details
+    uint32_t   last_used; // Last usage of register for LRU reclaim
+    int32_t    auipc_off;
+    regid_t    hreg;  // Claimed host register, REG_ILL if not mapped
+    regflags_t flags; // Register allocation details
 } rvjit_reginfo_t;
 
 typedef struct {
     rvjit_heap_t heap;
 
     uint8_t* code;
-    size_t size;
-    size_t space;
+    size_t   size;
+    size_t   space;
 
     // Block exit paths
-    vector_t(struct {rvjit_addr_t dest; size_t ptr;}) links;
+    vector_t(struct {
+        rvjit_addr_t dest;
+        size_t       ptr;
+    }) links;
 
-    regmask_t hreg_mask;       // Bitmask of available non-clobbered host registers
-    regmask_t abireclaim_mask; // Bitmask of reclaimed abi-clobbered host registers to restore
+    regmask_t       hreg_mask;       // Bitmask of available non-clobbered host registers
+    regmask_t       abireclaim_mask; // Bitmask of reclaimed abi-clobbered host registers to restore
     rvjit_reginfo_t regs[RVJIT_REGISTERS];
 
 #ifdef RVJIT_NATIVE_FPU
-    regmask_t fpu_reg_mask;
+    regmask_t       fpu_reg_mask;
     rvjit_reginfo_t fpu_regs[RVJIT_REGISTERS];
 #endif
 
     rvjit_addr_t virt_pc;
     rvjit_addr_t phys_pc;
-    int32_t pc_off;
+    int32_t      pc_off;
 
-    bool rv64;
-    bool native_ptrs;
+    bool    rv64;
+    bool    native_ptrs;
     uint8_t linkage;
 } rvjit_block_t;
 
@@ -207,7 +225,7 @@ static inline void rvjit_put_code(rvjit_block_t* block, const void* inst, size_t
 {
     if (unlikely(block->space < block->size + size)) {
         block->space += 1024;
-        block->code = safe_realloc(block->code, block->space);
+        block->code   = safe_realloc(block->code, block->space);
     }
     memcpy(block->code + block->size, inst, size);
     block->size += size;
