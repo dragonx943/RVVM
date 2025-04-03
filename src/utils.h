@@ -148,11 +148,17 @@ void rvvm_set_loglevel(int loglevel);
 #define PRINT_FORMAT GNU_DUMMY_ATTRIBUTE
 #endif
 
-// Debug logger
 #ifdef USE_DEBUG
+// Debug logger enabled at build time
 PRINT_FORMAT void rvvm_debug(const char* format_str, ...);
+
 #else
-#define rvvm_debug(...) do {} while (0)
+// Debug logs optimized out, but still performs compile-time format / unused arguments checking
+static PRINT_FORMAT forceinline void rvvm_debug(const char* format_str, ...)
+{
+    UNUSED(format_str);
+}
+
 #endif
 
 // Logging functions (controlled by loglevel)
