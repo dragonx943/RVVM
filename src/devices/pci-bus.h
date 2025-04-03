@@ -14,16 +14,16 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "rvvmlib.h"
 
 // PCI constants
-#define PCI_BUS_IRQS  0x4
-#define PCI_BUS_DEVS  0x20
-#define PCI_DEV_FUNCS 0x8
-#define PCI_FUNC_BARS 0x6
+#define PCI_BUS_IRQS          0x4
+#define PCI_BUS_DEVS          0x20
+#define PCI_DEV_FUNCS         0x8
+#define PCI_FUNC_BARS         0x6
 
 // PCI INTx pins
-#define PCI_IRQ_PIN_INTA 0x1
-#define PCI_IRQ_PIN_INTB 0x2
-#define PCI_IRQ_PIN_INTC 0x3
-#define PCI_IRQ_PIN_INTD 0x4
+#define PCI_IRQ_PIN_INTA      0x1
+#define PCI_IRQ_PIN_INTB      0x2
+#define PCI_IRQ_PIN_INTC      0x3
+#define PCI_IRQ_PIN_INTD      0x4
 
 // Default PCI bus configuration
 #define PCI_ECAM_ADDR_DEFAULT 0x30000000U
@@ -43,12 +43,12 @@ typedef struct rvvm_pci_device pci_dev_t;
 
 // PCI single function description (For multi-function devices, see pci_dev_desc_t)
 typedef struct {
-    uint16_t vendor_id;
-    uint16_t device_id;
-    uint16_t class_code;
-    uint8_t  prog_if;
-    uint8_t  rev;
-    uint8_t  irq_pin;
+    uint16_t        vendor_id;
+    uint16_t        device_id;
+    uint16_t        class_code;
+    uint8_t         prog_if;
+    uint8_t         rev;
+    uint8_t         irq_pin;
     rvvm_mmio_dev_t bar[PCI_FUNC_BARS];
     rvvm_mmio_dev_t expansion_rom;
 } pci_func_desc_t;
@@ -75,10 +75,11 @@ typedef struct {
 //! \param  mem_addr  Start of PCI MMIO Space
 //! \param  mem_len   Length of PCI MMIO Space
 //! \return PCI bus handle, or NULL on failure
-PUBLIC pci_bus_t* pci_bus_init(rvvm_machine_t* machine, rvvm_intc_t* intc, const rvvm_irq_t* irqs,
-                               rvvm_addr_t ecam_addr, size_t bus_count,
-                               rvvm_addr_t io_addr,   size_t io_len,
-                               rvvm_addr_t mem_addr,  size_t mem_len);
+PUBLIC pci_bus_t* pci_bus_init(rvvm_machine_t* machine,                   // Owner machine
+                               rvvm_intc_t* intc, const rvvm_irq_t* irqs, // Wired IRQ lines (4 entries)
+                               rvvm_addr_t ecam_addr, size_t bus_count,   // ECAM region (Size calculated via bus_count)
+                               rvvm_addr_t io_addr, size_t io_len,        // IO region
+                               rvvm_addr_t mem_addr, size_t mem_len);     // MEM region
 
 //! \brief  Attach an automatically configured PCIe host ECAM controller to a powered off machine
 //! \param  machine RVVM Machine handle with a working IRQ controller
