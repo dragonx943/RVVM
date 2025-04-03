@@ -13,8 +13,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define _DEFAULT_SOURCE
 
 #include "rvvm_isolation.h"
-#include "utils.h"
 #include "compiler.h"
+#include "utils.h"
 
 #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__) || defined(__SANITIZE_MEMORY)
 #define SANITIZERS_PRESENT
@@ -23,11 +23,11 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifdef USE_ISOLATION
 
 #if defined(__linux__) || defined(__OpenBSD__) || defined(__FreeBSD__)
+#include <errno.h>
+#include <pwd.h>
 #include <stddef.h>
 #include <string.h>
-#include <errno.h>
 #include <unistd.h>
-#include <pwd.h>
 #define ISOLATION_DROP_ROOT_IMPL
 #endif
 
@@ -36,14 +36,14 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define ISOLATION_PRCTL_IMPL
 #endif
 
-#if defined(GNU_EXTS) && !defined(SANITIZERS_PRESENT) && defined(__linux__) \
- && CHECK_INCLUDE(linux/seccomp.h, 0) && CHECK_INCLUDE(sys/prctl.h, 0)
-#include <sys/mman.h>
-#include <sys/prctl.h>
+#if defined(GNU_EXTS) && !defined(SANITIZERS_PRESENT) && defined(__linux__)                                            \
+    && CHECK_INCLUDE(linux/seccomp.h, 0) && CHECK_INCLUDE(sys/prctl.h, 0)
 #include <linux/bpf.h>
 #include <linux/filter.h>
 #include <linux/seccomp.h>
 #include <linux/unistd.h> // __NR_*
+#include <sys/mman.h>
+#include <sys/prctl.h>
 #define ISOLATION_SECCOMP_IMPL
 #endif
 
@@ -95,13 +95,15 @@ static void drop_root_user_once(void)
      */
     if (getuid() == 0) {
         // We are root, drop to nobody
-        char buffer[256] = {0};
-        struct passwd pwd = {0};
-        struct passwd* result = NULL;
+        char           buffer[256] = {0};
+        struct passwd  pwd         = {0};
+        struct passwd* result      = NULL;
         rvvm_info("Dropping from root user to nobody");
-        if (getpwnam_r("nobody", &pwd, buffer, sizeof(buffer), &result)
-         || setresgid(pwd.pw_gid, pwd.pw_gid, pwd.pw_gid)
-         || setresuid(pwd.pw_uid, pwd.pw_uid, pwd.pw_uid)) {
+        if (getpwnam_r("nobody", &pwd, buffer, sizeof(buffer), &result)) {
+            rvvm_info("Failed to get GID/UID of user nobody");
+            return;
+        }
+        if (setresgid(pwd.pw_gid, pwd.pw_gid, pwd.pw_gid) || setresuid(pwd.pw_uid, pwd.pw_uid, pwd.pw_uid)) {
             rvvm_fatal("Failed to drop root privileges!");
         }
         UNUSED(!chdir("/"));
@@ -121,26 +123,28 @@ static void drop_root_user(void)
 #define __NR_riscv_flush_icache 259
 #endif
 
+// clang-format off
+
 // Allow specific syscall in seccomp BPF filter
-#define BPF_SECCOMP_ALLOW_SYSCALL(syscall) \
-        BPF_JUMP(BPF_JMP + BPF_JEQ + BPF_K, (syscall), 0, 1), \
+#define BPF_SECCOMP_ALLOW_SYSCALL(syscall)                                          \
+        BPF_JUMP(BPF_JMP + BPF_JEQ + BPF_K, (syscall), 0, 1),                       \
         BPF_STMT(BPF_RET + BPF_K, SECCOMP_RET_ALLOW),
 
 // Return errno in seccomp BPF filter
-#define BPF_SECCOMP_ERRNO(errno) \
+#define BPF_SECCOMP_ERRNO(errno)                                                    \
         BPF_STMT(BPF_RET + BPF_K, SECCOMP_RET_ERRNO | ((errno) & SECCOMP_RET_DATA)),
 
 // Return errno for specific syscall in seccomp BPF filter
-#define BPF_SECCOMP_ERRNO_SYSCALL(syscall, errno) \
-        BPF_JUMP(BPF_JMP + BPF_JEQ + BPF_K, (syscall), 0, 1), \
+#define BPF_SECCOMP_ERRNO_SYSCALL(syscall, errno)                                   \
+        BPF_JUMP(BPF_JMP + BPF_JEQ + BPF_K, (syscall), 0, 1),                       \
         BPF_SECCOMP_ERRNO(errno)
 
 // May be used to block RWX mmap(), mprotect()
-#define BPF_SECCOMP_BLOCK_RWX_MMAN(syscall) \
-        BPF_JUMP(BPF_JMP + BPF_JEQ + BPF_K, syscall, 0, 5), \
+#define BPF_SECCOMP_BLOCK_RWX_MMAN(syscall)                                         \
+        BPF_JUMP(BPF_JMP + BPF_JEQ + BPF_K, syscall, 0, 5),                         \
         BPF_STMT(BPF_LD + BPF_W + BPF_ABS, offsetof(struct seccomp_data, args[2])), \
-        BPF_STMT(BPF_ALU + BPF_AND + BPF_K, (PROT_EXEC | PROT_WRITE)), \
-        BPF_JUMP(BPF_JMP + BPF_JEQ + BPF_K, (PROT_EXEC | PROT_WRITE), 0, 1), \
+        BPF_STMT(BPF_ALU + BPF_AND + BPF_K, (PROT_EXEC | PROT_WRITE)),              \
+        BPF_JUMP(BPF_JMP + BPF_JEQ + BPF_K, (PROT_EXEC | PROT_WRITE), 0, 1),        \
         BPF_SECCOMP_ERRNO(EINVAL) \
         BPF_STMT(BPF_RET + BPF_K, SECCOMP_RET_ALLOW),
 
@@ -895,7 +899,7 @@ static void seccomp_setup_syscall_filter(bool all_threads) {
 
     struct sock_fprog prog = {
         .filter = filter,
-        .len = STATIC_ARRAY_SIZE(filter),
+        .len    = STATIC_ARRAY_SIZE(filter),
     };
 
     int flags = all_threads ? SECCOMP_FILTER_FLAG_TSYNC : 0;
@@ -905,6 +909,8 @@ static void seccomp_setup_syscall_filter(bool all_threads) {
         DO_ONCE(rvvm_info("Failed to enforce seccomp syscall filter: %s!", strerror(errno)));
     }
 }
+
+// clang-format on
 
 #endif
 
