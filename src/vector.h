@@ -10,9 +10,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef LEKKIT_VECTOR_H
 #define LEKKIT_VECTOR_H
 
+#include "compiler.h"
 #include <stddef.h>
 #include <string.h>
-#include "utils.h"
 
 #define vector_t(vec_elem_type) struct { vec_elem_type* data; size_t size; size_t count; }
 
