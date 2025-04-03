@@ -7,46 +7,42 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#ifndef HASHMAP_H
-#define HASHMAP_H
+#ifndef LEKKIT_HASHMAP_H
+#define LEKKIT_HASHMAP_H
 
-#include <stdint.h>
+#include "compiler.h"
+
 #include <stddef.h>
+#include <stdint.h>
 
-/*
- * This is the worst-case scenario lookup complexity,
- * only 1/256 of entries may reach this point at all.
- * Setting the value lower may improve worst-case scenario
- * by a slight margin, but increases memory consumption
- * by orders of magnitude.
- */
+// This is the worst-case scenario lookup complexity, only 1/256 of entries may reach this point at all.
+// Setting the value lower may improve worst-case scenario by a slight margin, but increases memory consumption by
+// orders of magnitude.
 #define HASHMAP_MAX_PROBES 256
-// ((map->size >> 1) & 255)
 
-typedef struct {
+typedef struct randomize_layout {
     size_t key;
     size_t val;
 } hashmap_bucket_t;
 
-/*
-* val=0 is treated as unused bucket to reduce memory usage
-* (no additional flag), size is actually a bitmask holding
-* lowest 1s to represent encoding space
-*/
-typedef struct {
+// Bucket with val=0 is treated as unused bucket to reduce memory usage (no additional flag), size is actually a bitmask
+// holding lowest 1s to represent size encoding space.
+typedef struct randomize_layout {
     hashmap_bucket_t* buckets;
-    size_t size;
-    size_t entries;
-    size_t entry_balance;
+    size_t            size;
+    size_t            entries;
+    size_t            entry_balance;
 } hashmap_t;
+
+// Internal hashmap implementation paths
+slow_path void hashmap_grow_internal(hashmap_t* map, size_t key, size_t val);
+slow_path void hashmap_shrink_internal(hashmap_t* map);
+slow_path void hashmap_rebalance_internal(hashmap_t* map, size_t index);
 
 // Hint the expected amount of entries on map creation
 void hashmap_init(hashmap_t* map, size_t size);
-
 void hashmap_destroy(hashmap_t* map);
 void hashmap_resize(hashmap_t* map, size_t size);
-void hashmap_grow(hashmap_t* map, size_t key, size_t val);
-void hashmap_shrink(hashmap_t* map);
 void hashmap_clear(hashmap_t* map);
 
 static inline size_t hashmap_used_mem(hashmap_t* map)
@@ -54,10 +50,15 @@ static inline size_t hashmap_used_mem(hashmap_t* map)
     return (map->size + 1) * sizeof(hashmap_bucket_t);
 }
 
-#define hashmap_foreach(map, k, v) \
-    for (size_t _i=0, k, v; k=(map)->buckets[_i & (map)->size].key, v=(map)->buckets[_i & (map)->size].val, _i<=(map)->size; ++_i) if (v)
+#define hashmap_foreach(map, k, v)                                                                                     \
+    for (size_t k, v, MACRO_IDENT(hashmap_iter) = 0;                        /**/                                       \
+         k = ((map)->buckets[MACRO_IDENT(hashmap_iter) & (map)->size].key), /**/                                       \
+         v = ((map)->buckets[MACRO_IDENT(hashmap_iter) & (map)->size].val), /**/                                       \
+         MACRO_IDENT(hashmap_iter) <= (map)->size;                          /**/                                       \
+         ++MACRO_IDENT(hashmap_iter))                                       /**/                                       \
+        if (v)
 
-static inline size_t hashmap_hash(size_t k)
+static forceinline size_t hashmap_hash(size_t k)
 {
     k ^= k << 21;
     k ^= k >> 17;
@@ -68,27 +69,24 @@ static inline size_t hashmap_hash(size_t k)
     return k;
 }
 
-void hashmap_rebalance(hashmap_t* map, size_t index);
-
 static inline void hashmap_put(hashmap_t* map, size_t key, size_t val)
 {
     size_t hash = hashmap_hash(key);
-    size_t index;
-    for (size_t i=0; i<HASHMAP_MAX_PROBES; ++i) {
-        index = (hash + i) & map->size;
+    for (size_t i = 0; i < HASHMAP_MAX_PROBES; ++i) {
+        size_t index = (hash + i) & map->size;
 
-        if (map->buckets[index].key == key) {
+        if (likely(map->buckets[index].key == key)) {
             // The key is already used, change value
             map->buckets[index].val = val;
 
             if (!val) {
-                // Value = 0 means we can clear a bucket
+                // Value = 0 means we should clear a bucket
                 // Rebalance colliding trailing entries
-                hashmap_rebalance(map, index);
+                hashmap_rebalance_internal(map, index);
                 map->entries--;
             }
             return;
-        } else if (!map->buckets[index].val && val) {
+        } else if (likely(!map->buckets[index].val && val)) {
             // Empty bucket found, the key is unused
             map->entries++;
             map->buckets[index].key = key;
@@ -98,16 +96,17 @@ static inline void hashmap_put(hashmap_t* map, size_t key, size_t val)
     }
     // Near-key space is polluted with colliding entries, reallocate and rehash
     // Puts the new entry as well to simplify the inlined function
-    if (val) hashmap_grow(map, key, val);
+    if (unlikely(val)) {
+        hashmap_grow_internal(map, key, val);
+    }
 }
 
-static inline size_t hashmap_get(const hashmap_t* map, size_t key)
+static forceinline size_t hashmap_get(const hashmap_t* map, size_t key)
 {
     size_t hash = hashmap_hash(key);
-    size_t index;
-    for (size_t i=0; i<HASHMAP_MAX_PROBES; ++i) {
-        index = (hash + i) & map->size;
-        if (map->buckets[index].key == key || !map->buckets[index].val) {
+    for (size_t i = 0; i < HASHMAP_MAX_PROBES; ++i) {
+        size_t index = (hash + i) & map->size;
+        if (likely(map->buckets[index].key == key || !map->buckets[index].val)) {
             return map->buckets[index].val;
         }
     }
@@ -118,8 +117,8 @@ static inline void hashmap_remove(hashmap_t* map, size_t key)
 {
     // Treat value zero as removed key
     hashmap_put(map, key, 0);
-    if (map->entries < map->entry_balance && map->entries > 256) {
-        hashmap_shrink(map);
+    if (unlikely(map->entries < map->entry_balance && map->entries > 256)) {
+        hashmap_shrink_internal(map);
     }
 }
 
