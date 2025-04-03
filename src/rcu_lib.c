@@ -12,6 +12,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "vma_ops.h"
 #include "spinlock.h"
 #include "vector.h"
+#include "utils.h"
 
 SOURCE_OPTIMIZATION_SIZE
 
