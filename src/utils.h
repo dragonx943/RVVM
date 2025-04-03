@@ -184,15 +184,17 @@ slow_path void do_once_finalize(uint32_t* ticket);
  *     global_feature_init();
  * }
  */
-#define DO_ONCE_SCOPED \
-    static uint32_t MACRO_IDENT(do_once_ticket) = 0; \
-    POST_STMT_NAMED(unlikely(atomic_load_uint32(&MACRO_IDENT(do_once_ticket)) != 2), do_once_finalize(&MACRO_IDENT(do_once_ticket)), ticket) \
-        POST_STMT_NAMED(atomic_cas_uint32(&MACRO_IDENT(do_once_ticket), 0, 1), atomic_store_uint32(&MACRO_IDENT(do_once_ticket), 2), claim)
+#define DO_ONCE_SCOPED                                                                                                 \
+    static uint32_t MACRO_IDENT(do_once_ticket) = 0;                                  /**/                             \
+    POST_STMT_NAMED (unlikely(atomic_load_uint32(&MACRO_IDENT(do_once_ticket)) != 2), /**/                             \
+                     do_once_finalize(&MACRO_IDENT(do_once_ticket)), ticket_stmt)     /**/                             \
+        POST_STMT_NAMED (atomic_cas_uint32(&MACRO_IDENT(do_once_ticket), 0, 1),       /**/                             \
+                         atomic_store_uint32(&MACRO_IDENT(do_once_ticket), 2), claim_stmt)
 
 /*
  * Run an expression once per library lifetime (In a thread-safe way)
  *
- * DO_ONCE(rvvm_warn("This will only be printed once!"));
+ * DO_ONCE(rvvm_warn("This will only be printed once upon reaching!"));
  */
 #define DO_ONCE(expr_once) \
 do { \
