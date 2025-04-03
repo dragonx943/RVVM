@@ -12,10 +12,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define _BSD_SOURCE
 #define _DEFAULT_SOURCE
 
-#include "rvtimer.h"
 #include <time.h>
 
-#ifdef __linux__
+#if defined(__linux__)
 #include <sys/prctl.h> // For PR_SET_TIMERSLACK
 #endif
 
@@ -27,18 +26,20 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 // RVVM internal headers come after system headers because of safe_free()
 #include "atomics.h"
 #include "compiler.h"
+#include "rvtimer.h"
 #include "utils.h"
-#include "dlib.h"
 
-#ifdef _WIN32
+#if defined(_WIN32)
+
 // Use QueryPerformanceCounter()
+#include "dlib.h"
 #include <windows.h>
 
 static uint32_t qpc_crit = 0;
 static uint64_t qpc_off = 0, qpc_last = 0, qpc_freq = 0;
 static uint64_t qpc_last_checked = 0, uit_last_checked = 0;
 
-static BOOL (__stdcall *query_uit)(PULONGLONG) = NULL;
+static BOOL (*__stdcall query_uit)(PULONGLONG) = NULL;
 
 static uint64_t qpc_get_frequency(void)
 {
@@ -62,7 +63,9 @@ static uint64_t qpc_get_clock(void)
 static uint64_t uit_get_clock(void)
 {
     ULONGLONG uit = 0;
-    if (query_uit) query_uit(&uit);
+    if (query_uit) {
+        query_uit(&uit);
+    }
     return uit;
 }
 
@@ -89,12 +92,12 @@ uint64_t rvtimer_clocksource(uint64_t freq)
                 // Check unbiased backup clock to compensate for suspend & forward jumps
                 uint64_t qpc_delta = qpc_new - qpc_last_checked;
                 if (qpc_delta > qpc_freq) {
-                    uint64_t uit_new = uit_get_clock();
+                    uint64_t uit_new   = uit_get_clock();
                     uint64_t uit_delta = (uit_new - uit_last_checked) * qpc_freq / 10000000U;
                     if (qpc_delta > uit_delta + qpc_freq && qpc_last_checked) {
-                        uint64_t compensate = EVAL_MIN(qpc_delta - uit_delta, qpc_new - qpc_val);
-                        qpc_off -= compensate;
-                        qpc_new -= compensate;
+                        uint64_t compensate  = EVAL_MIN(qpc_delta - uit_delta, qpc_new - qpc_val);
+                        qpc_off             -= compensate;
+                        qpc_new             -= compensate;
                     }
 
                     qpc_last_checked = qpc_new;
@@ -114,38 +117,43 @@ uint64_t rvtimer_clocksource(uint64_t freq)
 }
 
 #elif defined(__APPLE__)
+
 // Use mach_absolute_time() on Mac OS
 #include <mach/mach_time.h>
 
 static mach_timebase_info_data_t mach_clk_info = {0};
-static uint64_t mach_clk_freq = 0;
+static uint64_t                  mach_clk_freq = 0;
 
 uint64_t rvtimer_clocksource(uint64_t freq)
 {
-    DO_ONCE({
+    DO_ONCE_SCOPED {
         mach_timebase_info(&mach_clk_info);
         if (mach_clk_info.numer == 0 || mach_clk_info.denom == 0) {
             rvvm_fatal("mach_timebase_info() failed!");
         }
         // Calculate Mach timer frequency
         mach_clk_freq = (mach_clk_info.denom * 1000000000ULL) / mach_clk_info.numer;
-    });
+    };
     return rvtimer_convert_freq(mach_absolute_time(), mach_clk_freq, freq);
 }
 
 #elif defined(CLOCK_REALTIME) || defined(CLOCK_MONOTONIC)
-// Use POSIX clock_gettime(), with a fast monotonic clock if possible
 
-// Use CLOCK_MONOTONIC_COARSE on Serenity for perf reasons
+// Use POSIX clock_gettime(), with a fast monotonic clock if possible
 #if defined(CLOCK_MONOTONIC_COARSE) && defined(__serenity__)
+// Use CLOCK_MONOTONIC_COARSE on Serenity for perf reasons
 #define CHOSEN_POSIX_CLOCK CLOCK_MONOTONIC_COARSE
-// Use CLOCK_UPTIME on OpenBSD to skip suspend time
+
 #elif defined(CLOCK_UPTIME)
+// Use CLOCK_UPTIME on OpenBSD to skip suspend time
 #define CHOSEN_POSIX_CLOCK CLOCK_UPTIME
-// Use CLOCK_MONOTONIC on Linux, FreeBSD, etc
+
 #elif defined(CLOCK_MONOTONIC)
+// Use CLOCK_MONOTONIC on Linux, FreeBSD, etc
 #define CHOSEN_POSIX_CLOCK CLOCK_MONOTONIC
 #else
+
+// Fallback to wall clock with proper precision
 #define CHOSEN_POSIX_CLOCK CLOCK_REALTIME
 #endif
 
@@ -157,6 +165,7 @@ uint64_t rvtimer_clocksource(uint64_t freq)
 }
 
 #else
+
 // Use time() with no sub-second precision
 #warning No OS support for precise clocksource!
 
@@ -211,7 +220,7 @@ bool rvtimecmp_pending(const rvtimecmp_t* cmp)
 
 uint64_t rvtimecmp_delay(const rvtimecmp_t* cmp)
 {
-    uint64_t timer = rvtimer_get(cmp->timer);
+    uint64_t timer   = rvtimer_get(cmp->timer);
     uint64_t timecmp = rvtimecmp_get(cmp);
     return (timer < timecmp) ? (timecmp - timer) : 0;
 }
@@ -228,9 +237,9 @@ uint64_t rvtimecmp_delay_ns(const rvtimecmp_t* cmp)
 
 #if defined(_WIN32) && !defined(UNDER_CE)
 
-static NTSTATUS (__stdcall *nt_set_timer_resolution)(ULONG, BOOLEAN, PULONG) = NULL;
-static uint32_t low_latency = 0;
-static rvtimer_t latency_timer = {0};
+static NTSTATUS(__stdcall* nt_set_timer_resolution)(ULONG, BOOLEAN, PULONG) = NULL;
+static uint32_t  low_latency                                                = 0;
+static rvtimer_t latency_timer                                              = {0};
 
 #endif
 
@@ -266,14 +275,18 @@ void sleep_low_latency(bool enable)
 
 void sleep_ms(uint32_t ms)
 {
-#ifdef _WIN32
+#if defined(_WIN32)
     sleep_low_latency(ms < 15);
     Sleep(ms);
 
 #elif defined(CHOSEN_POSIX_CLOCK) || defined(__APPLE__)
     if (ms) {
-        struct timespec ts = { .tv_sec = ms / 1000, .tv_nsec = (ms % 1000) * 1000000, };
-        while (nanosleep(&ts, &ts) < 0);
+        struct timespec ts = {
+            .tv_sec  = ms / 1000,
+            .tv_nsec = (ms % 1000) * 1000000,
+        };
+        while (nanosleep(&ts, &ts) < 0) {
+        }
         return;
     }
 #if defined(SCHED_YIELD_IMPL)
