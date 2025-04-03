@@ -7,8 +7,8 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#ifndef RVVM_BIT_OPS_H
-#define RVVM_BIT_OPS_H
+#ifndef LEKKIT_BIT_OPS_H
+#define LEKKIT_BIT_OPS_H
 
 #include "compiler.h"
 #include "rvvm_types.h"
@@ -108,7 +108,7 @@ static inline bitcnt_t bit_clz32(uint32_t val)
     if (unlikely(!val)) {
         return 32;
     }
-#if GNU_BUILTIN(__builtin_clz)
+#if GCC_CHECK_VER(3, 4) || GNU_BUILTIN(__builtin_clz)
     return __builtin_clz(val);
 #elif defined(_MSC_VER)
     unsigned long index;
@@ -117,8 +117,8 @@ static inline bitcnt_t bit_clz32(uint32_t val)
 #else
     // de Brujin hashmap, see https://en.wikipedia.org/wiki/De_Bruijn_sequence
     const uint8_t lut[32] = {
-        0, 31,  4, 30,  3, 18,  8, 29, 2, 10, 12, 17,  7, 15, 28, 24,
-        1,  5, 19,  9, 11, 13, 16, 25, 6, 20, 14, 26, 21, 27, 22, 23,
+        0, 31, 4,  30, 3,  18, 8,  29, 2, 10, 12, 17, 7,  15, 28, 24,
+        1, 5,  19, 9,  11, 13, 16, 25, 6, 20, 14, 26, 21, 27, 22, 23,
     };
     val |= (val >> 1);
     val |= (val >> 2);
@@ -135,7 +135,7 @@ static inline bitcnt_t bit_clz64(uint64_t val)
     if (unlikely(!val)) {
         return 64;
     }
-#if defined(HOST_64BIT) && GNU_BUILTIN(__builtin_clzll)
+#if defined(HOST_64BIT) && (GCC_CHECK_VER(3, 4) || GNU_BUILTIN(__builtin_clzll))
     return __builtin_clzll(val);
 #elif defined(HOST_64BIT) && defined(_MSC_VER)
     unsigned long index;
@@ -152,7 +152,7 @@ static inline bitcnt_t bit_ctz32(uint32_t val)
     if (unlikely(!val)) {
         return 32;
     }
-#if GNU_BUILTIN(__builtin_ctz)
+#if GCC_CHECK_VER(3, 4) || GNU_BUILTIN(__builtin_ctz)
     return __builtin_ctz(val);
 #elif defined(_MSC_VER)
     unsigned long index;
@@ -161,8 +161,8 @@ static inline bitcnt_t bit_ctz32(uint32_t val)
 #else
     // de Brujin hashmap, see https://en.wikipedia.org/wiki/De_Bruijn_sequence
     const uint8_t lut[32] = {
-        0,   1, 28,  2, 29, 14, 24, 3, 30, 22, 20, 15, 25, 17,  4, 8,
-        31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18,  6, 11,  5, 10, 9,
+        0,  1,  28, 2,  29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4,  8,
+        31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18, 6,  11, 5,  10, 9,
     };
     return lut[((val & -val) * 0x077CB531U) >> 27];
 #endif
@@ -174,7 +174,7 @@ static inline bitcnt_t bit_ctz64(uint64_t val)
     if (unlikely(!val)) {
         return 64;
     }
-#if defined(HOST_64BIT) && GNU_BUILTIN(__builtin_ctzll)
+#if defined(HOST_64BIT) && (GCC_CHECK_VER(3, 4) || GNU_BUILTIN(__builtin_ctzll))
     return __builtin_ctzll(val);
 #elif defined(HOST_64BIT) && defined(_MSC_VER)
     unsigned long index;
@@ -192,7 +192,7 @@ static inline bitcnt_t bit_bsr32(uint32_t val)
     if (unlikely(!val)) {
         return 32;
     }
-#if GNU_BUILTIN(__builtin_clz)
+#if GCC_CHECK_VER(3, 4) || GNU_BUILTIN(__builtin_clz)
     return 31 ^ __builtin_clz(val);
 #elif defined(_MSC_VER)
     unsigned long index;
@@ -209,7 +209,7 @@ static inline bitcnt_t bit_bsr64(uint64_t val)
     if (unlikely(!val)) {
         return 64;
     }
-#if defined(HOST_64BIT) && GNU_BUILTIN(__builtin_clzll)
+#if defined(HOST_64BIT) && (GCC_CHECK_VER(3, 4) || GNU_BUILTIN(__builtin_clzll))
     return 63 ^ __builtin_clzll(val);
 #elif defined(HOST_64BIT) && defined(_MSC_VER)
     unsigned long index;
@@ -227,7 +227,7 @@ static inline uint64_t bit_next_pow2(uint64_t val)
     if (likely(!(val & (val - 1)))) {
         return val;
     }
-#if defined(HOST_64BIT) && (GNU_BUILTIN(__builtin_clzll) || defined(_MSC_VER))
+#if defined(HOST_64BIT) && (GCC_CHECK_VER(3, 4) || GNU_BUILTIN(__builtin_clzll) || defined(_MSC_VER))
     // Computing this on zero or pow2 would be invalid,
     // but the fast path check already covers this
     return (1ULL << bit_bsr64(val));
@@ -247,13 +247,13 @@ static inline uint64_t bit_next_pow2(uint64_t val)
 // Count raised bits in u32
 static inline bitcnt_t bit_popcnt32(uint32_t val)
 {
-#if GNU_BUILTIN(__builtin_popcount)
+#if GCC_CHECK_VER(3, 4) || GNU_BUILTIN(__builtin_popcount)
     return __builtin_popcount(val);
 #else
     val -= (val >> 1) & 0x55555555;
-    val = (val & 0x33333333) + ((val >> 2) & 0x33333333);
-    val = (val + (val >> 4)) & 0x0F0F0F0F;
-    val += val >>  8;
+    val  = (val & 0x33333333) + ((val >> 2) & 0x33333333);
+    val  = (val + (val >> 4)) & 0x0F0F0F0F;
+    val += val >> 8;
     return (val + (val >> 16)) & 0x3F;
 #endif
 }
@@ -261,7 +261,7 @@ static inline bitcnt_t bit_popcnt32(uint32_t val)
 // Count raised bits in u64
 static inline bitcnt_t bit_popcnt64(uint64_t val)
 {
-#if defined(HOST_64BIT) && GNU_BUILTIN(__builtin_popcountll)
+#if defined(HOST_64BIT) && (GCC_CHECK_VER(3, 4) || GNU_BUILTIN(__builtin_popcountll))
     return __builtin_popcountll(val);
 #else
     return bit_popcnt32(val) + bit_popcnt32(val >> 32);
@@ -273,12 +273,12 @@ static inline uint64_t bit_orc_b(uint64_t val)
 {
 #if defined(GNU_EXTS) && defined(__x86_64__)
     uint64_t tmp = 0;
-    __asm__ (
-    "pcmpeqb %1, %0\n\t"
-    "pcmpeqb %1, %0\n\t"
-    : "+x"(val) : "x"(tmp));
+    __asm__("pcmpeqb %1, %0\n\t"
+            "pcmpeqb %1, %0\n\t"
+            : "+x"(val)
+            : "x"(tmp));
 #elif defined(GNU_EXTS) && defined(__aarch64__)
-    __asm__ ("cmtst %0.8b, %0.8b, %0.8b" : "+w"(val));
+    __asm__("cmtst %0.8b, %0.8b, %0.8b" : "+w"(val));
 #else
     const uint64_t bytes_hi = 0x8080808080808080ULL;
     const uint64_t bytes_lo = 0x0101010101010101ULL;
@@ -308,7 +308,9 @@ static inline uint32_t bit_clmul32(uint32_t a, uint32_t b)
 {
     uint32_t ret = 0;
     do {
-        if (b & 1) ret ^= a;
+        if (b & 1) {
+            ret ^= a;
+        }
         b >>= 1;
     } while ((a <<= 1));
     return ret;
@@ -318,7 +320,9 @@ static inline uint64_t bit_clmul64(uint64_t a, uint64_t b)
 {
     uint64_t ret = 0;
     do {
-        if (b & 1) ret ^= a;
+        if (b & 1) {
+            ret ^= a;
+        }
         b >>= 1;
     } while ((a <<= 1));
     return ret;
@@ -327,10 +331,12 @@ static inline uint64_t bit_clmul64(uint64_t a, uint64_t b)
 static inline uint32_t bit_clmulh32(uint32_t a, uint32_t b)
 {
     uint32_t ret = 0;
-    bitcnt_t i = 31;
+    bitcnt_t i   = 31;
     do {
         b >>= 1;
-        if (b & 1) ret ^= (a >> i);
+        if (b & 1) {
+            ret ^= (a >> i);
+        }
         i--;
     } while (b);
     return ret;
@@ -339,10 +345,12 @@ static inline uint32_t bit_clmulh32(uint32_t a, uint32_t b)
 static inline uint64_t bit_clmulh64(uint64_t a, uint64_t b)
 {
     uint64_t ret = 0;
-    bitcnt_t i = 63;
+    bitcnt_t i   = 63;
     do {
         b >>= 1;
-        if (b & 1) ret ^= (a >> i);
+        if (b & 1) {
+            ret ^= (a >> i);
+        }
         i--;
     } while (b);
     return ret;
@@ -351,9 +359,11 @@ static inline uint64_t bit_clmulh64(uint64_t a, uint64_t b)
 static inline uint32_t bit_clmulr32(uint32_t a, uint32_t b)
 {
     uint32_t ret = 0;
-    bitcnt_t i = 31;
+    bitcnt_t i   = 31;
     do {
-        if (b & 1) ret ^= (a >> i);
+        if (b & 1) {
+            ret ^= (a >> i);
+        }
         b >>= 1;
         i--;
     } while (b);
@@ -363,9 +373,11 @@ static inline uint32_t bit_clmulr32(uint32_t a, uint32_t b)
 static inline uint64_t bit_clmulr64(uint64_t a, uint64_t b)
 {
     uint64_t ret = 0;
-    bitcnt_t i = 63;
+    bitcnt_t i   = 63;
     do {
-        if (b & 1) ret ^= (a >> i);
+        if (b & 1) {
+            ret ^= (a >> i);
+        }
         b >>= 1;
         i--;
     } while (b);
@@ -375,22 +387,22 @@ static inline uint64_t bit_clmulr64(uint64_t a, uint64_t b)
 // Bswap 32-bit value (From BE to LE or vice versa)
 static inline uint32_t byteswap_uint32(uint32_t val)
 {
-#if GNU_BUILTIN(__builtin_bswap32)
+#if GCC_CHECK_VER(4, 4) || GNU_BUILTIN(__builtin_bswap32)
     return __builtin_bswap32(val);
 #elif defined(_MSC_VER)
     return _byteswap_ulong(val);
 #else
-    return (((val & 0xFF000000) >> 24) |
-            ((val & 0x00FF0000) >> 8)  |
-            ((val & 0x0000FF00) << 8)  |
-            ((val & 0x000000FF) << 24));
+    return ((val & 0xFF000000) >> 24) //
+         | ((val & 0x00FF0000) >> 8)  //
+         | ((val & 0x0000FF00) << 8)  //
+         | ((val & 0x000000FF) << 24);
 #endif
 }
 
 // Bswap 64-bit value (From BE to LE or vice versa)
 static inline uint64_t byteswap_uint64(uint64_t val)
 {
-#if GNU_BUILTIN(__builtin_bswap64)
+#if GCC_CHECK_VER(4, 4) || GNU_BUILTIN(__builtin_bswap64)
     return __builtin_bswap64(val);
 #elif defined(_MSC_VER)
     return _byteswap_uint64(val);
@@ -411,9 +423,9 @@ static inline uint64_t mulh_uint64(int64_t a, int64_t b)
     return __mulh(a, b);
 #else
     int64_t lo_lo = (a & 0xFFFFFFFF) * (b & 0xFFFFFFFF);
-    int64_t hi_lo = (a >> 32)        * (b & 0xFFFFFFFF);
+    int64_t hi_lo = (a >> 32) * (b & 0xFFFFFFFF);
     int64_t lo_hi = (a & 0xFFFFFFFF) * (b >> 32);
-    int64_t hi_hi = (a >> 32)        * (b >> 32);
+    int64_t hi_hi = (a >> 32) * (b >> 32);
     int64_t cross = (lo_lo >> 32) + (hi_lo & 0xFFFFFFFF) + lo_hi;
     return (hi_lo >> 32) + (cross >> 32) + hi_hi;
 #endif
@@ -428,9 +440,9 @@ static inline uint64_t mulhu_uint64(uint64_t a, uint64_t b)
     return __umulh(a, b);
 #else
     uint64_t lo_lo = (a & 0xFFFFFFFF) * (b & 0xFFFFFFFF);
-    uint64_t hi_lo = (a >> 32)        * (b & 0xFFFFFFFF);
+    uint64_t hi_lo = (a >> 32) * (b & 0xFFFFFFFF);
     uint64_t lo_hi = (a & 0xFFFFFFFF) * (b >> 32);
-    uint64_t hi_hi = (a >> 32)        * (b >> 32);
+    uint64_t hi_hi = (a >> 32) * (b >> 32);
     uint64_t cross = (lo_lo >> 32) + (hi_lo & 0xFFFFFFFF) + lo_hi;
     return (hi_lo >> 32) + (cross >> 32) + hi_hi;
 #endif
@@ -442,10 +454,10 @@ static inline uint64_t mulhsu_uint64(int64_t a, uint64_t b)
 #if defined(INT128_SUPPORT) || (defined(HOST_64BIT) && defined(_MSC_VER))
     return mulhu_uint64(a, b) - (a >= 0 ? 0 : b);
 #else
-    int64_t lo_lo = (a & 0xFFFFFFFF) * (b & 0xFFFFFFFF);
-    int64_t hi_lo = (a >> 32)        * (b & 0xFFFFFFFF);
-    int64_t lo_hi = (a & 0xFFFFFFFF) * (b >> 32);
-    int64_t hi_hi = (a >> 32)        * (b >> 32);
+    int64_t  lo_lo = (a & 0xFFFFFFFF) * (b & 0xFFFFFFFF);
+    int64_t  hi_lo = (a >> 32) * (b & 0xFFFFFFFF);
+    int64_t  lo_hi = (a & 0xFFFFFFFF) * (b >> 32);
+    int64_t  hi_hi = (a >> 32) * (b >> 32);
     uint64_t cross = (lo_lo >> 32) + (hi_lo & 0xFFFFFFFF) + lo_hi;
     return (hi_lo >> 32) + (cross >> 32) + hi_hi;
 #endif
