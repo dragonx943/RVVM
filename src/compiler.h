@@ -334,33 +334,46 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  * Host platform feature detection
  */
 
-// Detect endianness based on __BYTE_ORDER__, and arch ifdefs for older compilers
+// Determine host bitness (Possibly neither 32/64 bit)
+#undef HOST_64BIT
+#undef HOST_32BIT
+#if (UINTPTR_MAX == 0xFFFFFFFFFFFFFFFFULL) || (SIZE_MAX == 0xFFFFFFFFFFFFFFFFULL)
+#define HOST_64BIT 1
+#elif (UINTPTR_MAX == 0xFFFFFFFFU) || (SIZE_MAX == 0xFFFFFFFFU)
+#define HOST_32BIT 1
+#endif
+
+// Detect integer endianness (Possibly neither big/little endian)
+// If neither __BYTE_ORDER__, __BIG_ENDIAN__, __LITTLE_ENDIAN__ are supported by the toolchain,
+// an extensive list of big-endian platforms is checked, and little-endian is assumed otherwise
 #undef HOST_BIG_ENDIAN
 #undef HOST_LITTLE_ENDIAN
-#if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__) || defined(__MIPSEB__) || defined(__ARMEB__)
+#if (defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__))             \
+    || defined(__BIG_ENDIAN__)                                                                                         \
+    || (!defined(__BYTE_ORDER__) && !defined(__LITTLE_ENDIAN__)                                                        \
+        && (defined(__MIPSEB__) || defined(__ARMEB__) || defined(__powerpc__) || defined(__sparc__)                    \
+            || defined(__m68k__) || defined(__hppa__) || defined(__s390__) || defined(_M_PPC)))
 #define HOST_BIG_ENDIAN 1
-#elif defined(_MSC_VER) || !defined(__BYTE_ORDER__) || (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)                     \
-    || defined(__i386__) || defined(__x86_64__) || defined(__aarch64__) || defined(__arm__)
+#elif (defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__))     \
+    || !defined(__BYTE_ORDER__) || defined(__LITTLE_ENDIAN__)
 #define HOST_LITTLE_ENDIAN 1
 #endif
 
-// Determine whether host has fast misaligned access (Hint)
-#undef HOST_FAST_MISALIGN
-#undef HOST_NO_MISALIGN
-#if defined(__i386__) || defined(__x86_64__) || defined(_M_IX86) || defined(_M_AMD64) || defined(__aarch64__)
-#define HOST_FAST_MISALIGN 1
-#else
-// Not sure about other arches, misaligns may be very slow or crash
-#define HOST_NO_MISALIGN 1
+// Detect FPU endianness (Possibly differs from integer, or neither big/little endian)
+#undef HOST_FPU_BIG_ENDIAN
+#undef HOST_FPU_LITTLE_ENDIAN
+#if (defined(__FLOAT_WORD_ORDER__) && (__FLOAT_WORD_ORDER__ == __ORDER_BIG_ENDIAN__))                                  \
+    || (!defined(__FLOAT_WORD_ORDER__) && defined(HOST_BIG_ENDIAN))
+#define HOST_FPU_BIG_ENDIAN 1
+#elif (defined(__FLOAT_WORD_ORDER__) && (__FLOAT_WORD_ORDER__ == __ORDER_LITTLE_ENDIAN__))                             \
+    || (!defined(__FLOAT_WORD_ORDER__) && defined(HOST_LITTLE_ENDIAN))
+#define HOST_FPU_LITTLE_ENDIAN 1
 #endif
 
-// Determine host bitness (Hint)
-#undef HOST_64BIT
-#undef HOST_32BIT
-#if UINTPTR_MAX == UINT64_MAX
-#define HOST_64BIT 1
-#elif UINTPTR_MAX == UINT32_MAX
-#define HOST_32BIT 1
+// Determine whether host may perform fast misaligned access (Hint)
+#undef HOST_FAST_MISALIGN
+#if defined(__x86_64__) || defined(__aarch64__) || defined(_M_AMD64) || defined(_M_ARM64)
+#define HOST_FAST_MISALIGN 1
 #endif
 
 /*
