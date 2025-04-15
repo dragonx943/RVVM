@@ -208,6 +208,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #undef align_type
 #if !defined(USE_NO_ALIGN_TYPE) && (GCC_CHECK_VER(3, 0) || GNU_ATTRIBUTE(__aligned__))
 #define align_type(alignment) __attribute__((__aligned__(alignment)))
+#elif !defined(USE_NO_ALIGN_TYPE) && defined(_MSC_VER)
+#define align_type(alignment) __declspec(align(alignment))
 #else
 #define align_type(alignment) GNU_DUMMY_ATTRIBUTE
 #endif
