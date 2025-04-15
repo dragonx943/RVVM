@@ -8,32 +8,16 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
 #include "spinlock.h"
+#include "rvtimer.h"
 #include "stacktrace.h"
 #include "threading.h"
-#include "rvtimer.h"
 #include "utils.h"
 
 // Maximum allowed bounded locking time, reports a deadlock upon expiration
-#define SPINLOCK_MAX_MS 10000
+#define SPINLOCK_MAX_MS  10000
 
 // Attemts to claim the lock before blocking in the kernel
 #define SPINLOCK_RETRIES 40
-
-static cond_var_t* global_cond = NULL;
-
-static void spin_deinit(void)
-{
-    condvar_free(global_cond);
-    global_cond = NULL;
-}
-
-static void spin_global_init(void)
-{
-    DO_ONCE ({
-        global_cond = condvar_create();
-        call_at_deinit(spin_deinit);
-    });
-}
 
 static no_inline void spin_lock_debug_report(spinlock_t* lock, bool crash)
 {
@@ -43,7 +27,7 @@ static no_inline void spin_lock_debug_report(spinlock_t* lock, bool crash)
     UNUSED(lock);
 #endif
 #ifdef RVVM_VERSION
-    rvvm_warn("Version: RVVM v"RVVM_VERSION);
+    rvvm_warn("Version: RVVM v" RVVM_VERSION);
 #endif
     if (crash) {
         rvvm_fatal("Locking issue detected!");
@@ -97,6 +81,9 @@ static inline bool spin_try_claim_internal(spinlock_t* lock, const char* locatio
 
 slow_path static void spin_lock_wait_internal(spinlock_t* lock, const char* location, bool writer)
 {
+    rvtimer_t deadlock_timer       = {0};
+    bool      reset_deadlock_timer = true;
+
     for (size_t i = 0; i < SPINLOCK_RETRIES; ++i) {
         // Read lock flag until there's any chance to grab it
         // Improves performance due to cacheline bouncing elimination
@@ -110,16 +97,12 @@ slow_path static void spin_lock_wait_internal(spinlock_t* lock, const char* loca
             break;
         }
 #if defined(GNU_EXTS) && defined(__x86_64__)
-        __asm__ volatile ("pause");
+        __asm__ volatile("pause");
 #elif defined(GNU_EXTS) && defined(__aarch64__)
-        __asm__ volatile ("isb sy");
+        __asm__ volatile("isb sy");
 #endif
     }
 
-    spin_global_init();
-
-    rvtimer_t deadlock_timer = {0};
-    bool reset_deadlock_timer = true;
     while (true) {
         uint32_t flag = atomic_load_uint32_ex(&lock->flag, ATOMIC_RELAXED);
         if (spin_lock_possibly_available(flag, writer)) {
@@ -133,7 +116,7 @@ slow_path static void spin_lock_wait_internal(spinlock_t* lock, const char* loca
             // Indicate that we're waiting on this lock
             if (spin_flag_has_waiters(flag) || atomic_cas_uint32(&lock->flag, flag, flag | 0x80000000U)) {
                 // Wait till wakeup from lock owner
-                if (condvar_wait(global_cond, 10) || !spin_flag_has_waiters(flag)) {
+                if (thread_futex_wait(&lock->flag, flag, -1) || !spin_flag_has_waiters(flag)) {
                     // Reset deadlock timer upon noticing any forward progress
                     reset_deadlock_timer = true;
                 }
@@ -156,7 +139,6 @@ slow_path void spin_lock_wait(spinlock_t* lock, const char* location)
     spin_lock_wait_internal(lock, location, true);
 }
 
-
 slow_path void spin_read_lock_wait(spinlock_t* lock, const char* location)
 {
     spin_lock_wait_internal(lock, location, false);
@@ -172,8 +154,7 @@ slow_path void spin_lock_wake(spinlock_t* lock, uint32_t prev)
         spin_lock_debug_report(lock, true);
     } else if (spin_flag_has_waiters(prev)) {
         // Wake all readers or waiter
-        spin_global_init();
-        condvar_wake_all(global_cond);
+        thread_futex_wake(&lock->flag, -1);
     }
 }
 
@@ -188,7 +169,6 @@ slow_path void spin_read_lock_wake(spinlock_t* lock, uint32_t prev)
     } else if (spin_flag_has_waiters(prev)) {
         // Wake writer
         atomic_and_uint32(&lock->flag, ~0x80000000U);
-        spin_global_init();
-        condvar_wake_all(global_cond);
+        thread_futex_wake(&lock->flag, 1);
     }
 }

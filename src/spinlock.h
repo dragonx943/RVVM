@@ -10,9 +10,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef RVVM_SPINLOCK_H
 #define RVVM_SPINLOCK_H
 
-#include <stddef.h>
-#include "compiler.h"
 #include "atomics.h"
+#include "compiler.h"
+#include <stddef.h>
 
 /*
  * Lock flags meaning:
@@ -61,7 +61,9 @@ static forceinline bool spin_try_lock_internal(spinlock_t* lock, const char* loc
 {
     bool ret = atomic_cas_uint32_ex(&lock->flag, 0x0, 0x1, false, ATOMIC_ACQUIRE, ATOMIC_RELAXED);
 #ifdef USE_SPINLOCK_DEBUG
-    if (likely(ret)) lock->location = location;
+    if (likely(ret)) {
+        lock->location = location;
+    }
 #else
     UNUSED(location);
 #endif
@@ -164,10 +166,13 @@ static forceinline void spin_read_unlock(spinlock_t* lock)
  * }
  */
 
-#define scoped_spin_lock(lock)          SCOPED_HELPER(spin_lock(lock),      spin_unlock(lock))
-#define scoped_spin_try_lock(lock)      POST_COND(spin_try_lock(lock),      spin_unlock(lock))
-#define scoped_spin_read_lock(lock)     SCOPED_HELPER(spin_read_lock(lock), spin_read_unlock(lock))
-#define scoped_spin_try_read_lock(lock) POST_COND(spin_try_read_lock(lock), spin_read_unlock(lock))
-#define scoped_spin_lock_slow(lock)     SCOPED_HELPER(spin_lock_slow(lock), spin_unlock(lock))
+#define scoped_spin_lock(lock)           SCOPED_HELPER (spin_lock(lock), spin_unlock(lock))
+#define scoped_spin_try_lock(lock)       POST_COND (spin_try_lock(lock), spin_unlock(lock))
+
+#define scoped_spin_read_lock(lock)      SCOPED_HELPER (spin_read_lock(lock), spin_read_unlock(lock))
+#define scoped_spin_try_read_lock(lock)  POST_COND (spin_try_read_lock(lock), spin_read_unlock(lock))
+
+#define scoped_spin_lock_slow(lock)      SCOPED_HELPER (spin_lock_slow(lock), spin_unlock(lock))
+#define scoped_spin_read_lock_slow(lock) SCOPED_HELPER (spin_read_lock_slow(lock), spin_read_unlock(lock))
 
 #endif
