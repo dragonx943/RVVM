@@ -35,6 +35,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #else
 // Fallback to stdio
+#include "mem_ops.h"
 #warning No terminal input support!
 
 #endif
