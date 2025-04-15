@@ -9,52 +9,51 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
 #include "chardev.h"
-#include <stdio.h>
+#include <stdio.h> // For fputs(), setvbuf()
 
 #if (defined(__unix__) || defined(__APPLE__) || defined(__HAIKU__)) && !defined(__EMSCRIPTEN__)
-#include <sys/types.h>
-#include <sys/select.h>
-#include <termios.h>
-#include <unistd.h>
-#include <fcntl.h>
+#include <fcntl.h>    // For open()
+#include <sys/time.h> // For select()
+#include <termios.h>  // For tcgetattr(), tcsetattr(), etc
+#include <unistd.h>   // For read(), write(), close()
 
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
 #endif
+
 #ifndef O_NOCTTY
 #define O_NOCTTY 0
 #endif
 
-#define POSIX_TERM_IMPL
+#define POSIX_TERM_IMPL 1
 
 #elif defined(_WIN32) && !defined(UNDER_CE)
-#include <windows.h>
-#include <conio.h>
+#include <conio.h>   // For _kbhit()
+#include <windows.h> // For ReadConsoleW(), WideCharToMultiByte(), WriteConsoleA(), SetConsoleMode(), etc
 
-#define WIN32_TERM_IMPL
+#define WIN32_TERM_IMPL 1
 
 #else
-#warning No UART input support!
+// Fallback to stdio
+#warning No terminal input support!
 
 #endif
 
 // RVVM internal headers come after system headers because of safe_free()
-#include "spinlock.h"
-#include "rvtimer.h"
 #include "ringbuf.h"
+#include "spinlock.h"
 #include "utils.h"
-#include "mem_ops.h"
 
 SOURCE_OPTIMIZATION_SIZE
 
 typedef struct {
-    chardev_t chardev;
-    ringbuf_t rx, tx;
+    chardev_t  chardev;
+    ringbuf_t  rx, tx;
     spinlock_t lock;
 
     uint32_t flags;
-    int rfd, wfd;
-    bool ctrl_a;
+    int      rfd, wfd;
+    bool     ctrl_a;
 } chardev_term_t;
 
 /*
@@ -67,7 +66,7 @@ static struct termios orig_term_opts = {0};
 
 #elif defined(WIN32_TERM_IMPL)
 
-static DWORD orig_input_mode = 0;
+static DWORD orig_input_mode  = 0;
 static DWORD orig_output_mode = 0;
 
 #endif
@@ -77,10 +76,10 @@ static bool term_ready_for_io(chardev_term_t* term, bool write)
     UNUSED(term);
 #if defined(POSIX_TERM_IMPL)
     struct timeval timeout = {0};
-    fd_set fds = {0};
-    int rfd = term ? term->rfd : 0;
-    int wfd = term ? term->wfd : 1;
-    int fd = write ? wfd : rfd;
+    fd_set         fds     = {0};
+    int            rfd     = term ? term->rfd : 0;
+    int            wfd     = term ? term->wfd : 1;
+    int            fd      = write ? wfd : rfd;
     FD_SET(fd, &fds);
     return select(fd + 1, write ? NULL : &fds, write ? &fds : NULL, NULL, &timeout) > 0 && FD_ISSET(fd, &fds);
 #elif defined(WIN32_TERM_IMPL)
@@ -102,8 +101,8 @@ static size_t term_write_raw(chardev_term_t* term, const char* buffer, size_t si
     WriteConsoleA(GetStdHandle(STD_OUTPUT_HANDLE), buffer, size, &count, NULL);
     return count;
 #else
-    char tmp[256] = {0};
-    size_t ret = EVAL_MIN(size, sizeof(tmp) - 1);
+    char   tmp[256] = {0};
+    size_t ret      = EVAL_MIN(size, sizeof(tmp) - 1);
     memcpy(tmp, buffer, ret);
     fputs(tmp, stdout);
     return ret;
@@ -112,15 +111,17 @@ static size_t term_write_raw(chardev_term_t* term, const char* buffer, size_t si
 
 static size_t term_read_raw(chardev_term_t* term, char* buffer, size_t size)
 {
-    UNUSED(term); UNUSED(buffer); UNUSED(size);
+    UNUSED(term);
+    UNUSED(buffer);
+    UNUSED(size);
 #if defined(POSIX_TERM_IMPL)
     int rfd = term ? term->rfd : 0;
     int tmp = read(rfd, buffer, size);
     return (tmp > 0) ? tmp : 0;
 #elif defined(WIN32_TERM_IMPL)
     wchar_t w_buf[256] = {0};
-    DWORD w_chars = 0;
-    size_t count = EVAL_MIN(size / 6, STATIC_ARRAY_SIZE(w_buf));
+    DWORD   w_chars    = 0;
+    size_t  count      = EVAL_MIN(size / 6, STATIC_ARRAY_SIZE(w_buf));
     ReadConsoleW(GetStdHandle(STD_INPUT_HANDLE), w_buf, count, &w_chars, NULL);
     return WideCharToMultiByte(CP_UTF8, 0, w_buf, w_chars, buffer, size, NULL, NULL);
 #else
@@ -168,8 +169,9 @@ static void term_raw_mode(void)
     SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), 0x200);
     // ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING
     SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), 0x5);
-#else
-    setbuf(stdout, NULL);
+#elif defined(_IONBF)
+    // Disable stdio buffering
+    setvbuf(stdout, NULL, _IONBF, 0);
 #endif
 }
 
@@ -209,7 +211,7 @@ static uint32_t term_update_flags(chardev_term_t* term)
 // Handles VM-related hotkeys
 static void term_process_input(chardev_term_t* term, char* buffer, size_t size)
 {
-    for (size_t i=0; i<size; ++i) {
+    for (size_t i = 0; i < size; ++i) {
         if (term->ctrl_a) {
             if (buffer[i] == 'x') {
                 // Exit on Ctrl+A, x
@@ -227,9 +229,9 @@ static void term_process_input(chardev_term_t* term, char* buffer, size_t size)
 static void term_pull_rx(chardev_term_t* term)
 {
     if (term_ready_for_io(term, false)) {
-        char rx_buf[256] = {0};
-        size_t rx_size = EVAL_MIN(sizeof(rx_buf), ringbuf_space(&term->rx));
-        rx_size = term_read_raw(term, rx_buf, rx_size);
+        char   rx_buf[256] = {0};
+        size_t rx_size     = EVAL_MIN(sizeof(rx_buf), ringbuf_space(&term->rx));
+        rx_size            = term_read_raw(term, rx_buf, rx_size);
 
         term_process_input(term, rx_buf, rx_size);
         ringbuf_write(&term->rx, rx_buf, rx_size);
@@ -239,19 +241,19 @@ static void term_pull_rx(chardev_term_t* term)
 static void term_push_tx(chardev_term_t* term)
 {
     if (term_ready_for_io(term, true)) {
-        char tx_buf[256] = {0};
-        size_t tx_size = ringbuf_peek(&term->tx, tx_buf, sizeof(tx_buf));
-        tx_size = term_write_raw(term, tx_buf, tx_size);
+        char   tx_buf[256] = {0};
+        size_t tx_size     = ringbuf_peek(&term->tx, tx_buf, sizeof(tx_buf));
+        tx_size            = term_write_raw(term, tx_buf, tx_size);
         ringbuf_skip(&term->tx, tx_size);
     }
 }
 
 static void term_update(chardev_t* dev)
 {
-    chardev_term_t* term = dev->data;
-    uint32_t flags = 0;
+    chardev_term_t* term  = dev->data;
+    uint32_t        flags = 0;
 
-    scoped_spin_try_lock(&term->lock) {
+    scoped_spin_try_lock (&term->lock) {
         if (ringbuf_space(&term->rx)) {
             term_pull_rx(term);
         }
@@ -279,7 +281,7 @@ static size_t term_read(chardev_t* dev, void* buf, size_t nbytes)
     size_t ret = 0;
     if (term_poll(dev) & CHARDEV_RX) {
         chardev_term_t* term = dev->data;
-        scoped_spin_lock(&term->lock) {
+        scoped_spin_lock (&term->lock) {
             ret = ringbuf_read(&term->rx, buf, nbytes);
             if (!ringbuf_avail(&term->rx)) {
                 term_pull_rx(term);
@@ -292,9 +294,9 @@ static size_t term_read(chardev_t* dev, void* buf, size_t nbytes)
 
 static size_t term_write(chardev_t* dev, const void* buf, size_t nbytes)
 {
-    size_t ret = 0;
+    size_t          ret  = 0;
     chardev_term_t* term = dev->data;
-    scoped_spin_lock(&term->lock) {
+    scoped_spin_lock (&term->lock) {
         ret = ringbuf_write(&term->tx, buf, nbytes);
         if (!ringbuf_space(&term->tx)) {
             term_push_tx(term);
@@ -342,14 +344,14 @@ PUBLIC chardev_t* chardev_fd_create(int rfd, int wfd)
     chardev_term_t* term = safe_new_obj(chardev_term_t);
     ringbuf_create(&term->rx, 256);
     ringbuf_create(&term->tx, 256);
-    term->chardev.data = term;
-    term->chardev.read = term_read;
-    term->chardev.write = term_write;
-    term->chardev.poll = term_poll;
+    term->chardev.data   = term;
+    term->chardev.read   = term_read;
+    term->chardev.write  = term_write;
+    term->chardev.poll   = term_poll;
     term->chardev.update = term_update;
     term->chardev.remove = term_remove;
-    term->rfd = rfd;
-    term->wfd = wfd;
+    term->rfd            = rfd;
+    term->wfd            = wfd;
 
     return &term->chardev;
 }
