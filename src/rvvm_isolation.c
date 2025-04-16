@@ -7,52 +7,54 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-// Needed for pledge() and possibly other stuff
+// Needed for pledge()
 #define _GNU_SOURCE
 #define _BSD_SOURCE
 #define _DEFAULT_SOURCE
 
 #include "rvvm_isolation.h"
 #include "compiler.h"
-#include "utils.h"
 
 #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__) || defined(__SANITIZE_MEMORY)
-#define SANITIZERS_PRESENT
+// Do not isolate under sanitizers to prevent breakage
+#define SANITIZERS_PRESENT 1
 #endif
 
-#ifdef USE_ISOLATION
+#if defined(USE_ISOLATION) && (defined(__unix__) || defined(__APPLE__))
+#include <errno.h>  // For errno, ENOSYS, EINVAL, etc
+#include <pwd.h>    // For struct passwd, getpwnam_r()
+#include <string.h> // For strerror()
+#include <unistd.h> // For getuid(), setgid(), setuid(), chdir()
 
-#if defined(__linux__) || defined(__OpenBSD__) || defined(__FreeBSD__)
-#include <errno.h>
-#include <pwd.h>
-#include <stddef.h>
-#include <string.h>
-#include <unistd.h>
-#define ISOLATION_DROP_ROOT_IMPL
+#define ISOLATION_DROP_ROOT_IMPL 1
 #endif
 
-#if defined(__linux__) && CHECK_INCLUDE(sys/prctl.h, 1)
-#include <sys/prctl.h>
-#define ISOLATION_PRCTL_IMPL
+#if defined(USE_ISOLATION) && defined(__linux__) && CHECK_INCLUDE(sys/prctl.h, 1)
+#include <sys/prctl.h> // For prctl()
+
+#define ISOLATION_PRCTL_IMPL 1
 #endif
 
-#if defined(GNU_EXTS) && !defined(SANITIZERS_PRESENT) && defined(__linux__)                                            \
-    && CHECK_INCLUDE(linux/seccomp.h, 0) && CHECK_INCLUDE(sys/prctl.h, 0)
-#include <linux/bpf.h>
-#include <linux/filter.h>
-#include <linux/seccomp.h>
-#include <linux/unistd.h> // __NR_*
-#include <sys/mman.h>
-#include <sys/prctl.h>
-#define ISOLATION_SECCOMP_IMPL
+#if defined(USE_ISOLATION) && defined(GNU_EXTS) && !defined(SANITIZERS_PRESENT) && defined(__linux__)                  \
+    && defined(PR_SET_NO_NEW_PRIVS) && CHECK_INCLUDE(linux/seccomp.h, 0)
+#include <errno.h>         // For errno, ENOSYS, EINVAL, etc
+#include <linux/filter.h>  // For struct sock_filter, struct sock_fprog, BPF_STMT, etc
+#include <linux/seccomp.h> // For SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO, SECCOMP_RET_DATA, etc
+#include <linux/unistd.h>  // For syscall __NR_* definitions
+#include <string.h>        // For strerror()
+#include <sys/mman.h>      // For PROT_EXEC, PROT_WRITE
+
+#define ISOLATION_SECCOMP_IMPL 1
 #endif
 
-#if defined(__OpenBSD__)
-#include <unistd.h>
-#define ISOLATION_PLEDGE_IMPL
+#if defined(USE_ISOLATION) && defined(__OpenBSD__)
+#include <unistd.h> // For pledge()
+
+#define ISOLATION_PLEDGE_IMPL 1
 #endif
 
-#endif
+// Internal headers come after system headers because of safe_free()
+#include "utils.h"
 
 SOURCE_OPTIMIZATION_SIZE
 
@@ -103,7 +105,7 @@ static void drop_root_user_once(void)
             rvvm_info("Failed to get GID/UID of user nobody");
             return;
         }
-        if (setresgid(pwd.pw_gid, pwd.pw_gid, pwd.pw_gid) || setresuid(pwd.pw_uid, pwd.pw_uid, pwd.pw_uid)) {
+        if (setgid(pwd.pw_gid) || setuid(pwd.pw_uid) || getuid() == 0) {
             rvvm_fatal("Failed to drop root privileges!");
         }
         UNUSED(!chdir("/"));
@@ -446,10 +448,10 @@ static void seccomp_setup_syscall_filter(bool all_threads) {
         BPF_SECCOMP_ALLOW_SYSCALL(__NR_sched_setparam)
 #endif
 #ifdef __NR_sched_setscheduler
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_sched_setparam)
+        BPF_SECCOMP_ALLOW_SYSCALL(__NR_sched_setscheduler)
 #endif
 #ifdef __NR_sched_getscheduler
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_sched_setparam)
+        BPF_SECCOMP_ALLOW_SYSCALL(__NR_sched_getscheduler)
 #endif
 #ifdef __NR_sched_getparam
         BPF_SECCOMP_ALLOW_SYSCALL(__NR_sched_getparam)
