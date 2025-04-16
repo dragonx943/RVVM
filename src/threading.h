@@ -13,13 +13,14 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include <stdbool.h>
 #include <stdint.h>
 
+/*
+ * Threads
+ */
+
 typedef struct thread_ctx thread_ctx_t;
 
 typedef void* (*thread_func_t)(void*);
 
-/*
- * Threads
- */
 thread_ctx_t* thread_create_ex(thread_func_t func, void* arg, uint32_t stack_size);
 thread_ctx_t* thread_create(thread_func_t func, void* arg);
 bool          thread_join(thread_ctx_t* thread);
@@ -28,9 +29,12 @@ bool          thread_detach(thread_ctx_t* thread); // NOTE: Detaching is not saf
 /*
  * Futexes (Possibly emulated)
  *
- * Not guaranteed to work across process bounds.
+ * Work only within current process bounds.
  * Please prefer a conditional variable if you value precise timeout timing.
  */
+
+#define THREAD_FUTEX_INFINITE ((uint64_t)-1)
+
 bool thread_futex_wait(void* ptr, uint32_t val, uint64_t timeout_ns);
 void thread_futex_wake(void* ptr, uint32_t num);
 
