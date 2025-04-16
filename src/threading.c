@@ -475,7 +475,7 @@ cond_var_t* condvar_create(void)
 static inline bool condvar_try_consume_signal(cond_var_t* cond)
 {
     if (atomic_load_uint32_relax(&cond->flag)) {
-        atomic_store_uint32_relax(&cond->flag, 0);
+        atomic_store_uint32(&cond->flag, 0);
         return true;
     }
     return false;
@@ -602,9 +602,9 @@ bool condvar_wait(cond_var_t* cond, uint64_t timeout_ms)
     return condvar_wait_ns(cond, timeout_ns);
 }
 
-static inline void condvar_mark_signaled(cond_var_t* cond)
+static inline bool condvar_mark_signaled(cond_var_t* cond)
 {
-    atomic_store_uint32_relax(&cond->flag, 1);
+    return !atomic_swap_uint32(&cond->flag, 1);
 }
 
 static void condvar_wake_native(cond_var_t* cond, bool wake_all)
@@ -634,8 +634,7 @@ static void condvar_wake_native(cond_var_t* cond, bool wake_all)
 bool condvar_wake(cond_var_t* cond)
 {
     if (likely(cond)) {
-        condvar_mark_signaled(cond);
-        if (condvar_waiters(cond)) {
+        if (condvar_mark_signaled(cond) && condvar_waiters(cond)) {
             // Omit wakeup syscall if there are no waiters
             condvar_wake_native(cond, false);
             return true;
@@ -647,8 +646,7 @@ bool condvar_wake(cond_var_t* cond)
 bool condvar_wake_all(cond_var_t* cond)
 {
     if (likely(cond)) {
-        condvar_mark_signaled(cond);
-        if (condvar_waiters(cond)) {
+        if (condvar_mark_signaled(cond) && condvar_waiters(cond)) {
             condvar_wake_native(cond, true);
             return true;
         }
