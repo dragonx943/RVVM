@@ -49,6 +49,7 @@ static BOOL   (*__stdcall set_waitable_timer)(HANDLE, const LARGE_INTEGER*, LONG
 #if defined(__linux__) && CHECK_INCLUDE(linux/futex.h, 1) && CHECK_INCLUDE(sys/syscall.h, 1)
 #include <linux/futex.h> // For FUTEX_WAIT_PRIVATE, FUTEX_WAKE_PRIVATE
 #include <sys/syscall.h> // For __NR_futex
+#include <unistd.h>      // For syscall()
 #if !defined(__NR_futex) && defined(__NR_futex_time64)
 #define __NR_futex __NR_futex_time64
 #endif
