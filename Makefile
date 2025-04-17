@@ -483,14 +483,14 @@ override CC_VERSION_STRING := $(strip $(foreach word,$(CC_V_DUMP),$(call filter_
 ifneq (,$(CC_VERSION_STRING))
 # Successfuly determined compiler brand
 override CC_BRAND := $(firstword $(CC_VERSION_STRING))
-override CC_TMP := $(word 3,$(CC_VERSION_STRING))
-ifeq (,$(findstring .,$(CC_TMP)))
+override CC_VERSION := $(word 3,$(CC_VERSION_STRING))
+ifeq (,$(findstring .,$(CC_VERSION)))
 # Try to get full compiler version via $(cc -dumpfullversion -dumpversion)
 override CC_TMP := $(firstword $(shell $(CC) -dumpfullversion -dumpversion $(NULL_STDERR)))
-endif
 ifneq (,$(findstring .,$(CC_TMP)))
-# Successfuly determined compiler version
-CC_VERSION := $(CC_TMP)
+# Successfuly determined full compiler version
+override CC_VERSION := $(CC_TMP)
+endif
 endif
 endif
 
