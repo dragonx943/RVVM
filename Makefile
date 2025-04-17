@@ -263,6 +263,7 @@ USE_FPU ?= 1
 USE_RVV ?= 0
 
 # Infrastructure
+USE_LTO ?= 1
 USE_DEBUG ?= 0
 USE_DEBUG_FULL ?= 0
 USE_SPINLOCK_DEBUG ?= 1
@@ -472,26 +473,40 @@ endif
 # Detect compiler brand & features, set up optimization/warning options
 #
 
-override CC_INFO := $(shell $(CC) -v 2>&1)
-override CC_INFO_TMP := $(CC_INFO)
-override CC_FULL_VERSION := $(strip $(foreach cc_word,$(CC_INFO),$(if $(filter version,$(word 2,$(CC_INFO_TMP))),$(wordlist 1,3,$(CC_INFO_TMP)))\
-$(eval override CC_INFO_TMP := $(wordlist 2,$(words $(CC_INFO_TMP)),$(CC_INFO_TMP)))))
-ifneq (,$(CC_FULL_VERSION))
-override CC_BRAND := $(firstword $(CC_FULL_VERSION))
-override CC_VERSION := $(word 3,$(CC_FULL_VERSION))
-else
-override CC_BRAND := $(call tolower,$(CC_BRAND))
+# Search for "<cc_brand> version N[.x.y]" pattern in $(cc -v) dump
+override CC_V_DUMP := $(shell $(CC) -v 2>&1)
+override CC_TMP := $(CC_V_DUMP)
+override has_numbers = $(findstring 1,$1)$(findstring 2,$1)$(findstring 3,$1)$(findstring 4,$1)$(findstring 5,$1)$(findstring 6,$1)$(findstring 7,$1)$(findstring 8,$1)$(findstring 9,$1)
+override filter_ver_triplet = $(if $(filter version,$(word 2,$1)),$(if $(call has_numbers, $(word 3,$1)),$1))
+override CC_VERSION_STRING := $(strip $(foreach word,$(CC_V_DUMP),$(call filter_ver_triplet, $(CC_TMP))$(eval override CC_TMP := $(wordlist 2,$(words $(CC_TMP)),$(CC_TMP)))))
+
+ifneq (,$(CC_VERSION_STRING))
+# Successfuly determined compiler brand
+override CC_BRAND := $(firstword $(CC_VERSION_STRING))
+override CC_TMP := $(word 3,$(CC_VERSION_STRING))
+ifeq (,$(findstring .,$(CC_TMP)))
+# Try to get full compiler version via $(cc -dumpfullversion -dumpversion)
+override CC_TMP := $(firstword $(shell $(CC) -dumpfullversion -dumpversion $(NULL_STDERR)))
 endif
-ifeq (,$(findstring .,$(CC_VERSION)))
-override CC_VERSION := $(shell $(CC) -dumpfullversion -dumpversion $(NULL_STDERR))
+ifneq (,$(findstring .,$(CC_TMP)))
+# Successfuly determined compiler version
+CC_VERSION := $(CC_TMP)
 endif
+endif
+
 ifeq ($(ARCH),e2k)
-# It's not a real GCC, workaround issues by explicitly marking it as different compiler brand
+# LCC is not a real GCC, but lies about being one
+# Workaround build failures by explicitly marking it as different compiler brand
 override CC_BRAND := ПТН ПНХ
 endif
 ifeq (,$(CC_BRAND))
+# Failed to determine compiler brand
 override CC_BRAND := Unknown
 endif
+
+# Use $(CC_PRETTY) for printing compiler info, $(CC_BRAND) to match lowercase gcc/clang/tcc
+override CC_PRETTY := $(RED)$(CC_BRAND) $(CC_VERSION)
+override CC_BRAND  := $(call tolower,$(CC_BRAND))
 
 # Compiler version checks
 override CC_AT_LEAST_2_0 := $(filter-out 1.%,$(CC_VERSION))
@@ -502,6 +517,7 @@ override CC_AT_LEAST_6_0 := $(filter-out 5.%,$(CC_AT_LEAST_5_0))
 override CC_AT_LEAST_7_0 := $(filter-out 6.%,$(CC_AT_LEAST_6_0))
 
 # Check LTO support
+ifeq ($(USE_LTO),1)
 override LTO_CHECK_OUT := $(OBJDIR)/lto_lest$(BIN_EXT)
 override LTO_SUPPORTED := $(wildcard $(LTO_CHECK_OUT))
 ifeq (,$(LTO_SUPPORTED))
@@ -510,6 +526,7 @@ ifeq (,$(findstring lto,$(LTO_ERROR))$(findstring LTO,$(LTO_ERROR)))
 override LTO_SUPPORTED := 1
 else
 $(info $(INFO_PREFIX) LTO is not supported by this toolchain: $(wordlist 2,8,$(LTO_ERROR))$(RESET))
+endif
 endif
 endif
 
@@ -528,7 +545,7 @@ override WARN_OPTS := -Wall -Wextra
 endif
 
 # Set up optimization options based on the compiler brand
-ifneq (,$(findstring clang,$(CC_INFO))$(findstring LLVM,$(CC_INFO)))
+ifeq ($(CC_BRAND),clang)
 # LLVM Clang or derivatives (Zig CC, Emscripten)
 override CC_PRETTY := LLVM Clang $(CC_VERSION)
 
@@ -556,10 +573,6 @@ endif
 
 override CFLAGS := -O2 $(if $(LTO_SUPPORTED),-flto=auto) -frounding-math $(if $(CC_AT_LEAST_4_0),-fvisibility=hidden -fno-math-errno) $(if $(CC_AT_LEAST_6_0),-fno-plt) \
 $(WARN_OPTS) -Wno-missing-braces $(if $(CC_AT_LEAST_4_0),-Wno-missing-field-initializers) $(CFLAGS)
-
-else
-# Toy compiler (TCC, Chibicc, Cproc)
-override CC_PRETTY := $(RED)$(CC_BRAND) $(CC_VERSION)
 
 endif
 endif
