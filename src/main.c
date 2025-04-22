@@ -288,22 +288,33 @@ static int rvvm_cli_main(int argc, char** argv)
 int main(int argc, char** argv)
 {
 #if defined(_WIN32) && !defined(UNDER_CE)
-    // Use UTF-8 arguments
-    LPWSTR* argv_u16 = CommandLineToArgvW(GetCommandLineW(), &argc);
-    argv = safe_new_arr(char*, argc + 1);
-    for (int i=0; i<argc; ++i) {
-        size_t arg_len = WideCharToMultiByte(CP_UTF8, 0, argv_u16[i], -1, NULL, 0, NULL, NULL);
-        argv[i] = safe_new_arr(char, arg_len);
-        WideCharToMultiByte(CP_UTF8, 0, argv_u16[i], -1, argv[i], arg_len, NULL, NULL);
+    // Prefer UTF-8 arguments on Windows whenever GetCommandLineW() & CommandLineToArgvW() are available
+    LPWSTR  (*__stdcall get_command_line_w)(void)              = NULL;
+    LPWSTR* (*__stdcall command_line_to_argv_w)(LPCWSTR, int*) = NULL;
+    get_command_line_w     = (void*)GetProcAddress(LoadLibraryW(L"kernel32.dll"), "GetCommandLineW");
+    command_line_to_argv_w = (void*)GetProcAddress(LoadLibraryW(L"shell32.dll"), "CommandLineToArgvW");
+    if (get_command_line_w && command_line_to_argv_w) {
+        LPWSTR cmdline_w = get_command_line_w();
+        if (cmdline_w) {
+            int     argc_u8  = 0;
+            LPWSTR* argv_u16 = command_line_to_argv_w(cmdline_w, &argc_u8);
+            if (argv_u16 && argc_u8) {
+                char** argv_u8 = safe_new_arr(char*, argc_u8 + 1);
+                for (int i = 0; i < argc_u8; ++i) {
+                    size_t arg_len = WideCharToMultiByte(CP_UTF8, 0, argv_u16[i], -1, NULL, 0, NULL, NULL);
+                    argv_u8[i]     = safe_new_arr(char, arg_len);
+                    WideCharToMultiByte(CP_UTF8, 0, argv_u16[i], -1, argv_u8[i], arg_len, NULL, NULL);
+                }
+                LocalFree(argv_u16);
+                int ret = rvvm_cli_main(argc_u8, argv_u8);
+                for (int i = 0; i < argc_u8; ++i) {
+                    free(argv_u8[i]);
+                }
+                free(argv_u8);
+                return ret;
+            }
+        }
     }
-    LocalFree(argv_u16);
-    int ret = rvvm_cli_main(argc, argv);
-    for (int i=0; i<argc; ++i) {
-        free(argv[i]);
-    }
-    free(argv);
-    return ret;
-#else
-    return rvvm_cli_main(argc, argv);
 #endif
+    return rvvm_cli_main(argc, argv);
 }
