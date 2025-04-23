@@ -156,12 +156,13 @@ thread_ctx_t* thread_create_ex(thread_func_t func, void* arg, uint32_t stack_siz
 {
     thread_ctx_t* thread = safe_new_obj(thread_ctx_t);
 #if defined(_WIN32)
+    DWORD threadid = 0;
     thread_call_wrap_t* wrap = safe_new_obj(thread_call_wrap_t);
     wrap->func               = func;
     wrap->arg                = arg;
 
     thread->handle = CreateThread(NULL, stack_size, thread_call_wrapper, wrap, /**/
-                                  STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
+                                  STACK_SIZE_PARAM_IS_A_RESERVATION, &threadid);
     if (thread->handle) {
         return thread;
     }
@@ -442,7 +443,12 @@ bool condvar_init_internal(cond_var_t* cond)
         cond->timer = create_waitable_timer_ex_w(NULL, NULL, 0x3, 0x1F0003);
     }
 #endif
+#if !defined(HOST_64BIT) && !defined(UNDER_CE)
+    // Use ANSI syscall (Win9x compat)
+    cond->event = CreateEventA(NULL, FALSE, FALSE, NULL);
+#else
     cond->event = CreateEventW(NULL, FALSE, FALSE, NULL);
+#endif
     return !!cond->event;
 
 #elif defined(PTHREAD_COND_CLOCK_MONOTONIC)
