@@ -29,7 +29,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #elif defined(_WIN32) && !defined(UNDER_CE)
 #include <conio.h>   // For _kbhit()
-#include <windows.h> // For ReadConsoleW(), WideCharToMultiByte(), WriteConsoleA(), SetConsoleMode(), etc
+#include <windows.h> // For GetStdHandle(), ReadFile(), WriteFile(), SetConsoleMode(), etc
 
 #define WIN32_TERM_IMPL 1
 
@@ -84,7 +84,7 @@ static bool term_ready_for_io(chardev_term_t* term, bool write)
     FD_SET(fd, &fds);
     return select(fd + 1, write ? NULL : &fds, write ? &fds : NULL, NULL, &timeout) > 0 && FD_ISSET(fd, &fds);
 #elif defined(WIN32_TERM_IMPL)
-    return write ? true : _kbhit();
+    return write || _kbhit();
 #else
     return write;
 #endif
@@ -98,8 +98,11 @@ static size_t term_write_raw(chardev_term_t* term, const char* buffer, size_t si
     int tmp = write(wfd, buffer, size);
     return (tmp > 0) ? tmp : 0;
 #elif defined(WIN32_TERM_IMPL)
-    DWORD count = 0;
-    WriteConsoleA(GetStdHandle(STD_OUTPUT_HANDLE), buffer, size, &count, NULL);
+    HANDLE console = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD  count   = size;
+    if (!WriteFile(console, buffer, size, &count, NULL)) {
+        return 0;
+    }
     return count;
 #else
     char   tmp[256] = {0};
@@ -120,11 +123,12 @@ static size_t term_read_raw(chardev_term_t* term, char* buffer, size_t size)
     int tmp = read(rfd, buffer, size);
     return (tmp > 0) ? tmp : 0;
 #elif defined(WIN32_TERM_IMPL)
-    wchar_t w_buf[256] = {0};
-    DWORD   w_chars    = 0;
-    size_t  count      = EVAL_MIN(size / 6, STATIC_ARRAY_SIZE(w_buf));
-    ReadConsoleW(GetStdHandle(STD_INPUT_HANDLE), w_buf, count, &w_chars, NULL);
-    return WideCharToMultiByte(CP_UTF8, 0, w_buf, w_chars, buffer, size, NULL, NULL);
+    HANDLE console = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD  count   = size;
+    if (!ReadFile(console, buffer, size, &count, NULL)) {
+        return 0;
+    }
+    return count;
 #else
     // No way to implement non-blocking input using stdio
     return 0;
@@ -159,6 +163,7 @@ static void term_raw_mode(void)
     tcsetattr(0, TCSANOW, &term_opts);
 #elif defined(WIN32_TERM_IMPL)
     SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
     GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &orig_input_mode);
     GetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), &orig_output_mode);
 
