@@ -17,7 +17,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define SPINLOCK_USER_RETRIES 40
 
 // Maximum allowed bounded locking time, reports a deadlock upon expiration
-#define SPINLOCK_DEADLOCK_MS  10000
+#define SPINLOCK_DEADLOCK_NS  10000000000ULL
 
 #define SPINLOCK_QUIESCENT    0x00000000U // No one holds the lock
 #define SPINLOCK_HAS_WRITER   0x00000001U // Writer holds the lock
@@ -121,7 +121,7 @@ static bool spin_lock_try_wait_user(spinlock_t* lock, const char* location, bool
     return false;
 }
 
-slow_path static void spin_lock_wait_internal(spinlock_t* lock, const char* location, bool writer)
+slow_path static void spin_lock_wait_internal(spinlock_t* lock, const char* location, bool slow, bool writer)
 {
     rvtimer_t deadlock_timer = {0};
     bool      reset_timer    = true;
@@ -144,39 +144,48 @@ slow_path static void spin_lock_wait_internal(spinlock_t* lock, const char* loca
         } else {
             if (reset_timer) {
                 reset_timer = false;
-                rvtimer_init(&deadlock_timer, 1000);
+                rvtimer_init(&deadlock_timer, 1000000000ULL);
             }
 
             // Indicate that we're waiting on this lock
-            if (!spin_flag_has_waiters(flag) && atomic_cas_uint32(&lock->flag, flag, flag | SPINLOCK_HAS_WAITERS)) {
-                flag |= SPINLOCK_HAS_WAITERS;
+            if (!spin_flag_has_waiters(flag)) {
+                if (atomic_cas_uint32(&lock->flag, flag, flag | SPINLOCK_HAS_WAITERS)) {
+                    flag |= SPINLOCK_HAS_WAITERS;
+                }
             }
 
+            // Wait on a futex if we succesfully marked ourselves as a waiter
             if (spin_flag_has_waiters(flag)) {
-                // Wait on a futex if we succesfully marked ourselves as a waiter
-                if (thread_futex_wait(&lock->flag, flag, SPINLOCK_DEADLOCK_MS * 1000000ULL)) {
+                if (thread_futex_wait(&lock->flag, flag, SPINLOCK_DEADLOCK_NS)) {
                     // Reset deadlock timer upon noticing any forward progress
                     reset_timer = true;
                 }
             }
 
-            if (location && rvtimer_get(&deadlock_timer) >= SPINLOCK_DEADLOCK_MS) {
-                rvvm_warn("Possible %sdeadlock at %s", writer ? "" : "reader ", location);
-                spin_lock_debug_report(lock, false);
+            if (rvtimer_get(&deadlock_timer) >= SPINLOCK_DEADLOCK_NS) {
                 reset_timer = true;
+                if (!location) {
+                    location = "[unknown]";
+                }
+                if (slow) {
+                    rvvm_debug("Laggy %slocking at %s", writer ? "" : "reader ", location);
+                } else {
+                    rvvm_warn("Possible %sdeadlock at %s", writer ? "" : "reader ", location);
+                    spin_lock_debug_report(lock, false);
+                }
             }
         }
     }
 }
 
-slow_path void spin_lock_wait(spinlock_t* lock, const char* location)
+slow_path void spin_lock_wait(spinlock_t* lock, const char* location, bool slow)
 {
-    spin_lock_wait_internal(lock, location, true);
+    spin_lock_wait_internal(lock, location, slow, true);
 }
 
-slow_path void spin_read_lock_wait(spinlock_t* lock, const char* location)
+slow_path void spin_read_lock_wait(spinlock_t* lock, const char* location, bool slow)
 {
-    spin_lock_wait_internal(lock, location, false);
+    spin_lock_wait_internal(lock, location, slow, false);
 }
 
 slow_path void spin_lock_wake(spinlock_t* lock, uint32_t prev)

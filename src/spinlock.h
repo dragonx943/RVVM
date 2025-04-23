@@ -33,10 +33,10 @@ typedef struct {
 } spinlock_t;
 
 // Slow path for kernel wait / wake on contended lock, and lock misuse detection
-slow_path void spin_lock_wait(spinlock_t* lock, const char* location);
+slow_path void spin_lock_wait(spinlock_t* lock, const char* location, bool slow);
 slow_path void spin_lock_wake(spinlock_t* lock, uint32_t prev);
 
-slow_path void spin_read_lock_wait(spinlock_t* lock, const char* location);
+slow_path void spin_read_lock_wait(spinlock_t* lock, const char* location, bool slow);
 slow_path void spin_read_lock_wake(spinlock_t* lock, uint32_t prev);
 
 // Initialize a lock
@@ -79,22 +79,13 @@ static forceinline bool spin_try_lock_internal(spinlock_t* lock, const char* loc
     return false;
 }
 
-static forceinline void spin_lock_internal(spinlock_t* lock, const char* location)
+static forceinline void spin_lock_internal(spinlock_t* lock, const char* location, bool slow)
 {
-    // Use weak CAS in fast path
+    // Use weaker CAS in fast path
     if (likely(atomic_cas_uint32_ex(&lock->flag, 0x0, 0x1, true, ATOMIC_ACQUIRE, ATOMIC_RELAXED))) {
         SPINLOCK_MARK_LOCATION(lock, location);
     } else {
-        spin_lock_wait(lock, location);
-    }
-}
-
-static forceinline void spin_lock_slow_internal(spinlock_t* lock, const char* location)
-{
-    if (likely(atomic_cas_uint32_ex(&lock->flag, 0x0, 0x1, true, ATOMIC_ACQUIRE, ATOMIC_RELAXED))) {
-        SPINLOCK_MARK_LOCATION(lock, location);
-    } else {
-        spin_lock_wait(lock, NULL);
+        spin_lock_wait(lock, location, slow);
     }
 }
 
@@ -103,10 +94,10 @@ static forceinline void spin_lock_slow_internal(spinlock_t* lock, const char* lo
 
 // Perform writer locking on small, bounded critical section
 // Reports a deadlock upon waiting for too long
-#define spin_lock(lock)      spin_lock_internal(lock, SPINLOCK_DEBUG_LOCATION)
+#define spin_lock(lock)      spin_lock_internal(lock, SPINLOCK_DEBUG_LOCATION, false)
 
 // Perform writer locking around heavy operation, wait indefinitely
-#define spin_lock_slow(lock) spin_lock_slow_internal(lock, SPINLOCK_DEBUG_LOCATION)
+#define spin_lock_slow(lock) spin_lock_internal(lock, SPINLOCK_DEBUG_LOCATION, true)
 
 // Release the writer lock
 static forceinline void spin_unlock(spinlock_t* lock)
@@ -136,19 +127,19 @@ static forceinline bool spin_try_read_lock(spinlock_t* lock)
     return true;
 }
 
-static forceinline void spin_read_lock_internal(spinlock_t* lock, const char* location)
+static forceinline void spin_read_lock_internal(spinlock_t* lock, const char* location, bool slow)
 {
     if (unlikely(!spin_try_read_lock(lock))) {
-        spin_read_lock_wait(lock, location);
+        spin_read_lock_wait(lock, location, slow);
     }
 }
 
 // Perform reader locking on small, bounded critical section
 // Reports a deadlock upon waiting for too long
-#define spin_read_lock(lock)      spin_read_lock_internal(lock, SPINLOCK_DEBUG_LOCATION)
+#define spin_read_lock(lock)      spin_read_lock_internal(lock, SPINLOCK_DEBUG_LOCATION, false)
 
 // Perform reader locking around heavy operation, wait indefinitely
-#define spin_read_lock_slow(lock) spin_read_lock_internal(lock, NULL)
+#define spin_read_lock_slow(lock) spin_read_lock_internal(lock, SPINLOCK_DEBUG_LOCATION, true)
 
 // Release the reader lock
 static forceinline void spin_read_unlock(spinlock_t* lock)
