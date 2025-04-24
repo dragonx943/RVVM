@@ -36,8 +36,6 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include <sys/param.h> // For __NetBSD_Version__
 #endif
 
-#define POSIX_FILE_IMPL 1
-
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
 #endif
@@ -79,15 +77,14 @@ static bool try_lock_fd(int fd)
     return !fcntl(fd, F_SETLK, &flk) || (errno != EACCES && errno != EAGAIN);
 }
 
-#elif !defined(USE_STDIO) && defined(_WIN32) && !defined(UNDER_CE)
+#define POSIX_FILE_IMPL 1
+
+#elif !defined(USE_STDIO) && defined(_WIN32)
 // Threaded Win32 file implementation using OVERLAPPED ReadFile() / WriteFile()
 // Synchronizes rvtruncate()/rvfallocate() under a writer lock
-// TODO: Debug why this doesn't work on WinCE?
 #include <windows.h>
 
 #include "spinlock.h"
-
-#define WIN32_FILE_IMPL        1
 
 // Prototypes for older winapi headers
 #define DEVIOCTL_SET_SPARSE    0x000900c4
@@ -97,6 +94,8 @@ typedef struct {
     LARGE_INTEGER FileOffset;
     LARGE_INTEGER BeyondFinalZero;
 } SET_ZERO_DATA_INFO;
+
+#define WIN32_FILE_IMPL 1
 
 #else
 // Standard C stdio file implementation using a lock around fseek()+fread() / fseek()+fwrite()
@@ -150,6 +149,50 @@ static inline void rvfile_grow_internal(rvfile_t* file, uint64_t length)
         }
     } while (!atomic_cas_uint64(&file->size, file_size, length));
 }
+
+#if defined(WIN32_FILE_IMPL) && (defined(UNDER_CE) || !defined(HOST_64BIT))
+
+static spinlock_t rvfile_win32_fallback_lock = ZERO_INIT;
+
+// Fallback to global-locked seeking file IO under Windows CE / Windows 9x
+static uint32_t rvfile_win32_fallback(rvfile_t* file, void* dst, const void* src, size_t size, uint64_t offset)
+{
+    // Ancient Windows versions do not fill lpNumberOfBytes properly
+    DWORD count = size;
+    LONG  off_l = (uint32_t)offset;
+    LONG  off_h = offset >> 32;
+    scoped_spin_lock_slow (&rvfile_win32_fallback_lock) {
+        // Seek under exclusive lock
+        DWORD ret_l = SetFilePointer(file->handle, off_l, &off_h, FILE_BEGIN);
+        if ((((uint32_t)ret_l) != ((uint32_t)off_l)) || (((int32_t)ret_l) == -1 && GetLastError())) {
+            count = 0;
+        }
+        // Perform needed IO, return 0 on IO error
+        if (count && dst && !ReadFile(file->handle, dst, count, &count, NULL)) {
+            count = 0;
+        } else if (count && src && !WriteFile(file->handle, src, count, &count, NULL)) {
+            count = 0;
+        }
+    }
+    return count;
+}
+
+static bool is_windows_nt(void)
+{
+    bool is_winnt = false;
+#if !defined(UNDER_CE)
+    DO_ONCE_SCOPED {
+        uint32_t ver = GetVersion();
+        is_winnt = !(ver & 0x80000000U);
+        if (!is_winnt) {
+            rvvm_warn("This is Windows 9x");
+        }
+    }
+#endif
+    return is_winnt;
+}
+
+#endif
 
 rvfile_t* rvopen(const char* filepath, uint8_t filemode)
 {
@@ -251,6 +294,13 @@ rvfile_t* rvopen(const char* filepath, uint8_t filemode)
     HANDLE handle = CreateFileW(u16_path, access, share, NULL, disp, attr, NULL);
     free(u16_path);
 
+#if !defined(HOST_64BIT) && !defined(UNDER_CE)
+    if ((handle == NULL || handle == INVALID_HANDLE_VALUE) && !is_windows_nt()) {
+        // Try to open file via ANSI syscall (Win9x compat)
+        handle = CreateFileA(filepath, access, share, NULL, disp, attr, NULL);
+    }
+#endif
+
     if (handle == NULL || handle == INVALID_HANDLE_VALUE) {
         if (GetLastError() == ERROR_SHARING_VIOLATION) {
             rvvm_error("File %s is busy", filepath);
@@ -259,9 +309,9 @@ rvfile_t* rvopen(const char* filepath, uint8_t filemode)
     }
 
     // Get file size
-    LONG sizeh = 0;
-    LONG sizel = SetFilePointer(handle, 0, &sizeh, FILE_END);
-    if (((int32_t)sizel) == -1 && GetLastError()) {
+    LONG size_h = 0;
+    LONG size_l = SetFilePointer(handle, 0, &size_h, FILE_END);
+    if (((int32_t)size_l) == -1 && GetLastError()) {
         // Failed to get file size
         CloseHandle(handle);
         return NULL;
@@ -272,7 +322,7 @@ rvfile_t* rvopen(const char* filepath, uint8_t filemode)
     DeviceIoControl(handle, DEVIOCTL_SET_SPARSE, NULL, 0, NULL, 0, &tmp, NULL);
 
     rvfile_t* file = safe_new_obj(rvfile_t);
-    file->size     = ((uint32_t)sizel) | (((uint64_t)(uint32_t)sizeh) << 32);
+    file->size     = ((uint32_t)size_l) | (((uint64_t)(uint32_t)size_h) << 32);
     file->handle   = handle;
 
 #else
@@ -373,14 +423,19 @@ static int32_t rvread_chunk(rvfile_t* file, void* dst, size_t size, uint64_t off
         return 0;
     }
 #elif defined(WIN32_FILE_IMPL)
-    // Old Windows (WinNT4, Win98, etc) do not fill lpNumberOfBytesRead properly
+    // Ancient Windows versions do not fill lpNumberOfBytes properly
     DWORD      ret        = size;
     OVERLAPPED overlapped = {
         .Offset     = (uint32_t)offset,
         .OffsetHigh = offset >> 32,
     };
+#if defined(UNDER_CE) || !defined(HOST_64BIT)
+    if (!is_windows_nt()) {
+        // Fallback to global-locked seek+read for WinCE/Win9x
+        return rvfile_win32_fallback(file, dst, NULL, size, offset);
+    }
+#endif
     if (!ReadFile(file->handle, dst, size, &ret, &overlapped)) {
-        // IO error
         return 0;
     }
 #else
@@ -429,8 +484,7 @@ size_t rvread(rvfile_t* file, void* dst, size_t size, uint64_t offset)
 #if defined(POSIX_FILE_IMPL)
     ret = rvread_unlocked(file, dst, size, pos);
 #elif defined(WIN32_FILE_IMPL)
-    scoped_spin_read_lock_slow(&file->lock)
-    {
+    scoped_spin_read_lock_slow (&file->lock) {
         ret = rvread_unlocked(file, dst, size, pos);
     }
 #else
@@ -456,14 +510,19 @@ static int32_t rvwrite_chunk(rvfile_t* file, const void* src, size_t size, uint6
         return 0;
     }
 #elif defined(WIN32_FILE_IMPL)
-    // Old Windows (WinNT4, Win98, etc) do not fill lpNumberOfBytesWritten properly
+    // Ancient Windows versions do not fill lpNumberOfBytes properly
     DWORD      ret        = size;
     OVERLAPPED overlapped = {
         .Offset     = (uint32_t)offset,
         .OffsetHigh = offset >> 32,
     };
+#if defined(UNDER_CE) || !defined(HOST_64BIT)
+    if (!is_windows_nt()) {
+        // Fallback to global-locked seek+write for WinCE/Win9x
+        return rvfile_win32_fallback(file, NULL, src, size, offset);
+    }
+#endif
     if (!WriteFile(file->handle, src, size, &ret, &overlapped)) {
-        // IO error
         return 0;
     }
 #else
@@ -510,8 +569,7 @@ size_t rvwrite(rvfile_t* file, const void* src, size_t size, uint64_t offset)
 #if defined(POSIX_FILE_IMPL)
     ret = rvwrite_unlocked(file, src, size, offset);
 #elif defined(WIN32_FILE_IMPL)
-    scoped_spin_read_lock_slow(&file->lock)
-    {
+    scoped_spin_read_lock_slow (&file->lock) {
         ret = rvwrite_unlocked(file, src, size, offset);
     }
 #else
@@ -587,27 +645,37 @@ uint64_t rvtell(rvfile_t* file)
 
 bool rvfsync(rvfile_t* file)
 {
-    bool ret = false;
+    bool ret = true;
     if (file) {
 #if defined(POSIX_FILE_IMPL) && defined(__linux__)
-        ret = !fdatasync(file->fd);
+        while (fdatasync(file->fd)) {
+            if (errno != EINTR) {
+                ret = false;
+            }
+        }
 #elif defined(POSIX_FILE_IMPL) && defined(__APPLE__) && defined(F_BARRIERFSYNC)
-        ret = !fcntl(file->fd, F_BARRIERFSYNC);
+        while (fcntl(file->fd, F_BARRIERFSYNC)) {
+            if (errno != EINTR) {
+                ret = false;
+            }
+        }
 #elif defined(POSIX_FILE_IMPL)
-        ret = !fsync(file->fd);
+        while (fsync(file->fd)) {
+            if (errno != EINTR) {
+                ret = false;
+            }
+        }
 #elif defined(WIN32_FILE_IMPL)
         scoped_spin_lock_slow (&file->lock) {
             // Synchronize any previously issued IO
         }
-        ret = !!FlushFileBuffers(file->handle);
+        // Trying to flush a read-only file results in ERROR_ACCESS_DENIED, ignore
+        ret = FlushFileBuffers(file->handle) || (GetLastError() == ERROR_ACCESS_DENIED);
 #else
         scoped_spin_lock_slow (&file->lock) {
             ret = !fflush(file->fp);
         }
 #endif
-        if (!ret) {
-            DO_ONCE(rvvm_warn("rvfsync() failed! Check your storage/filesystem..."));
-        }
     }
     return ret;
 }
@@ -716,10 +784,10 @@ int rvfile_get_posix_fd(rvfile_t* file)
 void* rvfile_get_win32_handle(rvfile_t* file)
 {
 #if defined(WIN32_FILE_IMPL)
-    return file->handle;
-#elif defined(_WIN32) && defined(UNDER_CE)
+    return (void*)file->handle;
+#elif !defined(POSIX_FILE_IMPL) && defined(_WIN32) && defined(UNDER_CE)
     return (void*)_fileno(file->fp);
-#elif defined(_WIN32) && !defined(UNDER_CE)
+#elif !defined(POSIX_FILE_IMPL) && defined(_WIN32) && !defined(UNDER_CE)
     return (void*)_get_osfhandle(_fileno(file->fp));
 #else
     UNUSED(file);
