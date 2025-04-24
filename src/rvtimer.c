@@ -166,15 +166,27 @@ uint64_t rvtimer_clocksource(uint64_t freq)
 
 #else
 
-// Use time() with no sub-second precision
+// Use wall clock with no sub-second precision
 #warning No OS support for precise clocksource!
 
 uint64_t rvtimer_clocksource(uint64_t freq)
 {
-    return time(0) * freq;
+    return rvtimer_unixtime() * freq;
 }
 
 #endif
+
+uint64_t rvtimer_unixtime(void)
+{
+#if defined(_WIN32)
+    FILETIME ft = {0};
+    GetSystemTimeAsFileTime(&ft);
+    uint64_t wintime = ((uint64_t)(uint32_t)ft.dwLowDateTime) | ((uint64_t)(uint32_t)ft.dwHighDateTime);
+    return (wintime / 10000000ULL) + 11644473600ULL;
+#else
+    return time(NULL);
+#endif
+}
 
 void rvtimer_init(rvtimer_t* timer, uint64_t freq)
 {

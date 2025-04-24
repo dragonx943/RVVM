@@ -12,6 +12,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #include "compiler.h"
 #include "rvvm_types.h"
+#include <stdint.h>
 
 typedef struct {
     // Those fields are internal use only
@@ -38,8 +39,11 @@ static inline uint64_t rvtimer_convert_freq(uint64_t clk, uint64_t src_freq, uin
     return (clk / src_freq * dst_freq) + (freq_rem * dst_freq / src_freq);
 }
 
-// Get global clocksource with the specified frequency
+// Get monotonic clocksource with the specified frequency
 uint64_t rvtimer_clocksource(uint64_t freq);
+
+// Get UNIX timestamp (Seconds since 1 Jan 1970)
+uint64_t rvtimer_unixtime(void);
 
 /*
  * Timer
