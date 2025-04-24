@@ -8,10 +8,11 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
 #include "rtc-ds1742.h"
-#include "mem_ops.h"
-#include "utils.h"
 #include "fdtlib.h"
-#include <time.h>
+#include "mem_ops.h"
+#include "rvtimer.h"
+#include "spinlock.h"
+#include "utils.h"
 
 SOURCE_OPTIMIZATION_SIZE
 
@@ -24,15 +25,16 @@ SOURCE_OPTIMIZATION_SIZE
 #define DS1742_REG_MONTH    0x6 // Month [1, 12]
 #define DS1742_REG_YEAR     0x7 // Year [0, 99]
 
-#define DS1742_MMIO_SIZE 0x8
+#define DS1742_MMIO_SIZE    0x8
 
-#define DS1742_DAY_BATT 0x80 // Battery OK
-#define DS1742_CTL_READ 0x40 // Lock registers for read
-#define DS1742_CTL_MASK 0xC0 // Mask of control registers
+#define DS1742_DAY_BATT     0x80 // Battery OK
+#define DS1742_CTL_READ     0x40 // Lock registers for read
+#define DS1742_CTL_MASK     0xC0 // Mask of control registers
 
 typedef struct {
-    uint8_t ctl;
-    uint8_t regs[DS1742_MMIO_SIZE];
+    spinlock_t lock;
+    uint8_t    ctl;
+    uint8_t    regs[DS1742_MMIO_SIZE];
 } ds1742_dev_t;
 
 static inline uint8_t bcd_conv_u8(uint8_t val)
@@ -40,28 +42,58 @@ static inline uint8_t bcd_conv_u8(uint8_t val)
     return (val % 10) | ((val / 10) << 4);
 }
 
+static inline uint64_t div_time_units(uint64_t* units, uint32_t div)
+{
+    uint64_t rem = *units % div;
+    *units       = *units / div;
+    return rem;
+}
+
 void rtc_ds1742_update_regs(ds1742_dev_t* rtc)
 {
-    time_t unix_time = time(NULL);
-    struct tm* calendar = gmtime(&unix_time);
-    rtc->regs[DS1742_REG_CTL_CENT] = bcd_conv_u8(calendar->tm_year / 100 + 19);
-    rtc->regs[DS1742_REG_SECONDS] = bcd_conv_u8(EVAL_MIN(calendar->tm_sec, 59));
-    rtc->regs[DS1742_REG_MINUTES] = bcd_conv_u8(calendar->tm_min);
-    rtc->regs[DS1742_REG_HOURS] = bcd_conv_u8(calendar->tm_hour);
-    rtc->regs[DS1742_REG_DATE] = bcd_conv_u8(calendar->tm_mday);
-    rtc->regs[DS1742_REG_DAY] = bcd_conv_u8(calendar->tm_wday + 1);
-    rtc->regs[DS1742_REG_MONTH] = bcd_conv_u8(calendar->tm_mon + 1);
-    rtc->regs[DS1742_REG_YEAR] = bcd_conv_u8(calendar->tm_year % 100);
+    uint64_t tmp  = rvtimer_unixtime();
+    uint32_t sec  = div_time_units(&tmp, 60);                      // Seconds [0, 59]
+    uint32_t min  = div_time_units(&tmp, 60);                      // Minutes [0, 59]
+    uint32_t hour = div_time_units(&tmp, 24);                      // Hours [0, 59]
+    uint64_t days = tmp + 719468;                                  // Days since 01.03.0000
+    uint32_t wday = (days + 3) % 7;                                // Day of week [0, 6]
+    uint64_t era  = days / 146097;                                 // Era
+    uint32_t doe  = days - (era * 146097);                         // Day of era [0, 146096]
+    uint32_t yoe  = (doe - doe / 1460) / 365;                      // Year of era [0, 399]
+    uint64_t year = yoe + (era * 400);                             // Year
+    uint32_t doy  = doe - ((365 * yoe) + (yoe / 4) - (yoe / 100)); // Day of year [0, 365]
+    uint32_t mmf  = ((5 * doy) + 2) / 153;                         // Month [0, 11] [Mar, Feb]
+    uint32_t mday = doy - (((153 * mmf) + 2) / 5) + 1;             // Day of month [1, 31]
+    unsigned mon  = mmf + (mmf < 10 ? 3 : -9);                     // Month [1, 12] [Jan, Dec]
+
+    rtc->regs[DS1742_REG_CTL_CENT] = bcd_conv_u8(year / 100);
+    rtc->regs[DS1742_REG_SECONDS]  = bcd_conv_u8(sec);
+    rtc->regs[DS1742_REG_MINUTES]  = bcd_conv_u8(min);
+    rtc->regs[DS1742_REG_HOURS]    = bcd_conv_u8(hour);
+    rtc->regs[DS1742_REG_DATE]     = bcd_conv_u8(mday);
+    rtc->regs[DS1742_REG_DAY]      = bcd_conv_u8(wday);
+    rtc->regs[DS1742_REG_MONTH]    = bcd_conv_u8(mon);
+    rtc->regs[DS1742_REG_YEAR]     = bcd_conv_u8(year % 100);
 }
 
 static bool rtc_ds1742_mmio_read(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint8_t size)
 {
     ds1742_dev_t* rtc = dev->data;
-    uint8_t reg = rtc->regs[offset];
     UNUSED(size);
-    if (offset == DS1742_REG_CTL_CENT) reg |= rtc->ctl;
-    if (offset == DS1742_REG_DAY) reg |= DS1742_DAY_BATT;
-    write_uint8(data, reg);
+
+    scoped_spin_lock (&rtc->lock) {
+        uint8_t reg = rtc->regs[offset];
+        switch (offset) {
+            case DS1742_REG_CTL_CENT:
+                reg |= rtc->ctl;
+                break;
+            case DS1742_REG_DAY:
+                reg |= DS1742_DAY_BATT;
+                break;
+        }
+        write_uint8(data, reg);
+    }
+
     return true;
 }
 
@@ -69,11 +101,17 @@ static bool rtc_ds1742_mmio_write(rvvm_mmio_dev_t* dev, void* data, size_t offse
 {
     ds1742_dev_t* rtc = dev->data;
     UNUSED(size);
+
     if (offset == DS1742_REG_CTL_CENT) {
         uint8_t ctl = read_uint8(data) & DS1742_CTL_MASK;
-        if (!(rtc->ctl & DS1742_CTL_READ) && (ctl & DS1742_CTL_READ)) rtc_ds1742_update_regs(rtc);
-        rtc->ctl = ctl;
+        scoped_spin_lock (&rtc->lock) {
+            if (!(rtc->ctl & DS1742_CTL_READ) && (ctl & DS1742_CTL_READ)) {
+                rtc_ds1742_update_regs(rtc);
+            }
+            rtc->ctl = ctl;
+        }
     }
+
     return true;
 }
 
@@ -83,20 +121,22 @@ static rvvm_mmio_type_t rtc_ds1742_dev_type = {
 
 PUBLIC rvvm_mmio_dev_t* rtc_ds1742_init(rvvm_machine_t* machine, rvvm_addr_t base_addr)
 {
-    ds1742_dev_t* rtc = safe_new_obj(ds1742_dev_t);
+    ds1742_dev_t*   rtc        = safe_new_obj(ds1742_dev_t);
     rvvm_mmio_dev_t rtc_ds1742 = {
-        .addr = base_addr,
-        .size = DS1742_MMIO_SIZE,
-        .data = rtc,
-        .read = rtc_ds1742_mmio_read,
-        .write = rtc_ds1742_mmio_write,
-        .type = &rtc_ds1742_dev_type,
+        .addr        = base_addr,
+        .size        = DS1742_MMIO_SIZE,
+        .data        = rtc,
+        .type        = &rtc_ds1742_dev_type,
+        .read        = rtc_ds1742_mmio_read,
+        .write       = rtc_ds1742_mmio_write,
         .min_op_size = 1,
         .max_op_size = 1,
     };
     rtc_ds1742_update_regs(rtc);
     rvvm_mmio_dev_t* mmio = rvvm_attach_mmio(machine, &rtc_ds1742);
-    if (mmio == NULL) return mmio;
+    if (mmio == NULL) {
+        return mmio;
+    }
 #ifdef USE_FDT
     struct fdt_node* rtc_fdt = fdt_node_create_reg("rtc", base_addr);
     fdt_node_add_prop_reg(rtc_fdt, "reg", base_addr, DS1742_MMIO_SIZE);
