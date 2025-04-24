@@ -10,26 +10,25 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "rtc-goldfish.h"
 #include "fdtlib.h"
 #include "mem_ops.h"
+#include "rvtimer.h"
 #include "utils.h"
-
-#include <time.h>
 
 SOURCE_OPTIMIZATION_SIZE
 
-#define RTC_TIME_LOW     0x0
-#define RTC_TIME_HIGH    0x4
-#define RTC_ALARM_LOW    0x8
-#define RTC_ALARM_HIGH   0xC
-#define RTC_IRQ_ENABLED  0x10
-#define RTC_ALARM_CLEAR  0x14
-#define RTC_ALARM_STATUS 0x18
-#define RTC_IRQ_CLEAR    0x1C
+#define RTC_TIME_LOW          0x0
+#define RTC_TIME_HIGH         0x4
+#define RTC_ALARM_LOW         0x8
+#define RTC_ALARM_HIGH        0xC
+#define RTC_IRQ_ENABLED       0x10
+#define RTC_ALARM_CLEAR       0x14
+#define RTC_ALARM_STATUS      0x18
+#define RTC_IRQ_CLEAR         0x1C
 
 #define RTC_GOLDFISH_REG_SIZE 0x1000
 
 typedef struct {
     rvvm_intc_t* intc;
-    rvvm_irq_t irq;
+    rvvm_irq_t   irq;
 
     uint32_t time_low;
     uint32_t time_high;
@@ -41,13 +40,13 @@ typedef struct {
 
 static void rtc_goldfish_update(rtc_goldfish_dev_t* rtc)
 {
-    uint64_t timer64 = time(NULL) * 1000000000ULL;
+    uint64_t timer64 = rvtimer_unixtime() * 1000000000ULL;
     atomic_store_uint32_relax(&rtc->time_low, timer64);
     atomic_store_uint32_relax(&rtc->time_high, timer64 >> 32);
 
     if (atomic_load_uint32_relax(&rtc->alarm_enabled) && atomic_load_uint32_relax(&rtc->irq_enabled)) {
-        uint64_t alarm64 = atomic_load_uint32_relax(&rtc->alarm_low);
-        alarm64 |= (((uint64_t)atomic_load_uint32_relax(&rtc->alarm_high)) << 32);
+        uint64_t alarm64  = atomic_load_uint32_relax(&rtc->alarm_low);
+        alarm64          |= (((uint64_t)atomic_load_uint32_relax(&rtc->alarm_high)) << 32);
         if (timer64 >= alarm64) {
             rvvm_raise_irq(rtc->intc, rtc->irq);
         }
@@ -59,7 +58,7 @@ static void rtc_goldfish_update(rtc_goldfish_dev_t* rtc)
 static bool rtc_goldfish_mmio_read(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint8_t size)
 {
     rtc_goldfish_dev_t* rtc = dev->data;
-    uint32_t val = 0;
+    uint32_t            val = 0;
     UNUSED(size);
 
     switch (offset) {
@@ -91,7 +90,7 @@ static bool rtc_goldfish_mmio_read(rvvm_mmio_dev_t* dev, void* data, size_t offs
 static bool rtc_goldfish_mmio_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint8_t size)
 {
     rtc_goldfish_dev_t* rtc = dev->data;
-    uint32_t val = read_uint32_le(data);
+    uint32_t            val = read_uint32_le(data);
     UNUSED(size);
 
     switch (offset) {
@@ -123,25 +122,26 @@ static rvvm_mmio_type_t rtc_goldfish_dev_type = {
     .name = "rtc_goldfish",
 };
 
-PUBLIC rvvm_mmio_dev_t* rtc_goldfish_init(rvvm_machine_t* machine, rvvm_addr_t addr,
-                                          rvvm_intc_t* intc, rvvm_irq_t irq)
+PUBLIC rvvm_mmio_dev_t* rtc_goldfish_init(rvvm_machine_t* machine, rvvm_addr_t addr, rvvm_intc_t* intc, rvvm_irq_t irq)
 {
     rtc_goldfish_dev_t* rtc = safe_new_obj(rtc_goldfish_dev_t);
-    rtc->intc = intc;
-    rtc->irq = irq;
+    rtc->intc               = intc;
+    rtc->irq                = irq;
 
     rvvm_mmio_dev_t rtc_mmio = {
-        .addr = addr,
-        .size = RTC_GOLDFISH_REG_SIZE,
-        .data = rtc,
-        .type = &rtc_goldfish_dev_type,
-        .read = rtc_goldfish_mmio_read,
-        .write = rtc_goldfish_mmio_write,
+        .addr        = addr,
+        .size        = RTC_GOLDFISH_REG_SIZE,
+        .data        = rtc,
+        .type        = &rtc_goldfish_dev_type,
+        .read        = rtc_goldfish_mmio_read,
+        .write       = rtc_goldfish_mmio_write,
         .min_op_size = 4,
         .max_op_size = 4,
     };
     rvvm_mmio_dev_t* mmio = rvvm_attach_mmio(machine, &rtc_mmio);
-    if (mmio == NULL) return mmio;
+    if (mmio == NULL) {
+        return mmio;
+    }
 #ifdef USE_FDT
     struct fdt_node* rtc_fdt = fdt_node_create_reg("rtc", rtc_mmio.addr);
     fdt_node_add_prop_reg(rtc_fdt, "reg", rtc_mmio.addr, rtc_mmio.size);
@@ -155,6 +155,6 @@ PUBLIC rvvm_mmio_dev_t* rtc_goldfish_init(rvvm_machine_t* machine, rvvm_addr_t a
 PUBLIC rvvm_mmio_dev_t* rtc_goldfish_init_auto(rvvm_machine_t* machine)
 {
     rvvm_intc_t* intc = rvvm_get_intc(machine);
-    rvvm_addr_t addr = rvvm_mmio_zone_auto(machine, RTC_GOLDFISH_ADDR_DEFAULT, RTC_GOLDFISH_REG_SIZE);
+    rvvm_addr_t  addr = rvvm_mmio_zone_auto(machine, RTC_GOLDFISH_ADDR_DEFAULT, RTC_GOLDFISH_REG_SIZE);
     return rtc_goldfish_init(machine, addr, intc, rvvm_alloc_irq(intc));
 }
