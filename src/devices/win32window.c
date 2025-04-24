@@ -7,22 +7,29 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#ifndef UNICODE
+#include "compiler.h"
+#include "gui_window.h"
+
+// Enable unicode on Win64 / WinCE, otherwise use ANSI for Win9x compat
+#undef UNICODE
+#if defined(HOST_64BIT) || defined(UNDER_CE)
 #define UNICODE
 #endif
 
-#include "gui_window.h"
+#include <windows.h>
+
+// Internal headers come after system headers because of safe_free()
 #include "utils.h"
 #include "vma_ops.h"
 
-#include <windows.h>
+#define WINDOW_CLASS_NAME TEXT("RVVM_WINDOW")
+
+static ATOM window_atom = 0;
 
 typedef struct {
     HWND hwnd;
     HDC  hdc;
 } win32_data_t;
-
-static ATOM winclass_atom = 0;
 
 static const hid_key_t win32_key_to_hid_byte_map[] = {
     [0x41] = HID_KEY_A,
@@ -146,7 +153,7 @@ static hid_key_t win32_key_to_hid(uint32_t win32_key)
     return HID_KEY_NONE;
 }
 
-static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+static LRESULT CALLBACK win32_wndproc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     switch (uMsg) {
         case WM_CLOSE:
@@ -158,7 +165,9 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
             return 0;
     }
 
-    if (uMsg == WM_SETCURSOR && LOWORD(lParam) == HTCLIENT) SetCursor(NULL);
+    if (uMsg == WM_SETCURSOR && LOWORD(lParam) == HTCLIENT) {
+        SetCursor(NULL);
+    }
     return DefWindowProc(hwnd, uMsg, wParam, lParam);
 }
 
@@ -185,15 +194,16 @@ static void win32_window_draw(gui_window_t* win)
             .biBitCount = 32,
         },
     };
-    StretchDIBits(data->hdc, 0, 0, win->fb.width, win->fb.height,
-                             0, 0, win->fb.width, win->fb.height,
-                             win->fb.buffer, &bmi, 0, SRCCOPY);
+    StretchDIBits(data->hdc,                           //
+                  0, 0, win->fb.width, win->fb.height, //
+                  0, 0, win->fb.width, win->fb.height, //
+                  win->fb.buffer, &bmi, 0, SRCCOPY);
 }
 
 static void win32_window_poll(gui_window_t* win)
 {
     win32_data_t* data = win->win_data;
-    MSG Msg = {0};
+    MSG           Msg  = {0};
     while (PeekMessage(&Msg, data->hwnd, 0, 0, PM_REMOVE)) {
         switch (Msg.message) {
             case WM_MOUSEMOVE: {
@@ -250,31 +260,32 @@ static void win32_window_poll(gui_window_t* win)
 
 bool win32_window_init(gui_window_t* win)
 {
-    DO_ONCE({
+    DO_ONCE_SCOPED {
         // Initialize window atom
-        WNDCLASSW wc = {0};
-        wc.lpfnWndProc   = WindowProc;
-        wc.hInstance     = GetModuleHandle(NULL);
-        wc.lpszClassName = L"RVVM_window";
-        winclass_atom = RegisterClassW(&wc);
-        if (winclass_atom == 0) {
-            rvvm_error("Failed to register window class!");
-            return false;
-        }
-    });
+        WNDCLASS wc = {
+            .lpfnWndProc   = win32_wndproc,
+            .hInstance     = GetModuleHandle(NULL),
+            .lpszClassName = WINDOW_CLASS_NAME,
+        };
+        window_atom = RegisterClass(&wc);
+    };
+
+    if (!window_atom) {
+        rvvm_warn("Failed to register window class!");
+        return false;
+    }
 
     // Adjust window size
     RECT rect = {
-        .right = win->fb.width,
+        .right  = win->fb.width,
         .bottom = win->fb.height,
     };
     AdjustWindowRectEx(&rect, WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, false, 0);
 
     // Create window
-    HWND hwnd = CreateWindowW(L"RVVM_window", L"RVVM",
-        WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE,
-        CW_USEDEFAULT, CW_USEDEFAULT, (rect.right - rect.left), (rect.bottom - rect.top),
-        NULL, NULL, GetModuleHandle(NULL), NULL);
+    HWND hwnd = CreateWindow(WINDOW_CLASS_NAME, TEXT("RVVM"), WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE,
+                             CW_USEDEFAULT, CW_USEDEFAULT, (rect.right - rect.left), (rect.bottom - rect.top), NULL,
+                             NULL, GetModuleHandle(NULL), NULL);
     if (hwnd == NULL) {
         rvvm_error("Failed to create window!");
         return false;
@@ -282,23 +293,18 @@ bool win32_window_init(gui_window_t* win)
 
     // Initialize structures
     win32_data_t* data = safe_new_obj(win32_data_t);
-    data->hwnd = hwnd;
-    data->hdc = GetDC(hwnd);
+    data->hwnd         = hwnd;
+    data->hdc          = GetDC(hwnd);
 
-    win->win_data = data;
+    win->win_data  = data;
     win->fb.format = RGB_FMT_A8R8G8B8;
     win->fb.buffer = vma_alloc(NULL, framebuffer_size(&win->fb), VMA_RDWR);
 
     // Initialize callbacks
-    win->draw = win32_window_draw;
-    win->poll = win32_window_poll;
+    win->draw   = win32_window_draw;
+    win->poll   = win32_window_poll;
     win->remove = win32_window_remove;
     // TODO: win32_window_grab_input, win32_window_set_title, relative mouse mode
-
-#ifndef UNDER_CE
-    // Set smooth scaling on HiDPI
-    SetStretchBltMode(data->hdc, STRETCH_HALFTONE);
-#endif
 
     return true;
 }
