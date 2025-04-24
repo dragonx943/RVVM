@@ -178,7 +178,7 @@ uint64_t rvtimer_clocksource(uint64_t freq)
 
 uint64_t rvtimer_unixtime(void)
 {
-#if defined(_WIN32)
+#if defined(_WIN32) && !defined(UNDER_CE)
     FILETIME ft = {0};
     GetSystemTimeAsFileTime(&ft);
     uint64_t wintime = ((uint64_t)(uint32_t)ft.dwLowDateTime) | ((uint64_t)(uint32_t)ft.dwHighDateTime);
