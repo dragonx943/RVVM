@@ -12,7 +12,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #include "compiler.h"
 
-#if CHECK_INCLUDE(fenv.h, 1)
+#if !defined(USE_NO_FENV) && CHECK_INCLUDE(fenv.h, 1)
 // Target has <fenv.h>
 #include <fenv.h>
 #endif
@@ -28,10 +28,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #else
 
-// Some targets (Emscripten, Windows CE) explicitly lack
-// the ability to manipulate host FPU modes.
+// Some targets (Emscripten, Windows CE) explicitly lack the ability to manipulate host FPU modes.
 // These shims are provided to build & run on these targets.
-#define HOST_NO_FENV
+#define HOST_NO_FENV 1
 
 static forceinline int fpu_dummy_op_internal(void)
 {
