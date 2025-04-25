@@ -95,7 +95,12 @@ typedef struct {
     LARGE_INTEGER BeyondFinalZero;
 } SET_ZERO_DATA_INFO;
 
-#define WIN32_FILE_IMPL 1
+#define WIN32_FILE_IMPL        1
+
+#if defined(UNDER_CE) || !defined(HOST_64BIT)
+// Windows 9x/CE do not support OVERLAPPED and need a seeking file IO fallback
+#define WIN32_LEGACY_FILE_IMPL 1
+#endif
 
 #else
 // Standard C stdio file implementation using a lock around fseek()+fread() / fseek()+fwrite()
@@ -150,46 +155,38 @@ static inline void rvfile_grow_internal(rvfile_t* file, uint64_t length)
     } while (!atomic_cas_uint64(&file->size, file_size, length));
 }
 
-#if defined(WIN32_FILE_IMPL) && (defined(UNDER_CE) || !defined(HOST_64BIT))
+#if defined(WIN32_LEGACY_FILE_IMPL)
 
-static spinlock_t rvfile_win32_fallback_lock = ZERO_INIT;
+static bool host_is_windows_nt = false;
 
-// Fallback to global-locked seeking file IO under Windows CE / Windows 9x
+// NOTE: Must be called with file->lock exclusively held!
 static uint32_t rvfile_win32_fallback(rvfile_t* file, void* dst, const void* src, size_t size, uint64_t offset)
 {
     // Ancient Windows versions do not fill lpNumberOfBytes properly
     DWORD count = size;
     LONG  off_l = (uint32_t)offset;
     LONG  off_h = offset >> 32;
-    scoped_spin_lock_slow (&rvfile_win32_fallback_lock) {
-        // Seek under exclusive lock
-        DWORD ret_l = SetFilePointer(file->handle, off_l, &off_h, FILE_BEGIN);
-        if ((((uint32_t)ret_l) != ((uint32_t)off_l)) || (((int32_t)ret_l) == -1 && GetLastError())) {
-            count = 0;
-        }
-        // Perform needed IO, return 0 on IO error
-        if (count && dst && !ReadFile(file->handle, dst, count, &count, NULL)) {
-            count = 0;
-        } else if (count && src && !WriteFile(file->handle, src, count, &count, NULL)) {
-            count = 0;
-        }
+    DWORD ret_l = SetFilePointer(file->handle, off_l, &off_h, FILE_BEGIN);
+    if ((((uint32_t)ret_l) != ((uint32_t)off_l)) || (((int32_t)ret_l) == -1 && GetLastError())) {
+        return 0;
     }
-    return count;
+    if (count && dst && ReadFile(file->handle, dst, count, &count, NULL)) {
+        return count;
+    } else if (count && src && WriteFile(file->handle, src, count, &count, NULL)) {
+        return count;
+    }
+    return 0;
 }
 
 static bool is_windows_nt(void)
 {
-    bool is_winnt = false;
 #if !defined(UNDER_CE)
     DO_ONCE_SCOPED {
-        uint32_t ver = GetVersion();
-        is_winnt = !(ver & 0x80000000U);
-        if (!is_winnt) {
-            rvvm_warn("This is Windows 9x");
-        }
+        uint32_t ver       = GetVersion();
+        host_is_windows_nt = !(ver & 0x80000000U);
     }
 #endif
-    return is_winnt;
+    return host_is_windows_nt;
 }
 
 #endif
@@ -294,7 +291,7 @@ rvfile_t* rvopen(const char* filepath, uint8_t filemode)
     HANDLE handle = CreateFileW(u16_path, access, share, NULL, disp, attr, NULL);
     free(u16_path);
 
-#if !defined(HOST_64BIT) && !defined(UNDER_CE)
+#if defined(WIN32_LEGACY_FILE_IMPL) && !defined(UNDER_CE)
     if ((handle == NULL || handle == INVALID_HANDLE_VALUE) && !is_windows_nt()) {
         // Try to open file via ANSI syscall (Win9x compat)
         handle = CreateFileA(filepath, access, share, NULL, disp, attr, NULL);
@@ -423,18 +420,17 @@ static int32_t rvread_chunk(rvfile_t* file, void* dst, size_t size, uint64_t off
         return 0;
     }
 #elif defined(WIN32_FILE_IMPL)
-    // Ancient Windows versions do not fill lpNumberOfBytes properly
+#if defined(WIN32_LEGACY_FILE_IMPL)
+    if (!is_windows_nt()) {
+        return rvfile_win32_fallback(file, dst, NULL, size, offset);
+    }
+#endif
+    // Ancient Windows NT (NT4, etc) do not fill lpNumberOfBytes properly
     DWORD      ret        = size;
     OVERLAPPED overlapped = {
         .Offset     = (uint32_t)offset,
         .OffsetHigh = offset >> 32,
     };
-#if defined(UNDER_CE) || !defined(HOST_64BIT)
-    if (!is_windows_nt()) {
-        // Fallback to global-locked seek+read for WinCE/Win9x
-        return rvfile_win32_fallback(file, dst, NULL, size, offset);
-    }
-#endif
     if (!ReadFile(file->handle, dst, size, &ret, &overlapped)) {
         return 0;
     }
@@ -483,6 +479,16 @@ size_t rvread(rvfile_t* file, void* dst, size_t size, uint64_t offset)
 
 #if defined(POSIX_FILE_IMPL)
     ret = rvread_unlocked(file, dst, size, pos);
+#elif defined(WIN32_LEGACY_FILE_IMPL)
+    if (!is_windows_nt()) {
+        scoped_spin_lock_slow (&file->lock) {
+            ret = rvread_unlocked(file, dst, size, pos);
+        }
+    } else {
+        scoped_spin_read_lock_slow (&file->lock) {
+            ret = rvread_unlocked(file, dst, size, pos);
+        }
+    }
 #elif defined(WIN32_FILE_IMPL)
     scoped_spin_read_lock_slow (&file->lock) {
         ret = rvread_unlocked(file, dst, size, pos);
@@ -510,18 +516,17 @@ static int32_t rvwrite_chunk(rvfile_t* file, const void* src, size_t size, uint6
         return 0;
     }
 #elif defined(WIN32_FILE_IMPL)
-    // Ancient Windows versions do not fill lpNumberOfBytes properly
+#if defined(WIN32_LEGACY_FILE_IMPL)
+    if (!is_windows_nt()) {
+        return rvfile_win32_fallback(file, NULL, src, size, offset);
+    }
+#endif
+    // Ancient Windows NT (NT4, etc) do not fill lpNumberOfBytes properly
     DWORD      ret        = size;
     OVERLAPPED overlapped = {
         .Offset     = (uint32_t)offset,
         .OffsetHigh = offset >> 32,
     };
-#if defined(UNDER_CE) || !defined(HOST_64BIT)
-    if (!is_windows_nt()) {
-        // Fallback to global-locked seek+write for WinCE/Win9x
-        return rvfile_win32_fallback(file, NULL, src, size, offset);
-    }
-#endif
     if (!WriteFile(file->handle, src, size, &ret, &overlapped)) {
         return 0;
     }
@@ -568,6 +573,16 @@ size_t rvwrite(rvfile_t* file, const void* src, size_t size, uint64_t offset)
 
 #if defined(POSIX_FILE_IMPL)
     ret = rvwrite_unlocked(file, src, size, offset);
+#elif defined(WIN32_LEGACY_FILE_IMPL)
+    if (!is_windows_nt()) {
+        scoped_spin_lock_slow (&file->lock) {
+            ret = rvwrite_unlocked(file, src, size, offset);
+        }
+    } else {
+        scoped_spin_read_lock_slow (&file->lock) {
+            ret = rvwrite_unlocked(file, src, size, offset);
+        }
+    }
 #elif defined(WIN32_FILE_IMPL)
     scoped_spin_read_lock_slow (&file->lock) {
         ret = rvwrite_unlocked(file, src, size, offset);
