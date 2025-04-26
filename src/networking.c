@@ -15,6 +15,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // Override maximum amount of sockets for select()
 #define FD_SETSIZE 1024
+
 #include <winsock2.h> // For WSAStartup(), WSAGetLastError(), SetHandleInformation(), closesocket(), ioctlsocket()...
 #include <ws2tcpip.h> // For AF_INET6
 
@@ -639,6 +640,40 @@ static bool net_poll_select_wait_events(net_poll_t* poll, uint32_t wait_ms)
     return has_events;
 }
 
+static size_t net_poll_select_wait(net_poll_t* poll, net_event_t* events, size_t size, uint32_t wait_ms)
+{
+    size_t ret = 0;
+    scoped_spin_lock (&poll->lock) {
+        if (net_poll_select_wait_events(poll, wait_ms)) {
+            // Loop over socket monitors, check fd_set flags
+            for (size_t i = poll->consumed; i < vector_size(poll->events); ++i) {
+                net_monitor_t* monitor = vector_at(poll->events, i);
+                uint32_t       flags   = 0;
+                if (FD_ISSET(monitor->sock->fd, &poll->r_ready)) {
+                    flags |= NET_POLL_RECV;
+                }
+                if (FD_ISSET(monitor->sock->fd, &poll->w_ready)) {
+                    flags |= NET_POLL_SEND;
+                }
+                if (flags) {
+                    events[ret].data  = monitor->data;
+                    events[ret].flags = flags;
+                    if (++ret >= size) {
+                        // We filled caller event buffer, leave trailing buffered events
+                        poll->consumed = i + 1;
+                        break;
+                    }
+                }
+                if ((i + 1) == vector_size(poll->events)) {
+                    // All events consumed, call select() next time
+                    poll->consumed = 0;
+                }
+            }
+        }
+    }
+    return ret;
+}
+
 #endif
 
 /*
@@ -1074,15 +1109,15 @@ bool net_poll_add(net_poll_t* poll, net_sock_t* sock, const net_event_t* event)
         };
         return !epoll_ctl(poll->fd, EPOLL_CTL_ADD, sock->fd, &ev);
 #elif defined(KQUEUE_NET_IMPL)
-        struct kevent ev[2] = {0};
+        struct kevent ev[3] = {0};
         EV_SET(&ev[0], sock->fd, EVFILT_READ, EV_ADD, 0, 0, event->data);
+        EV_SET(&ev[1], sock->fd, EVFILT_WRITE, EV_ADD, 0, 0, event->data);
         if (event->flags & NET_POLL_SEND) {
-            EV_SET(&ev[1], sock->fd, EVFILT_WRITE, EV_ADD, 0, 0, event->data);
+            EV_SET(&ev[2], sock->fd, EVFILT_WRITE, EV_ENABLE, 0, 0, event->data);
         } else {
-            EV_SET(&ev[1], sock->fd, EVFILT_WRITE, EV_DELETE, 0, 0, event->data);
+            EV_SET(&ev[2], sock->fd, EVFILT_WRITE, EV_DISABLE, 0, 0, event->data);
         }
-        // NetBSD reports ENOENT for EV_DELETE on missing filter, but otherwise succeeds
-        return kevent(poll->fd, ev, 2, NULL, 0, NULL) >= 0 || errno == ENOENT;
+        return !kevent(poll->fd, ev, STATIC_ARRAY_SIZE(ev), NULL, 0, NULL);
 #else
         return net_poll_select_add(poll, sock, event);
 #endif
@@ -1100,15 +1135,8 @@ bool net_poll_mod(net_poll_t* poll, net_sock_t* sock, const net_event_t* event)
         };
         return !epoll_ctl(poll->fd, EPOLL_CTL_MOD, sock->fd, &ev);
 #elif defined(KQUEUE_NET_IMPL)
-        struct kevent ev[2] = {0};
-        EV_SET(&ev[0], sock->fd, EVFILT_READ, EV_ADD, 0, 0, event->data);
-        if (event->flags & NET_POLL_SEND) {
-            EV_SET(&ev[1], sock->fd, EVFILT_WRITE, EV_ADD, 0, 0, event->data);
-        } else {
-            EV_SET(&ev[1], sock->fd, EVFILT_WRITE, EV_DELETE, 0, 0, event->data);
-        }
-        // NetBSD reports ENOENT for EV_DELETE on missing filter, but otherwise succeeds
-        return kevent(poll->fd, ev, 2, NULL, 0, NULL) >= 0 || errno == ENOENT;
+        // There's no way to completely mimic EPOLL_CTL_MOD on kqueue without extra syscalls
+        return net_poll_add(poll, sock, event);
 #else
         return net_poll_select_mod(poll, sock, event);
 #endif
@@ -1126,8 +1154,7 @@ bool net_poll_remove(net_poll_t* poll, net_sock_t* sock)
         struct kevent ev[2] = {0};
         EV_SET(&ev[0], sock->fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
         EV_SET(&ev[1], sock->fd, EVFILT_WRITE, EV_DELETE, 0, 0, NULL);
-        // NetBSD reports ENOENT for EV_DELETE on missing filter, but otherwise succeeds
-        return kevent(poll->fd, ev, 2, NULL, 0, NULL) >= 0 || errno == ENOENT;
+        return !kevent(poll->fd, ev, STATIC_ARRAY_SIZE(ev), NULL, 0, NULL);
 #else
         return net_poll_select_remove(poll, sock);
 #endif
@@ -1135,92 +1162,71 @@ bool net_poll_remove(net_poll_t* poll, net_sock_t* sock)
     return false;
 }
 
-#define NET_POLL_MAX_EVENTS 64
-
 size_t net_poll_wait(net_poll_t* poll, net_event_t* events, size_t size, uint32_t wait_ms)
 {
-    if (poll == NULL || size == 0) {
-        return 0;
-    }
-#if defined(EPOLL_NET_IMPL)
-    struct epoll_event ev[NET_POLL_MAX_EVENTS];
-    if (size > NET_POLL_MAX_EVENTS) {
-        size = NET_POLL_MAX_EVENTS;
-    }
-    int ret = epoll_wait(poll->fd, ev, size, wait_ms);
-    if (ret < 0) {
-        ret = 0;
-    }
-    for (int i = 0; i < ret; ++i) {
-        events[i].data = ev[i].data.ptr;
-        events[i].flags
-            = ((ev[i].events & ~EPOLLOUT) ? NET_POLL_RECV : 0) | ((ev[i].events & EPOLLOUT) ? NET_POLL_SEND : 0);
-    }
-#elif defined(KQUEUE_NET_IMPL)
-    size_t          ret = 0;
-    struct kevent   ev[NET_POLL_MAX_EVENTS];
-    struct timespec ts = {
-        .tv_sec  = wait_ms / 1000,
-        .tv_nsec = (wait_ms % 1000) * 1000000,
-    };
-    if (size > NET_POLL_MAX_EVENTS) {
-        size = NET_POLL_MAX_EVENTS;
-    }
-    int cnt = kevent(poll->fd, NULL, 0, ev, size, (wait_ms == NET_POLL_INF) ? NULL : &ts);
-    for (int i = 0; i < cnt; ++i) {
-        if (ev[i].filter == EVFILT_READ) {
-            events[ret].data    = (void*)ev[i].udata;
-            events[ret++].flags = NET_POLL_RECV;
-        }
-    }
-    // Coalesce NET_POLL_SEND flags onto associated event entry
-    for (int i = 0; i < cnt; ++i) {
-        if (ev[i].filter == EVFILT_WRITE) {
-            bool coalesce = false;
-            for (size_t j = 0; j < ret; ++j) {
-                if (events[j].data == (void*)ev[i].udata) {
-                    events[j].flags |= NET_POLL_SEND;
-                    coalesce         = true;
-                    break;
-                }
-            }
-            if (!coalesce) {
-                events[ret].data    = (void*)ev[i].udata;
-                events[ret++].flags = NET_POLL_SEND;
-            }
-        }
-    }
-#else
     size_t ret = 0;
-    scoped_spin_lock (&poll->lock) {
-        if (net_poll_select_wait_events(poll, wait_ms)) {
-            // Loop over buffered socket state
-            for (size_t i = poll->consumed; i < vector_size(poll->events); ++i) {
-                net_monitor_t* monitor = vector_at(poll->events, i);
-                uint32_t       flags   = 0;
-                if (FD_ISSET(monitor->sock->fd, &poll->r_ready)) {
-                    flags |= NET_POLL_RECV;
-                }
-                if (FD_ISSET(monitor->sock->fd, &poll->w_ready)) {
-                    flags |= NET_POLL_SEND;
-                }
-                if (flags) {
-                    events[ret].data  = monitor->data;
-                    events[ret].flags = flags;
-                    if (++ret >= size) {
-                        // We filled caller event buffer, leave trailing buffered events
-                        poll->consumed = i + 1;
+    if (likely(poll && size)) {
+#if defined(EPOLL_NET_IMPL)
+        struct epoll_event ev[64];
+        // Fetch events into temporary buffer
+        int num_ev = epoll_wait(poll->fd, ev, EVAL_MIN(size, STATIC_ARRAY_SIZE(ev)), wait_ms);
+        for (int i = 0; i < num_ev; ++i) {
+            uint32_t flags = 0;
+            if (ev[i].events & EPOLLOUT) {
+                flags |= NET_POLL_SEND;
+            }
+            if ((ev[i].events & ~EPOLLOUT) || !flags) {
+                flags |= NET_POLL_RECV;
+            }
+            if (ret < size) {
+                events[ret].data  = ev[i].data.ptr;
+                events[ret].flags = flags;
+                ret++;
+            }
+        }
+#elif defined(KQUEUE_NET_IMPL)
+        struct kevent    ev[64];
+        struct timespec* ts_ptr;
+        struct timespec  ts = {0};
+        if (wait_ms != NET_POLL_INF) {
+            ts.tv_sec  = wait_ms / 1000U;
+            ts.tv_nsec = (wait_ms -= (ts.tv_nsec * 1000U)) * 1000000U;
+            ts_ptr     = &ts;
+        }
+        int num_ev = kevent(poll->fd, NULL, 0, ev, EVAL_MIN(size, STATIC_ARRAY_SIZE(ev)), ts_ptr);
+        // Write out NET_POLL_RECV events
+        for (int i = 0; i < num_ev; ++i) {
+            if (ev[i].filter == EVFILT_READ && ret < size) {
+                void* data        = (void*)ev[i].udata;
+                events[ret].data  = data;
+                events[ret].flags = NET_POLL_RECV;
+                ret++;
+            }
+        }
+        // Coalesce NET_POLL_SEND flags onto associated event entry
+        size_t read_events = ret;
+        for (int i = 0; i < num_ev; ++i) {
+            if (ev[i].filter == EVFILT_WRITE) {
+                void* data     = (void*)ev[i].udata;
+                bool  coalesce = false;
+                for (size_t j = 0; j < read_events; ++j) {
+                    if (events[j].data == data) {
+                        events[j].flags |= NET_POLL_SEND;
+                        coalesce         = true;
                         break;
                     }
                 }
-                if ((i + 1) == vector_size(poll->events)) {
-                    // All events consumed, call select() next time
-                    poll->consumed = 0;
+                if (!coalesce && ret < size) {
+                    events[ret].data  = data;
+                    events[ret].flags = NET_POLL_SEND;
+                    ret++;
                 }
             }
         }
-    }
+#else
+        ret = net_poll_select_wait(poll, events, size, wait_ms);
 #endif
+    }
     return ret;
 }
 
