@@ -608,14 +608,17 @@ static bool net_poll_select_wait_events(net_poll_t* poll, uint32_t wait_ms)
         }
         do {
             int             nfds   = poll->max_fd + 1;
-            struct timeval* tv_ptr = NULL;
             struct timeval  tv     = {0};
+            struct timeval* tv_ptr = NULL;
             if (wait_ms != NET_POLL_INF) {
-                // Use remaining timeout delay
-                uint32_t delay = rvtimecmp_delay(&cmp);
-                tv.tv_usec     = (delay % 1000U) * 1000U;
-                tv.tv_sec      = delay / 1000;
-                tv_ptr         = &tv;
+                // Use remaining timeout delay, short delay uses fast path without division
+                if (wait_ms < 1000) {
+                    tv.tv_usec = (wait_ms * 1000);
+                } else {
+                    tv.tv_sec  = (wait_ms / 1000);
+                    tv.tv_usec = (wait_ms % 1000) * 1000;
+                }
+                tv_ptr = &tv;
             }
 
             // Copy over read/write socket watchlist to ready bitsets
@@ -635,7 +638,11 @@ static bool net_poll_select_wait_events(net_poll_t* poll, uint32_t wait_ms)
                 net_tcp_recv(poll->wake_sock[0], buffer, sizeof(buffer));
                 has_events = false;
             }
-        } while (!has_events && (wait_ms == NET_POLL_INF || !rvtimecmp_pending(&cmp)));
+            if (!has_events && wait_ms != NET_POLL_INF) {
+                // Update delay
+                wait_ms = rvtimecmp_delay(&cmp);
+            }
+        } while (!has_events && (wait_ms == NET_POLL_INF || wait_ms));
     }
     return has_events;
 }
@@ -1186,12 +1193,17 @@ size_t net_poll_wait(net_poll_t* poll, net_event_t* events, size_t size, uint32_
         }
 #elif defined(KQUEUE_NET_IMPL)
         struct kevent    ev[64];
-        struct timespec* ts_ptr;
-        struct timespec  ts = {0};
+        struct timespec  ts     = {0};
+        struct timespec* ts_ptr = NULL;
         if (wait_ms != NET_POLL_INF) {
-            ts.tv_sec  = wait_ms / 1000U;
-            ts.tv_nsec = (wait_ms -= (ts.tv_nsec * 1000U)) * 1000000U;
-            ts_ptr     = &ts;
+            // Short delay uses fast path without division
+            if (wait_ms < 1000) {
+                ts.tv_nsec = (wait_ms * 1000000);
+            } else {
+                ts.tv_sec  = (wait_ms / 1000);
+                ts.tv_nsec = (wait_ms % 1000) * 1000000;
+            }
+            ts_ptr = &ts;
         }
         int num_ev = kevent(poll->fd, NULL, 0, ev, EVAL_MIN(size, STATIC_ARRAY_SIZE(ev)), ts_ptr);
         // Write out NET_POLL_RECV events
