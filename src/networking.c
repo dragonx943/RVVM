@@ -590,7 +590,7 @@ static bool net_poll_select_remove(net_poll_t* poll, net_sock_t* sock)
 
 // Pump new net_poll events
 // NOTE: Must be called with poll->lock held!
-bool net_poll_select_wait_events(net_poll_t* poll, uint32_t wait_ms)
+static bool net_poll_select_wait_events(net_poll_t* poll, uint32_t wait_ms)
 {
     bool has_events = !!poll->consumed;
     if (has_events) {
@@ -599,24 +599,29 @@ bool net_poll_select_wait_events(net_poll_t* poll, uint32_t wait_ms)
         // No available buffered events to consume, call select()
         rvtimer_t   timer = {0};
         rvtimecmp_t cmp   = {0};
-        rvtimer_init(&timer, 1000);
-        rvtimecmp_init(&cmp, &timer);
-        rvtimecmp_set(&cmp, wait_ms);
-        while (!has_events && (wait_ms == NET_POLL_INF || !rvtimecmp_pending(&cmp))) {
+        if (wait_ms != NET_POLL_INF) {
+            // Initizlize timeout timer & comparator
+            rvtimer_init(&timer, 1000);
+            rvtimecmp_init(&cmp, &timer);
+            rvtimecmp_set(&cmp, wait_ms);
+        }
+        do {
             int             nfds   = poll->max_fd + 1;
             struct timeval* tv_ptr = NULL;
             struct timeval  tv     = {0};
             if (wait_ms != NET_POLL_INF) {
+                // Use remaining timeout delay
                 uint32_t delay = rvtimecmp_delay(&cmp);
                 tv.tv_usec     = (delay % 1000U) * 1000U;
                 tv.tv_sec      = delay / 1000;
                 tv_ptr         = &tv;
             }
-            // Copy over read/write socket watchlist
+
+            // Copy over read/write socket watchlist to ready bitsets
             poll->r_ready = poll->r_set;
             poll->w_ready = poll->w_set;
 
-            // Mark this thread as waiting in select()
+            // Unlock data structures during select(), mark this thread as waiting
             spin_unlock(&poll->lock);
             atomic_add_uint32(&poll->waiters, 1);
             has_events = select(nfds, &poll->r_ready, &poll->w_ready, NULL, tv_ptr) > 0;
@@ -629,7 +634,7 @@ bool net_poll_select_wait_events(net_poll_t* poll, uint32_t wait_ms)
                 net_tcp_recv(poll->wake_sock[0], buffer, sizeof(buffer));
                 has_events = false;
             }
-        }
+        } while (!has_events && (wait_ms == NET_POLL_INF || !rvtimecmp_pending(&cmp)));
     }
     return has_events;
 }
