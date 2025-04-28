@@ -284,9 +284,11 @@ static net_handle_t net_socket_create_ex(int domain, int type, bool nonblock)
             net_handle_set_cloexec(fd);
         }
     }
-    if (fd != NET_HANDLE_INVALID && nonblock) {
-        // Mark the socket as non-blocking
-        net_handle_set_blocking(fd, false);
+    // Mark the socket as non-blocking
+    if (fd != NET_HANDLE_INVALID && nonblock && !net_handle_set_blocking(fd, false)) {
+        // Failed to set non-blocking mode
+        net_close_handle(fd);
+        return NET_HANDLE_INVALID;
     }
     return fd;
 }
@@ -309,9 +311,11 @@ static net_handle_t net_accept_ex(net_handle_t listener, void* sock_addr, net_ad
         if (fd != NET_HANDLE_INVALID) {
             net_handle_set_cloexec(fd);
 #if defined(__linux__)
-            if (nonblock) {
-                // Always inherit non-blocking mode properly
-                net_handle_set_blocking(fd, false);
+            // Always inherit non-blocking mode properly
+            if (nonblock && !net_handle_set_blocking(fd, false)) {
+                // Failed to set non-blocking mode
+                net_close_handle(fd);
+                return NET_HANDLE_INVALID;
             }
 #endif
         }
@@ -351,10 +355,10 @@ static bool net_bind_handle(net_handle_t fd, const net_addr_t* addr)
         return !bind(fd, (void*)&sock_addr, sizeof(sock_addr));
 #if defined(IPV6_NET_IMPL)
     } else if (addr->type == NET_TYPE_IPV6) {
-#if defined(SOL_IPV6) && defined(IPV6_V6ONLY)
+#if defined(IPPROTO_IPV6) && defined(IPV6_V6ONLY)
         // Disable dual-stack explicitly (may be configurable in future)
         int v6only = 1;
-        setsockopt(fd, SOL_IPV6, IPV6_V6ONLY, (const void*)&v6only, sizeof(v6only));
+        setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, (void*)&v6only, sizeof(v6only));
 #endif
         struct sockaddr_in6 sock_addr = {0};
         net_sockaddr6_from_addr(&sock_addr, addr);
@@ -875,19 +879,19 @@ net_sock_t* net_tcp_connect(const net_addr_t* dst, const net_addr_t* src, bool b
     }
     // Bind to local address if needed
     if (src) {
-#if defined(SOL_SOCKET) && defined(IP_BIND_ADDRESS_NO_PORT)
+#if defined(IPPROTO_IP) && defined(IP_BIND_ADDRESS_NO_PORT)
         if (!src->port) {
             // Prevent bind errors due to ephemeral port exhaustion
             // Kernel now knows we won't listen() and allows local 2-tuple reuse
             int noport = 1;
-            setsockopt(fd, SOL_SOCKET, IP_BIND_ADDRESS_NO_PORT, (const void*)&noport, sizeof(noport));
+            setsockopt(fd, IPPROTO_IP, IP_BIND_ADDRESS_NO_PORT, (void*)&noport, sizeof(noport));
         }
 #endif
 #if defined(SOL_SOCKET) && defined(SO_REUSEADDR)
         if (src->port) {
             // Allow connecting to different destinations from a single local port
             int reuse = 1;
-            setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const void*)&reuse, sizeof(reuse));
+            setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (void*)&reuse, sizeof(reuse));
         }
 #endif
         if (!net_bind_handle(fd, src)) {
