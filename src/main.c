@@ -51,8 +51,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 static void print_string(const char* str)
 {
 #if defined(_WIN32) && !defined(UNDER_CE)
-    DWORD count = 0;
-    const char* tmp = str;
+    DWORD       count = 0;
+    const char* tmp   = str;
     while (*tmp++) {
         count++;
     }
@@ -323,18 +323,29 @@ int main(int argc, char** argv)
             LPWSTR* argv_u16 = command_line_to_argv_w(cmdline_w, &argc_u8);
             if (argv_u16 && argc_u8) {
                 char** argv_u8 = safe_new_arr(char*, argc_u8 + 1);
+                bool   success = true;
+                int    ret     = 0;
                 for (int i = 0; i < argc_u8; ++i) {
-                    size_t arg_len = WideCharToMultiByte(CP_UTF8, 0, argv_u16[i], -1, NULL, 0, NULL, NULL);
-                    argv_u8[i]     = safe_new_arr(char, arg_len);
-                    WideCharToMultiByte(CP_UTF8, 0, argv_u16[i], -1, argv_u8[i], arg_len, NULL, NULL);
+                    int arg_len = WideCharToMultiByte(CP_UTF8, 0, argv_u16[i], -1, NULL, 0, NULL, NULL);
+                    if (arg_len > 0) {
+                        argv_u8[i] = safe_new_arr(char, arg_len);
+                        WideCharToMultiByte(CP_UTF8, 0, argv_u16[i], -1, argv_u8[i], arg_len, NULL, NULL);
+                    } else {
+                        success = false;
+                        break;
+                    }
                 }
                 LocalFree(argv_u16);
-                int ret = rvvm_cli_main(argc_u8, argv_u8);
+                if (success) {
+                    ret = rvvm_cli_main(argc_u8, argv_u8);
+                }
                 for (int i = 0; i < argc_u8; ++i) {
                     free(argv_u8[i]);
                 }
                 free(argv_u8);
-                return ret;
+                if (success) {
+                    return ret;
+                }
             }
         }
     }
