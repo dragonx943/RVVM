@@ -98,7 +98,7 @@ typedef struct {
 #define WIN32_FILE_IMPL        1
 
 #if defined(UNDER_CE) || !defined(HOST_64BIT)
-// Windows 9x/CE do not support OVERLAPPED and need a seeking file IO fallback
+// Windows 9x/CE/NT3.x do not support OVERLAPPED and need a seeking file IO fallback
 #define WIN32_LEGACY_FILE_IMPL 1
 #endif
 
@@ -157,7 +157,7 @@ static inline void rvfile_grow_internal(rvfile_t* file, uint64_t length)
 
 #if defined(WIN32_LEGACY_FILE_IMPL)
 
-static bool host_is_windows_nt = false;
+static bool host_at_least_nt4 = false;
 
 // NOTE: Must be called with file->lock exclusively held!
 static uint32_t rvfile_win32_fallback(rvfile_t* file, void* dst, const void* src, size_t size, uint64_t offset)
@@ -178,15 +178,16 @@ static uint32_t rvfile_win32_fallback(rvfile_t* file, void* dst, const void* src
     return 0;
 }
 
-static bool is_windows_nt(void)
+// Returns true on Windows CE, Windows 9x, or NT <4.0
+static bool is_legacy_windows(void)
 {
 #if !defined(UNDER_CE)
     DO_ONCE_SCOPED {
-        uint32_t ver       = GetVersion();
-        host_is_windows_nt = !(ver & 0x80000000U);
+        uint32_t ver      = GetVersion();
+        host_at_least_nt4 = !(ver & 0x80000000U) && ((uint8_t)ver >= 0x04);
     }
 #endif
-    return host_is_windows_nt;
+    return !host_at_least_nt4;
 }
 
 #endif
@@ -285,15 +286,17 @@ rvfile_t* rvopen(const char* filepath, uint8_t filemode)
         }
     }
 
-    size_t   path_len = rvvm_strlen(filepath) + 1;
-    wchar_t* u16_path = safe_new_arr(wchar_t, path_len);
-    MultiByteToWideChar(CP_UTF8, 0, filepath, -1, u16_path, path_len);
-    HANDLE handle = CreateFileW(u16_path, access, share, NULL, disp, attr, NULL);
-    free(u16_path);
+    HANDLE handle   = NULL;
+    int    path_len = MultiByteToWideChar(CP_UTF8, 0, filepath, -1, NULL, 0);
+    if (path_len > 0) {
+        wchar_t* filepath_u16 = safe_new_arr(wchar_t, path_len);
+        MultiByteToWideChar(CP_UTF8, 0, filepath, -1, filepath_u16, path_len);
+        handle = CreateFileW(filepath_u16, access, share, NULL, disp, attr, NULL);
+    }
 
 #if defined(WIN32_LEGACY_FILE_IMPL) && !defined(UNDER_CE)
-    if ((handle == NULL || handle == INVALID_HANDLE_VALUE) && !is_windows_nt()) {
-        // Try to open file via ANSI syscall (Win9x compat)
+    if ((handle == NULL || handle == INVALID_HANDLE_VALUE) && is_legacy_windows()) {
+        // Try to open file via ANSI syscall (Win9x & WinNT 3.51 compat)
         handle = CreateFileA(filepath, access, share, NULL, disp, attr, NULL);
     }
 #endif
@@ -421,7 +424,7 @@ static int32_t rvread_chunk(rvfile_t* file, void* dst, size_t size, uint64_t off
     }
 #elif defined(WIN32_FILE_IMPL)
 #if defined(WIN32_LEGACY_FILE_IMPL)
-    if (!is_windows_nt()) {
+    if (is_legacy_windows()) {
         return rvfile_win32_fallback(file, dst, NULL, size, offset);
     }
 #endif
@@ -480,7 +483,7 @@ size_t rvread(rvfile_t* file, void* dst, size_t size, uint64_t offset)
 #if defined(POSIX_FILE_IMPL)
     ret = rvread_unlocked(file, dst, size, pos);
 #elif defined(WIN32_LEGACY_FILE_IMPL)
-    if (!is_windows_nt()) {
+    if (is_legacy_windows()) {
         scoped_spin_lock_slow (&file->lock) {
             ret = rvread_unlocked(file, dst, size, pos);
         }
@@ -517,7 +520,7 @@ static int32_t rvwrite_chunk(rvfile_t* file, const void* src, size_t size, uint6
     }
 #elif defined(WIN32_FILE_IMPL)
 #if defined(WIN32_LEGACY_FILE_IMPL)
-    if (!is_windows_nt()) {
+    if (is_legacy_windows()) {
         return rvfile_win32_fallback(file, NULL, src, size, offset);
     }
 #endif
@@ -574,7 +577,7 @@ size_t rvwrite(rvfile_t* file, const void* src, size_t size, uint64_t offset)
 #if defined(POSIX_FILE_IMPL)
     ret = rvwrite_unlocked(file, src, size, offset);
 #elif defined(WIN32_LEGACY_FILE_IMPL)
-    if (!is_windows_nt()) {
+    if (is_legacy_windows()) {
         scoped_spin_lock_slow (&file->lock) {
             ret = rvwrite_unlocked(file, src, size, offset);
         }
