@@ -7,6 +7,11 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
+// Must be defined before including <sys/ipc.h>
+#define _GNU_SOURCE
+#define _BSD_SOURCE
+#define _DEFAULT_SOURCE
+
 #include "gui_window.h"
 #include "compiler.h"
 
@@ -159,7 +164,7 @@ X11_DLIB_SYM(XCloseDisplay)
 
 #endif
 
-// RVVM internal headers come after system headers because of safe_free()
+// Internal headers come after system headers because of safe_free()
 #include "threading.h"
 #include "spinlock.h"
 #include "vma_ops.h"
@@ -202,6 +207,7 @@ static spinlock_t    x11_lock;
 static hid_key_t x11_keysym_to_hid(KeySym keysym)
 {
     // XK_ definitions are huge numbers, don't use a table
+    // clang-format off
     switch (keysym) {
         case XK_a:            return HID_KEY_A;
         case XK_b:            return HID_KEY_B;
@@ -323,6 +329,7 @@ static hid_key_t x11_keysym_to_hid(KeySym keysym)
         case XK_Alt_R:        return HID_KEY_RIGHTALT;
         case XK_Super_R:      return HID_KEY_RIGHTMETA;
     }
+    // clang-format on
     return HID_KEY_NONE;
 }
 
@@ -538,13 +545,13 @@ static void* x11_event_thread(void* arg)
         FD_ZERO(&fds);
         FD_SET(fd, &fds);
         if (select(fd + 1, &fds, NULL, NULL, NULL) > 0) {
-            spin_lock(&x11_lock);
-            if (vector_size(x11_windows)) {
-                x11_dispatch_events();
-            } else {
-                running = false;
+            scoped_spin_lock (&x11_lock) {
+                if (vector_size(x11_windows)) {
+                    x11_dispatch_events();
+                } else {
+                    running = false;
+                }
             }
-            spin_unlock(&x11_lock);
         }
     }
 
@@ -681,28 +688,31 @@ static void* x11_xshm_attach(gui_window_t* win)
 static void x11_window_draw(gui_window_t* win)
 {
     x11_win_t* x11 = win->win_data;
+    scoped_spin_lock (&x11_lock) {
 #ifdef USE_XSHM
-    if (x11->seginfo.shmaddr != NULL) {
-        XShmPutImage(x11_dsp,
-                     x11->window,
-                     x11->gc,
-                     x11->ximage,
-                     0, 0, 0, 0, // src, dst x & y
-                     x11->ximage->width,
-                     x11->ximage->height,
-                     False /* send_event */);
-        XFlush(x11_dsp);
-        return;
-    }
+        if (x11->seginfo.shmaddr != NULL) {
+            XShmPutImage(x11_dsp,
+                        x11->window,
+                        x11->gc,
+                        x11->ximage,
+                        0, 0, 0, 0, // src, dst x & y
+                        x11->ximage->width,
+                        x11->ximage->height,
+                        False /* send_event */);
+            XFlush(x11_dsp);
+        } else
 #endif
-    XPutImage(x11_dsp,
-              x11->window,
-              x11->gc,
-              x11->ximage,
-              0, 0, 0, 0, // src, dst x & y
-              x11->ximage->width,
-              x11->ximage->height);
-    XFlush(x11_dsp);
+        do {
+            XPutImage(x11_dsp,
+                    x11->window,
+                    x11->gc,
+                    x11->ximage,
+                    0, 0, 0, 0, // src, dst x & y
+                    x11->ximage->width,
+                    x11->ximage->height);
+            XFlush(x11_dsp);
+        } while (0);
+    }
 }
 
 static void x11_window_grab_input(gui_window_t* win, bool grab)
@@ -752,14 +762,14 @@ static void x11_window_remove(gui_window_t* win)
 {
     x11_win_t* x11 = win->win_data;
 
-    spin_lock(&x11_lock);
-    vector_foreach_back(x11_windows, i) {
-        if (vector_at(x11_windows, i) == win) {
-            vector_erase(x11_windows, i);
-            break;
+    scoped_spin_lock (&x11_lock) {
+        vector_foreach_back(x11_windows, i) {
+            if (vector_at(x11_windows, i) == win) {
+                vector_erase(x11_windows, i);
+                break;
+            }
         }
     }
-    spin_unlock(&x11_lock);
 
     // Restore input
     x11_window_grab_input(win, false);
@@ -930,9 +940,9 @@ bool x11_window_init(gui_window_t* win)
     XFlush(x11_dsp);
 
     // Initialize event thread
-    spin_lock(&x11_lock);
-    vector_push_back(x11_windows, win);
-    spin_unlock(&x11_lock);
+    scoped_spin_lock (&x11_lock) {
+        vector_push_back(x11_windows, win);
+    }
 
     x11_init_event_thread();
 
