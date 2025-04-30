@@ -42,10 +42,10 @@ typedef socklen_t net_addrlen_t;
 #define NET_HANDLE_INVALID (-1)
 
 #if defined(__linux__)
-#include <sys/syscall.h> // For __NR_accept4
+#include <sys/syscall.h> // For __NR_accept4, __NR_epoll_create
 #endif
 
-#if !defined(USE_SELECT) && (defined(__linux__) || defined(__illumos__))
+#if !defined(USE_SELECT) && ((defined(__linux__) && defined(__NR_epoll_create)) || defined(__illumos__))
 // Use epoll() for net_poll on Linux & Illumos
 #include <sys/epoll.h>    // For struct epoll_event, epoll_create(), epoll_ctl(), epoll_wait(), EPOLL_CTL_ADD...
 #include <sys/resource.h> // For struct rlimit, getrlimit(), setrlimit(), RLIMIT_NOFILE
