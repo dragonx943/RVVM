@@ -47,11 +47,13 @@ static BOOL   (*__stdcall set_waitable_timer)(HANDLE, const LARGE_INTEGER*, LONG
 #include <time.h>    // For clock_gettime(), if CLOCK_REALTIME/CLOCK_MONOTONIC are defined
 
 #if defined(__linux__) && CHECK_INCLUDE(linux/futex.h, 1) && CHECK_INCLUDE(sys/syscall.h, 1)
-#include <linux/futex.h> // For FUTEX_WAIT_PRIVATE, FUTEX_WAKE_PRIVATE
-#include <sys/syscall.h> // For __NR_futex
+#include <sys/syscall.h> // For __NR_futex, __NR_futex_time64
 #include <unistd.h>      // For syscall()
 #if !defined(__NR_futex) && defined(__NR_futex_time64)
 #define __NR_futex __NR_futex_time64
+#endif
+#if defined(__NR_futex)
+#include <linux/futex.h> // For FUTEX_WAIT_PRIVATE, FUTEX_WAKE_PRIVATE
 #endif
 #if defined(__NR_futex) && defined(FUTEX_WAIT_PRIVATE) && defined(FUTEX_WAKE_PRIVATE)
 // Linux futexes available
@@ -156,10 +158,10 @@ thread_ctx_t* thread_create_ex(thread_func_t func, void* arg, uint32_t stack_siz
 {
     thread_ctx_t* thread = safe_new_obj(thread_ctx_t);
 #if defined(_WIN32)
-    DWORD threadid = 0;
-    thread_call_wrap_t* wrap = safe_new_obj(thread_call_wrap_t);
-    wrap->func               = func;
-    wrap->arg                = arg;
+    DWORD               threadid = 0;
+    thread_call_wrap_t* wrap     = safe_new_obj(thread_call_wrap_t);
+    wrap->func                   = func;
+    wrap->arg                    = arg;
 
     thread->handle = CreateThread(NULL, stack_size, thread_call_wrapper, wrap, /**/
                                   STACK_SIZE_PARAM_IS_A_RESERVATION, &threadid);
