@@ -305,6 +305,22 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define GNU_CONSTRUCTOR GNU_DUMMY_ATTRIBUTE
 #endif
 
+// Thread-local storage specifier (Optional, check presence via ifdef THREAD_LOCAL)
+#undef THREAD_LOCAL
+#if !defined(USE_NO_THREAD_LOCAL) && (GCC_CHECK_VER(3, 3) || CLANG_CHECK_VER(3, 0))
+// Use GNU __thread attribute on GCC 3.3+ and Clang 3.0+
+#define THREAD_LOCAL __thread
+#elif !defined(USE_NO_THREAD_LOCAL) && defined(_MSC_VER)
+// Use MSVC __declspec(thread)
+#define THREAD_LOCAL __declspec(thread)
+#elif !defined(USE_NO_THREAD_LOCAL) && __STDC_VERSION__ >= 202000LL && !defined(__STDC_NO_THREADS__)
+// Use C23 thread_local (GCC 14 reports 202000LL for C23 as of now)
+#define THREAD_LOCAL thread_local
+#elif !defined(USE_NO_THREAD_LOCAL) && __STDC_VERSION__ >= 201112LL && !defined(__STDC_NO_THREADS__)
+// Use C11 _Thread_local (Deprecated since C23, but we don't need to include <threads.h> that way)
+#define THREAD_LOCAL _Thread_local
+#endif
+
 /*
  * Warning suppression helpers
  */
