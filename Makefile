@@ -399,6 +399,11 @@ endif
 # Useflag automation magic
 #
 
+ifeq (,$(.VARIABLES))
+# Backward compatibility with ancient GNU Make (3.x) where .VARIABLES is not even supported yet
+.VARIABLES := $(filter USE_%,$(shell grep '^USE_' Makefile)) $(filter SRC_USE_%,$(shell grep '^override SRC_USE_' Makefile))
+endif
+
 override USEFLAGS := $(sort $(filter USE_%,$(.VARIABLES)))
 
 # Filter out all conditionally compiled C/C++ sources
