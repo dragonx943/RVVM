@@ -544,13 +544,12 @@ endif
 # Check LTO support on GCC/Clang 5.0+
 ifeq ($(if $(CC_AT_LEAST_5_0),$(USE_LTO)),1)
 override LTO_CHECK_OUT := $(OBJDIR)/lto_lest$(BIN_EXT)
-override LTO_SUPPORTED := $(wildcard $(LTO_CHECK_OUT))
+override LTO_SUPPORTED := $(if $(wildcard $(LTO_CHECK_OUT)),1)
 ifeq (,$(LTO_SUPPORTED))
 override LTO_ERROR     := $(shell echo "int main(){return 0;}" | $(CC) -O2 -flto -xc -o $(LTO_CHECK_OUT) - 2>&1)
 ifeq (,$(findstring lto,$(LTO_ERROR))$(findstring LTO,$(LTO_ERROR)))
-override LTO_SUPPORTED := $(wildcard $(LTO_CHECK_OUT))
-endif
-ifeq (,$(LTO_SUPPORTED))
+override LTO_SUPPORTED := 1
+else
 $(info $(INFO_PREFIX) LTO is not supported by this toolchain: $(wordlist 2,8,$(LTO_ERROR))$(RESET))
 endif
 endif
