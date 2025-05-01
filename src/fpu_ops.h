@@ -21,6 +21,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // Fix rounding misoptimizations even when -frounding-math is not present
 #if CLANG_CHECK_VER(12, 0)
+#pragma float_control(precise)
 #pragma STDC FENV_ACCESS ON
 #elif defined(_MSC_VER)
 #pragma fenv_access(on)
