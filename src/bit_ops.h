@@ -285,8 +285,8 @@ static inline uint64_t bit_orc_b(uint64_t val)
     // Only non-zero bytes will hold 0x80 pattern afterwards
     val = (((val | bytes_hi) - bytes_lo) | val) & bytes_hi;
     // Spill 0x80 pattern into 0xFF via shift-subtract
-    val >>= 7;
-    return (val << 8) - val;
+    val = val >> 7;
+    val = (val << 8) - val;
 #endif
     return val;
 }
