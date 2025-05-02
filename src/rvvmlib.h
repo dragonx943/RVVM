@@ -28,9 +28,9 @@ RVVM_EXTERN_C_BEGIN
 #include <stddef.h>
 #include <stdbool.h>
 
-#if defined(_WIN32) && defined(RVVMLIB_SHARED)
+#if (defined(_WIN32) || defined(__CYGWIN__)) && defined(RVVMLIB_SHARED)
 #define PUBLIC __declspec(dllimport)
-#elif defined(_WIN32) && defined(USE_LIB)
+#elif (defined(_WIN32) || defined(__CYGWIN__)) && defined(USE_LIB)
 #define PUBLIC __declspec(dllexport)
 #elif __GNUC__ >= 4 && (defined(RVVMLIB_SHARED) || defined(USE_LIB))
 #define PUBLIC __attribute__((visibility("default")))
