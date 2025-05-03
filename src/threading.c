@@ -7,12 +7,18 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-// Make POSIX/GNU/BSD features available in strict C standard mode
+// Make POSIX 2008,  GNU, BSD, Darwin features available in strict C standard mode
 // For clock_gettime(), pthread_condattr_setclock(), pthread_cond_timedwait_relative_np()
+#undef _GNU_SOURCE
 #define _GNU_SOURCE
+#undef _BSD_SOURCE
 #define _BSD_SOURCE
+#undef _DEFAULT_SOURCE
 #define _DEFAULT_SOURCE
+#undef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
+#undef _DARWIN_C_SOURCE
+#define _DARWIN_C_SOURCE
 
 #include "threading.h"
 #include "compiler.h"
