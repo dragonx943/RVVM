@@ -56,9 +56,9 @@ static void print_string(const char* str)
     while (*tmp++) {
         count++;
     }
-    WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), str, count, &count, NULL);
+    WriteFile(GetStdHandle(STD_ERROR_HANDLE), str, count, &count, NULL);
 #else
-    puts(str);
+    fputs(str, stderr);
 #endif
 }
 
