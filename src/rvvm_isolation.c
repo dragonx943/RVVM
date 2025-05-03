@@ -7,10 +7,12 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-// Needed for pledge()
+// Make POSIX/GNU/BSD features available in strict C standard mode
+// For getpwnam_r(), prctl(), pledge()
 #define _GNU_SOURCE
 #define _BSD_SOURCE
 #define _DEFAULT_SOURCE
+#define _POSIX_C_SOURCE 200809L
 
 #include "rvvm_isolation.h"
 #include "compiler.h"
