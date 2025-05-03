@@ -13,10 +13,12 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define _FILE_OFFSET_BITS 64
 #define _LARGEFILE64_SOURCE
 
-// Needed for pread()/pwrite(), syscall() when not passing -std=gnu..
+// Make POSIX/GNU/BSD features available in strict C standard mode
+// For pread(), pwrite(), fallocate(), fdatasync(), posix_fallocate()
 #define _GNU_SOURCE
 #define _BSD_SOURCE
 #define _DEFAULT_SOURCE
+#define _POSIX_C_SOURCE 200809L
 
 #include "blk_io.h"
 
