@@ -7,10 +7,12 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-// Needed for clock_gettime() when not passing -std=gnu..
+// Make POSIX/GNU/BSD features available in strict C standard mode
+// For clock_gettime(), nanosleep(), sched_yield(), prctl()
 #define _GNU_SOURCE
 #define _BSD_SOURCE
 #define _DEFAULT_SOURCE
+#define _POSIX_C_SOURCE 200809L
 
 #include <time.h>
 
