@@ -780,7 +780,7 @@ size_t net_parse_addr(net_addr_t* addr, const char* str)
     const char* parse      = str;
     const char* colon      = rvvm_strfind(parse, ":");
     bool        ipv6       = colon && rvvm_strfind(colon + 1, ":"); // More than a single :
-    bool        ipv4       = rvvm_strfind(parse, ".");
+    bool        ipv4       = !!rvvm_strfind(parse, ".");
     bool        parse_port = false;
     size_t      ip_len     = 0;
     if (ipv6) {
