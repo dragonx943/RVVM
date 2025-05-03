@@ -799,7 +799,7 @@ static bool workqueue_submit(work_queue_t* wq, thread_func_t func, void** arg, u
             }
         } else if (diff < 0) {
             // Queue is full
-            return false;
+            break;
         } else {
             // Another producer stole our task slot, reload the head pointer
             head = atomic_load_uint32_ex(&wq->head, ATOMIC_RELAXED);
