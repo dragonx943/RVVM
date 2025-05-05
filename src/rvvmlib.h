@@ -32,7 +32,7 @@ RVVM_EXTERN_C_BEGIN
 #define PUBLIC __declspec(dllimport)
 #elif (defined(_WIN32) || defined(__CYGWIN__)) && defined(USE_LIB)
 #define PUBLIC __declspec(dllexport)
-#elif __GNUC__ >= 4 && (defined(RVVMLIB_SHARED) || defined(USE_LIB))
+#elif defined(__GNUC__) && __GNUC__ >= 4 && (defined(RVVMLIB_SHARED) || defined(USE_LIB))
 #define PUBLIC __attribute__((visibility("default")))
 #else
 // It's a static lib or rvvm-cli
