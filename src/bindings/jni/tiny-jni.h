@@ -50,22 +50,25 @@
 extern "C" {
 #endif
 
-#include <stdint.h> /* Use modern standard type definitions */
+/* Use modern standard type definitions */
+#include <stdint.h>
 #include <stddef.h>
 #include <stdarg.h>
 
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(__CYGWIN__)
+/* Use __declspec() for export/import, __stdcall calling convention on Windows */
 #define JNIEXPORT __declspec(dllexport)
 #define JNIIMPORT __declspec(dllimport)
 #define JNICALL   __stdcall
-#elif defined(__GNUC__)
+#elif defined(__GNUC__) && __GNUC__ >= 4
+/* Use visibility attribute on GCC 4.x+ (Clang also defines this properly) */
 #define JNIEXPORT __attribute__((visibility("default")))
 #define JNIIMPORT __attribute__((visibility("default")))
 #define JNICALL
 #else
 /*
- * Build the project anyways under unsupported target for JNI.
- * Here you might add your own attributes for porting
+ * No special attributes are needed for GCC <4.x
+ * NOTE: Please add required attribute handling if ever needed
  */
 #define JNIEXPORT
 #define JNIIMPORT
