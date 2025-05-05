@@ -712,9 +712,9 @@ static forceinline void* atomic_load_pointer_ex(const void* addr, int memorder)
 #elif defined(GNU_ATOMICS_IMPL) && defined(GNU_ATOMICS_INTRINS)
     return __atomic_load_n(NONCONST_CAST(void**, addr), memorder);
 #elif defined(HOST_64BIT)
-    return (void*)atomic_load_uint64_ex(addr, memorder);
+    return (void*)(uintptr_t)atomic_load_uint64_ex(addr, memorder);
 #elif defined(HOST_32BIT)
-    return (void*)atomic_load_uint32_ex(addr, memorder);
+    return (void*)(uintptr_t)atomic_load_uint32_ex(addr, memorder);
 #else
 #error Unknown CPU bitness and no C11/GNU atomics!
 #endif
@@ -731,9 +731,9 @@ static forceinline bool atomic_cas_pointer_ex(void* addr, void* exp, void* val, 
 #elif defined(GNU_ATOMICS_IMPL) && defined(GNU_ATOMICS_INTRINS) && (!defined(__riscv_a) || __riscv_xlen > 64)
     return __atomic_compare_exchange_n((void**)addr, &exp, val, weak, succ, fail);
 #elif defined(HOST_64BIT)
-    return atomic_cas_uint64_ex(addr, (uint64_t)exp, (uint64_t)val, weak, succ, fail);
+    return atomic_cas_uint64_ex(addr, (uintptr_t)exp, (uintptr_t)val, weak, succ, fail);
 #elif defined(HOST_32BIT)
-    return atomic_cas_uint32_ex(addr, (uint32_t)exp, (uint32_t)val, weak, succ, fail);
+    return atomic_cas_uint32_ex(addr, (uintptr_t)exp, (uintptr_t)val, weak, succ, fail);
 #else
 #error Unknown CPU bitness and no C11/GNU atomics!
 #endif
@@ -746,9 +746,9 @@ static forceinline void* atomic_swap_pointer_ex(void* addr, void* val, int memor
 #elif defined(GNU_ATOMICS_IMPL) && defined(GNU_ATOMICS_INTRINS)
     return __atomic_exchange_n((void**)addr, val, memorder);
 #elif defined(HOST_64BIT)
-    return (void*)atomic_swap_uint64_ex(addr, (uint64_t)val, memorder);
+    return (void*)(uintptr_t)atomic_swap_uint64_ex(addr, (uintptr_t)val, memorder);
 #elif defined(HOST_32BIT)
-    return (void*)atomic_swap_uint32_ex(addr, (uint32_t)val, memorder);
+    return (void*)(uintptr_t)atomic_swap_uint32_ex(addr, (uintptr_t)val, memorder);
 #else
 #error Unknown CPU bitness and no C11/GNU atomics!
 #endif
@@ -760,6 +760,10 @@ static forceinline void atomic_store_pointer_ex(void* addr, void* val, int memor
     atomic_store_explicit((void* _Atomic*)addr, val, memorder);
 #elif defined(GNU_ATOMICS_IMPL) && defined(GNU_ATOMICS_INTRINS)
     __atomic_store_n((void**)addr, val, memorder);
+#elif defined(HOST_64BIT)
+    atomic_store_uint64_ex(addr, (uintptr_t)val, memorder);
+#elif defined(HOST_32BIT)
+    atomic_store_uint32_ex(addr, (uintptr_t)val, memorder);
 #else
     atomic_swap_pointer_ex(addr, val, memorder);
 #endif
