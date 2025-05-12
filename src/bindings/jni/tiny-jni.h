@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1996, 2022, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1996, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -108,6 +108,8 @@ extern "C" {
 #define JNI_VERSION_10  0x000a0000
 #define JNI_VERSION_19  0x00130000
 #define JNI_VERSION_20  0x00140000
+#define JNI_VERSION_21  0x00150000
+#define JNI_VERSION_24  0x00180000
 
 typedef uint8_t  jboolean;
 typedef int8_t   jbyte;
@@ -395,9 +397,14 @@ struct JNINativeInterface_ {
     jobject (JNICALL *NewDirectByteBuffer) (JNIEnv* env, void* address, jlong capacity);
     void* (JNICALL *GetDirectBufferAddress) (JNIEnv* env, jobject buf);
     jlong (JNICALL *GetDirectBufferCapacity) (JNIEnv* env, jobject buf);
+    /* New JNI 1.6 Features */
     jobjectRefType (JNICALL *GetObjectRefType) (JNIEnv* env, jobject obj);
+    /* Module Features */
     jobject (JNICALL *GetModule) (JNIEnv* env, jclass clazz);
+    /* Virtual threads */
     jboolean (JNICALL *IsVirtualThread) (JNIEnv* env, jobject obj);
+    /* Large UTF8 Support */
+    jlong (JNICALL *GetStringUTFLengthAsLong) (JNIEnv *env, jstring str);
 };
 
 struct JNIEnv_ {
@@ -515,6 +522,8 @@ struct JNIEnv_ {
     { return functions->NewStringUTF(this, utf); }
     jsize GetStringUTFLength(jstring str)
     { return functions->GetStringUTFLength(this,str); }
+    jlong GetStringUTFLengthAsLong(jstring str)
+    { return functions->GetStringUTFLengthAsLong(this,str); }
     const char* GetStringUTFChars(jstring str, jboolean *isCopy)
     { return functions->GetStringUTFChars(this, str, isCopy); }
     void ReleaseStringUTFChars(jstring str, const char* chars)
