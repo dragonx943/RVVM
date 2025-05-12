@@ -56,15 +56,21 @@ extern "C" {
 #include <stdarg.h>
 
 #if defined(_WIN32) || defined(__CYGWIN__)
-/* Use __declspec() for export/import, __stdcall calling convention on Windows */
+/*
+ * Use __declspec() for export/import, __stdcall calling convention on Windows
+ * NOTE: Vararg functions can't have __stdcall calling convention, and were always implicitly __cdecl.
+ * We explicitly mark them as JNIVACALL which unwraps to __cdecl to prevent warnings on Clang.
+ */
 #define JNIEXPORT __declspec(dllexport)
 #define JNIIMPORT __declspec(dllimport)
 #define JNICALL   __stdcall
+#define JNIVACALL __cdecl
 #elif defined(__GNUC__) && __GNUC__ >= 4
 /* Use visibility attribute on GCC 4.x+ (Clang also defines this properly) */
 #define JNIEXPORT __attribute__((visibility("default")))
 #define JNIIMPORT __attribute__((visibility("default")))
 #define JNICALL
+#define JNIVACALL
 #else
 /*
  * No special attributes are needed for GCC <4.x
@@ -73,6 +79,7 @@ extern "C" {
 #define JNIEXPORT
 #define JNIIMPORT
 #define JNICALL
+#define JNIVACALL
 #endif
 
 #define JNI_FALSE 0
@@ -232,14 +239,14 @@ struct JNINativeInterface_ {
     jobject (JNICALL *NewLocalRef) (JNIEnv *env, jobject ref);
     jint (JNICALL *EnsureLocalCapacity) (JNIEnv *env, jint capacity);
     jobject (JNICALL *AllocObject) (JNIEnv *env, jclass clazz);
-    jobject (JNICALL *NewObject) (JNIEnv *env, jclass clazz, jmethodID methodID, ...);
+    jobject (JNIVACALL *NewObject) (JNIEnv *env, jclass clazz, jmethodID methodID, ...);
     jobject (JNICALL *NewObjectV) (JNIEnv *env, jclass clazz, jmethodID methodID, va_list args);
     jobject (JNICALL *NewObjectA) (JNIEnv *env, jclass clazz, jmethodID methodID, const jvalue *args);
     jclass (JNICALL *GetObjectClass) (JNIEnv *env, jobject obj);
     jboolean (JNICALL *IsInstanceOf) (JNIEnv *env, jobject obj, jclass clazz);
     jmethodID (JNICALL *GetMethodID) (JNIEnv *env, jclass clazz, const char *name, const char *sig);
 #define JNI_C_GEN_CALL(C_TYPE, JAVA_TYPE) \
-    C_TYPE (JNICALL *Call##JAVA_TYPE##Method) (JNIEnv *env, jobject obj, jmethodID methodID, ...); \
+    C_TYPE (JNIVACALL *Call##JAVA_TYPE##Method) (JNIEnv *env, jobject obj, jmethodID methodID, ...); \
     C_TYPE (JNICALL *Call##JAVA_TYPE##MethodV) (JNIEnv *env, jobject obj, jmethodID methodID, va_list args); \
     C_TYPE (JNICALL *Call##JAVA_TYPE##MethodA) (JNIEnv *env, jobject obj, jmethodID methodID, const jvalue * args);
     JNI_C_GEN_CALL(jobject, Object)
@@ -253,7 +260,7 @@ struct JNINativeInterface_ {
     JNI_C_GEN_CALL(jdouble, Double)
     JNI_C_GEN_CALL(void, Void)
 #define JNI_C_GEN_NONVIRT_CALL(C_TYPE, JAVA_TYPE) \
-    C_TYPE (JNICALL *CallNonvirtual##JAVA_TYPE##Method) (JNIEnv *env, jobject obj, jclass clazz, jmethodID methodID, ...); \
+    C_TYPE (JNIVACALL *CallNonvirtual##JAVA_TYPE##Method) (JNIEnv *env, jobject obj, jclass clazz, jmethodID methodID, ...); \
     C_TYPE (JNICALL *CallNonvirtual##JAVA_TYPE##MethodV) (JNIEnv *env, jobject obj, jclass clazz, jmethodID methodID, va_list args); \
     C_TYPE (JNICALL *CallNonvirtual##JAVA_TYPE##MethodA) (JNIEnv *env, jobject obj, jclass clazz, jmethodID methodID, const jvalue * args);
     JNI_C_GEN_NONVIRT_CALL(jobject, Object)
@@ -287,7 +294,7 @@ struct JNINativeInterface_ {
     void (JNICALL *SetDoubleField) (JNIEnv *env, jobject obj, jfieldID fieldID, jdouble val);
     jmethodID (JNICALL *GetStaticMethodID) (JNIEnv *env, jclass clazz, const char *name, const char *sig);
 #define JNI_C_GEN_STATIC_CALL(C_TYPE, JAVA_TYPE) \
-    C_TYPE (JNICALL *CallStatic##JAVA_TYPE##Method) (JNIEnv *env, jclass clazz, jmethodID methodID, ...); \
+    C_TYPE (JNIVACALL *CallStatic##JAVA_TYPE##Method) (JNIEnv *env, jclass clazz, jmethodID methodID, ...); \
     C_TYPE (JNICALL *CallStatic##JAVA_TYPE##MethodV) (JNIEnv *env, jclass clazz, jmethodID methodID, va_list args); \
     C_TYPE (JNICALL *CallStatic##JAVA_TYPE##MethodA) (JNIEnv *env, jclass clazz, jmethodID methodID, const jvalue *args);
     JNI_C_GEN_STATIC_CALL(jobject, Object)
