@@ -11,7 +11,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "chardev.h"
 #include <stdio.h> // For fputs(), setvbuf()
 
-#if (defined(__unix__) || defined(__APPLE__) || defined(__HAIKU__)) && !defined(__EMSCRIPTEN__)
+#if defined(__unix__) || defined(__APPLE__) || defined(__HAIKU__)
 #include <fcntl.h>    // For open()
 #include <sys/time.h> // For select()
 #include <termios.h>  // For tcgetattr(), tcsetattr(), etc
