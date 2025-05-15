@@ -230,7 +230,7 @@ static forceinline bool atomic_cas_uint32_ex(void* addr, uint32_t exp, uint32_t 
                          "bnez %0, lrsc_cas_loop%= \n\t"
                          "lrsc_cas_exit%=: "
                          : "=&r"(ret), "=&r"(tmp)
-                         : "r"(exp), "r"(val), "p"(addr)
+                         : "r"(exp), "r"(val), "r"(addr)
                          : "memory");
     return tmp == exp;
 #elif defined(C11_ATOMICS_IMPL)
@@ -485,7 +485,7 @@ static forceinline bool atomic_cas_uint64_ex(void* addr, uint64_t exp, uint64_t 
                          "bnez %0, lrsc_cas_loop%= \n\t"
                          "lrsc_cas_exit%=: "
                          : "=&r"(ret), "=&r"(tmp)
-                         : "r"(exp), "r"(val), "p"(addr)
+                         : "r"(exp), "r"(val), "r"(addr)
                          : "memory");
     return tmp == exp;
 #elif defined(C11_ATOMICS_IMPL)
