@@ -5,6 +5,7 @@ Copyright (C) 2021  LekKit <github.com/LekKit>
                     Mr0maks <mr.maks0443@gmail.com>
                     KotB <github.com/0xCatPKG>
                     fish4terrisa-MSDSM <fish4terrisa@fishinix.eu.org>
+                    David Korenchuk <github.com/epoll-reactor-2>
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -39,6 +40,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include "devices/riscv-plic.h"
 #include "devices/rtc-goldfish.h"
 #include "devices/rtl8169.h"
+#include "devices/sound-hda.h"
 #include "devices/syscon.h"
 #include "devices/usb-xhci.h"
 
@@ -100,6 +102,7 @@ static void rvvm_print_help(void)
         "    -nvme       ...  Explicitly attach storage image as NVMe device\n"
         "    -ata        ...  Explicitly attach storage image as ATA (IDE) device\n"
         "    -nogui           Disable display GUI\n"
+        "    -nosound         Disable sound support\n"
         "    -nonet           Disable networking\n"
         "    -serial     ...  Add more serial ports (Via pty/pipe path), or null\n"
         "    -dtb        ...  Pass custom Device Tree Blob to the machine\n"
@@ -262,6 +265,10 @@ static int rvvm_cli_main(int argc, char** argv)
 
     if (!rvvm_has_arg("nogui") && !rvvm_has_arg("res")) {
         gui_window_init_auto(machine, 640, 480);
+    }
+
+    if (!rvvm_has_arg("nosound")) {
+        sound_hda_init_auto(machine);
     }
 
     tap_dev_t* tap = NULL;

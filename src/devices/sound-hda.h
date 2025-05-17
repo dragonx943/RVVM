@@ -13,6 +13,16 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "rvvmlib.h"
 #include "pci-bus.h"
 
+typedef struct sound_subsystem_t sound_subsystem_t;
+
+struct sound_subsystem_t {
+    void *sound_data;
+    void (*write)(sound_subsystem_t *subsystem, void *data, size_t size);
+};
+
+// Internal use
+bool alsa_sound_init(sound_subsystem_t *sound);
+
 PUBLIC pci_dev_t* sound_hda_init(pci_bus_t* pci_bus);
 PUBLIC pci_dev_t* sound_hda_init_auto(rvvm_machine_t* machine);
 
