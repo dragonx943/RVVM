@@ -355,9 +355,11 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 // Determine host bitness (Possibly neither 32/64 bit)
 #undef HOST_64BIT
 #undef HOST_32BIT
-#if (UINTPTR_MAX == 0xFFFFFFFFFFFFFFFFULL) || (SIZE_MAX == 0xFFFFFFFFFFFFFFFFULL)
+#if defined(__LP64__) || defined(_M_AMD64) || defined(_M_ARM64)                                                        \
+    || (defined(UINTPTR_MAX) && (UINTPTR_MAX == 0xFFFFFFFFFFFFFFFFULL))                                                \
+    || (defined(SIZE_MAX) && (SIZE_MAX == 0xFFFFFFFFFFFFFFFFULL))
 #define HOST_64BIT 1
-#elif (UINTPTR_MAX == 0xFFFFFFFFU) || (SIZE_MAX == 0xFFFFFFFFU)
+#elif !defined(UINTPTR_MAX) || !defined(SIZE_MAX) || (UINTPTR_MAX == 0xFFFFFFFFU) || (SIZE_MAX == 0xFFFFFFFFU)
 #define HOST_32BIT 1
 #endif
 
