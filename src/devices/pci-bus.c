@@ -338,7 +338,9 @@ static void pci_func_update_msix_mask(pci_func_t* func)
             if (pending) {
                 pending = atomic_swap_uint32(&func->msix[PCI_MSIX_TBL_SIZE + reg], 0);
                 for (size_t bit = 0; bit < 32; ++bit) {
-                    pci_func_send_msix_irq(func, (reg << 5) | bit);
+                    if (bit_check(pending, bit)) {
+                        pci_func_send_msix_irq(func, (reg << 5) | bit);
+                    }
                 }
             }
         }
