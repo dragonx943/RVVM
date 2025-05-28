@@ -276,7 +276,7 @@ bool gui_window_init_backend(gui_window_t* win)
     return false;
 }
 
-bool gui_window_init_auto(rvvm_machine_t* machine, uint32_t width, uint32_t height)
+PUBLIC bool gui_window_init_auto(rvvm_machine_t* machine, uint32_t width, uint32_t height)
 {
     gui_window_t* win = safe_new_obj(gui_window_t);
     gui_window_data_t* wdata = safe_new_obj(gui_window_data_t);
@@ -328,7 +328,7 @@ bool gui_window_init_auto(rvvm_machine_t* machine, uint32_t width, uint32_t heig
 
 #else
 
-bool gui_window_init_auto(rvvm_machine_t* machine, uint32_t width, uint32_t height)
+PUBLIC bool gui_window_init_auto(rvvm_machine_t* machine, uint32_t width, uint32_t height)
 {
     UNUSED(machine);
     UNUSED(width);

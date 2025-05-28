@@ -7,8 +7,8 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#ifndef GUI_WINDOW_H
-#define GUI_WINDOW_H
+#ifndef RVVM_GUI_WINDOW_H
+#define RVVM_GUI_WINDOW_H
 
 #include "framebuffer.h"
 #include "hid_api.h"
@@ -51,6 +51,6 @@ bool sdl_window_init(gui_window_t* win);
 bool gui_window_init_backend(gui_window_t* win);
 
 // Attach a framebuffer & HID mouse/keyboard to the VM. Returns false on failure.
-bool gui_window_init_auto(rvvm_machine_t* machine, uint32_t width, uint32_t height);
+PUBLIC bool gui_window_init_auto(rvvm_machine_t* machine, uint32_t width, uint32_t height);
 
 #endif
