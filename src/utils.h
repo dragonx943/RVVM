@@ -12,19 +12,19 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef RVVM_UTILS_H
 #define RVVM_UTILS_H
 
-#include "compiler.h"
 #include "atomics.h"
+#include "rvvmlib.h"
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdlib.h>
-#include <stdbool.h>
 
 /*
  * String & numeric helpers
  */
 
 // Evaluate max/min value
-#define EVAL_MAX(a, b) ((a) > (b) ? (a) : (b))
-#define EVAL_MIN(a, b) ((a) < (b) ? (a) : (b))
+#define EVAL_MAX(a, b)         ((a) > (b) ? (a) : (b))
+#define EVAL_MIN(a, b)         ((a) < (b) ? (a) : (b))
 
 // Compute length of a static array
 #define STATIC_ARRAY_SIZE(arr) (sizeof(arr) / sizeof(*(arr)))
@@ -42,38 +42,44 @@ static inline size_t align_size_down(size_t x, size_t align)
 }
 
 // Portable strtol/ltostr replacement
-size_t   uint_to_str_base(char* str, size_t size, uint64_t val, uint8_t base);
-uint64_t str_to_uint_base(const char* str, size_t* len, uint8_t base);
-size_t   int_to_str_base(char* str, size_t size, int64_t val, uint8_t base);
-int64_t  str_to_int_base(const char* str, size_t* len, uint8_t base);
-size_t   int_to_str_dec(char* str, size_t size, int64_t val);
-int64_t  str_to_int_dec(const char* str);
+PUBLIC size_t   uint_to_str_base(char* str, size_t size, uint64_t val, uint8_t base);
+PUBLIC uint64_t str_to_uint_base(const char* str, size_t* len, uint8_t base);
+PUBLIC size_t   int_to_str_base(char* str, size_t size, int64_t val, uint8_t base);
+PUBLIC int64_t  str_to_int_base(const char* str, size_t* len, uint8_t base);
+PUBLIC size_t   int_to_str_dec(char* str, size_t size, int64_t val);
+PUBLIC int64_t  str_to_int_dec(const char* str);
 
 // Portable & safer string.h replacement
-size_t      rvvm_strlen(const char* string);
-size_t      rvvm_strnlen(const char* string, size_t size);
-bool        rvvm_strcmp(const char* s1, const char* s2);
-size_t      rvvm_strlcpy(char* dst, const char* src, size_t size);
-const char* rvvm_strfind(const char* string, const char* pattern);
+PUBLIC size_t      rvvm_strlen(const char* string);
+PUBLIC size_t      rvvm_strnlen(const char* string, size_t size);
+PUBLIC bool        rvvm_strcmp(const char* s1, const char* s2);
+PUBLIC size_t      rvvm_strlcpy(char* dst, const char* src, size_t size);
+PUBLIC const char* rvvm_strfind(const char* string, const char* pattern);
 
 static inline size_t mem_suffix_shift(char suffix)
 {
     switch (suffix) {
-        case 'k': return 10;
-        case 'K': return 10;
-        case 'm': return 20;
-        case 'M': return 20;
-        case 'g': return 30;
-        case 'G': return 30;
-        default: return 0;
+        case 'k':
+        case 'K':
+            return 10;
+        case 'm':
+        case 'M':
+            return 20;
+        case 'g':
+        case 'G':
+            return 30;
+        case 'T':
+            return 40;
+        default:
+            return 0;
     }
 }
 
 // Generate random bytes
-void rvvm_randombytes(void* buffer, size_t size);
+PUBLIC void rvvm_randombytes(void* buffer, size_t size);
 
 // Generate random serial number (0-9, A-Z)
-void rvvm_randomserial(char* serial, size_t size);
+PUBLIC void rvvm_randomserial(char* serial, size_t size);
 
 /*
  * Safe memory allocation
@@ -90,21 +96,21 @@ void rvvm_randomserial(char* serial, size_t size);
 #endif
 
 // These never return NULL
-SAFE_MALLOC  void* safe_malloc(size_t size);
-SAFE_CALLOC  void* safe_calloc(size_t size, size_t n);
-SAFE_REALLOC void* safe_realloc(void* ptr, size_t size);
+PUBLIC SAFE_MALLOC void*  safe_malloc(size_t size);
+PUBLIC SAFE_CALLOC void*  safe_calloc(size_t size, size_t n);
+PUBLIC SAFE_REALLOC void* safe_realloc(void* ptr, size_t size);
 
 // Safe object allocation with type checking & zeroing
 #define safe_new_arr(type, size) ((type*)safe_calloc(size, sizeof(type)))
-#define safe_new_obj(type) safe_new_arr(type, 1)
+#define safe_new_obj(type)       safe_new_arr(type, 1)
 
-#define default_free(ptr) (free)(ptr)
+#define default_free(ptr)        (free)(ptr)
 
-#define safe_free(ptr) \
-do { \
-    default_free(ptr); \
-    ptr = NULL; \
-} while(0)
+#define safe_free(ptr)                                                                                                 \
+    do {                                                                                                               \
+        default_free(ptr);                                                                                             \
+        ptr = NULL;                                                                                                    \
+    } while (0)
 
 // Implicitly NULL freed pointer to prevent use-after-free
 #define free(ptr) safe_free(ptr)
@@ -114,22 +120,22 @@ do { \
  */
 
 // Set command line arguments
-void rvvm_set_args(int argc, char** argv);
+PUBLIC void rvvm_set_args(int argc, char** argv);
 
 // Load config file
-bool rvvm_load_config(const char* path);
+PUBLIC bool rvvm_load_config(const char* path);
 
 // Iterate over arguments in form of <-arg> [val], or <val> ("" is returned in such case)
-const char* rvvm_next_arg(const char** val, int* iter);
+PUBLIC const char* rvvm_next_arg(const char** val, int* iter);
 
 // Check if argument is present on the command line or in the config
-bool        rvvm_has_arg(const char* arg);
+PUBLIC bool rvvm_has_arg(const char* arg);
 
 // Get argument value
-const char* rvvm_getarg(const char* arg);
-bool        rvvm_getarg_bool(const char* arg);
-int         rvvm_getarg_int(const char* arg);
-uint64_t    rvvm_getarg_size(const char* arg);
+PUBLIC const char* rvvm_getarg(const char* arg);
+PUBLIC bool        rvvm_getarg_bool(const char* arg);
+PUBLIC int         rvvm_getarg_int(const char* arg);
+PUBLIC uint64_t    rvvm_getarg_size(const char* arg);
 
 /*
  * Logger
@@ -140,7 +146,7 @@ uint64_t    rvvm_getarg_size(const char* arg);
 #define LOG_WARN  2
 #define LOG_INFO  3
 
-void rvvm_set_loglevel(int loglevel);
+PUBLIC void rvvm_set_loglevel(int loglevel);
 
 #if GNU_ATTRIBUTE(__format__)
 #define PRINT_FORMAT __attribute__((__format__(printf, 1, 2)))
@@ -162,10 +168,10 @@ static PRINT_FORMAT forceinline void rvvm_debug(const char* format_str, ...)
 #endif
 
 // Logging functions (controlled by loglevel)
-PRINT_FORMAT void rvvm_info(const char* format_str, ...);
-PRINT_FORMAT void rvvm_warn(const char* format_str, ...);
-PRINT_FORMAT void rvvm_error(const char* format_str, ...);
-PRINT_FORMAT void rvvm_fatal(const char* format_str, ...); // Aborts the process
+PUBLIC PRINT_FORMAT void rvvm_info(const char* format_str, ...);
+PUBLIC PRINT_FORMAT void rvvm_warn(const char* format_str, ...);
+PUBLIC PRINT_FORMAT void rvvm_error(const char* format_str, ...);
+PUBLIC PRINT_FORMAT void rvvm_fatal(const char* format_str, ...); // Aborts the process
 
 /*
  * Initialization/deinitialization
@@ -196,12 +202,12 @@ slow_path void do_once_finalize(uint32_t* ticket);
  *
  * DO_ONCE(rvvm_warn("This will only be printed once upon reaching!"));
  */
-#define DO_ONCE(expr_once) \
-do { \
-    DO_ONCE_SCOPED { \
-        expr_once; \
-    } \
-} while (0)
+#define DO_ONCE(expr_once)                                                                                             \
+    do {                                                                                                               \
+        DO_ONCE_SCOPED {                                                                                               \
+            expr_once;                                                                                                 \
+        }                                                                                                              \
+    } while (0)
 
 // Register a callback to be ran at deinitialization (exit or library unload)
 void call_at_deinit(void (*function)(void));
