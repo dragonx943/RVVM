@@ -611,7 +611,7 @@ static const rvvm_mmio_type_t gdbstub_dev_type = {
     .remove = gdbstub_remove,
 };
 
-bool gdbstub_init(rvvm_machine_t* machine, const char* bind)
+PUBLIC bool gdbstub_init(rvvm_machine_t* machine, const char* bind)
 {
     gdb_server_t* server = gdbstub_create(bind);
     if (!server) {
@@ -636,7 +636,7 @@ bool gdbstub_init(rvvm_machine_t* machine, const char* bind)
 
 #else
 
-bool gdbstub_init(rvvm_machine_t* machine, const char* bind)
+PUBLIC bool gdbstub_init(rvvm_machine_t* machine, const char* bind)
 {
     UNUSED(machine); UNUSED(bind);
     return false;

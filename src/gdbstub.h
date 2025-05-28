@@ -14,7 +14,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 typedef struct gdb_server gdb_server_t;
 
-bool gdbstub_init(rvvm_machine_t* machine, const char* bind);
+PUBLIC bool gdbstub_init(rvvm_machine_t* machine, const char* bind);
 
 bool gdbstub_halt(gdb_server_t* server);
 
