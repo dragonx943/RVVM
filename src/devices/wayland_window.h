@@ -1,3 +1,5 @@
+#pragma GCC system_header
+
 /*
 wayland-window.h - Wayland protocols autogen for wayland backend
 */
