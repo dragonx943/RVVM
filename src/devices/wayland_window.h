@@ -1,3 +1,7 @@
+#if defined(__GNUC__) && __GNUC__ >= 4
+#pragma GCC system_header
+#endif
+
 /*
 wayland-window.h - Wayland protocols autogen for wayland backend
 */
