@@ -7,17 +7,19 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#include "bit_ops.h"
 #include "atomics.h"
-#include "threading.h"
+#include "bit_ops.h"
 #include "gdbstub.h"
-
 #include "rvvm_isolation.h"
+#include "rvvmlib.h"
+#include "threading.h"
+#include "utils.h"
+#include "vma_ops.h"
+
+#include "riscv_cpu.h"
+#include "riscv_csr.h"
 #include "riscv_hart.h"
 #include "riscv_mmu.h"
-#include "riscv_csr.h"
-#include "riscv_priv.h"
-#include "riscv_cpu.h"
 
 // Valid vm->pending_events bits deliverable to the hart
 #define HART_EVENT_PAUSE   0x1 // Pause the hart in a consistent state
@@ -25,12 +27,12 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 rvvm_hart_t* riscv_hart_init(rvvm_machine_t* machine)
 {
-    rvvm_hart_t* vm = safe_new_obj(rvvm_hart_t);
-    vm->wfi_cond = condvar_create();
-    vm->machine = machine;
-    vm->mem = machine->mem;
-    vm->rv64 = machine->rv64;
-    vm->priv_mode = RISCV_PRIV_MACHINE;
+    rvvm_hart_t* vm = vma_alloc(NULL, sizeof(rvvm_hart_t), VMA_RDWR);
+    vm->wfi_cond    = condvar_create();
+    vm->machine     = machine;
+    vm->mem         = machine->mem;
+    vm->rv64        = machine->rv64;
+    vm->priv_mode   = RISCV_PRIV_MACHINE;
 
     riscv_csr_init(vm);
 
@@ -41,7 +43,7 @@ rvvm_hart_t* riscv_hart_init(rvvm_machine_t* machine)
     return vm;
 }
 
-void riscv_hart_prepare(rvvm_hart_t *vm)
+void riscv_hart_prepare(rvvm_hart_t* vm)
 {
 #ifdef USE_JIT
     if (!vm->jit_enabled && rvvm_get_opt(vm->machine, RVVM_OPT_JIT)) {
@@ -72,11 +74,13 @@ void riscv_hart_aia_init(rvvm_hart_t* vm)
 void riscv_hart_free(rvvm_hart_t* vm)
 {
 #ifdef USE_JIT
-    if (vm->jit_enabled) rvjit_ctx_free(&vm->jit);
+    if (vm->jit_enabled) {
+        rvjit_ctx_free(&vm->jit);
+    }
 #endif
     condvar_free(vm->wfi_cond);
     free(vm->aia);
-    free(vm);
+    vma_free(vm, sizeof(rvvm_hart_t));
 }
 
 rvvm_addr_t riscv_hart_run_userland(rvvm_hart_t* vm)
@@ -86,7 +90,7 @@ rvvm_addr_t riscv_hart_run_userland(rvvm_hart_t* vm)
     riscv_run_till_event(vm);
     if (vm->trap) {
         vm->registers[RISCV_REG_PC] = vm->trap_pc;
-        vm->trap = false;
+        vm->trap                    = false;
     }
     return vm->csr.cause[RISCV_PRIV_USER];
 }
@@ -155,9 +159,8 @@ static void riscv_trap_priv_helper(rvvm_hart_t* vm, uint8_t target_priv)
 static inline void riscv_restart_at_pc(rvvm_hart_t* vm, rvvm_uxlen_t pc)
 {
     vm->trap_pc = pc;
-    vm->trap = true;
+    vm->trap    = true;
     riscv_restart_dispatch(vm);
-
 }
 
 void riscv_trap(rvvm_hart_t* vm, bitcnt_t cause, rvvm_uxlen_t tval)
@@ -176,18 +179,20 @@ void riscv_trap(rvvm_hart_t* vm, bitcnt_t cause, rvvm_uxlen_t tval)
     if (vm->userland) {
         // Defer userland trap
         vm->csr.cause[RISCV_PRIV_USER] = cause;
-        vm->csr.tval[RISCV_PRIV_USER] = tval;
-        vm->trap_pc = vm->registers[RISCV_REG_PC];
+        vm->csr.tval[RISCV_PRIV_USER]  = tval;
+        vm->trap_pc                    = vm->registers[RISCV_REG_PC];
         riscv_restart_at_pc(vm, vm->registers[RISCV_REG_PC]);
     } else {
         // Target privilege mode
         uint8_t priv = RISCV_PRIV_MACHINE;
         // Delegate to lower privilege mode if needed
-        while ((priv > vm->priv_mode) && (vm->csr.edeleg[priv] & (1 << cause))) priv--;
+        while ((priv > vm->priv_mode) && (vm->csr.edeleg[priv] & (1 << cause))) {
+            priv--;
+        }
         // Write exception info
-        vm->csr.epc[priv] = vm->registers[RISCV_REG_PC];
+        vm->csr.epc[priv]   = vm->registers[RISCV_REG_PC];
         vm->csr.cause[priv] = cause;
-        vm->csr.tval[priv] = tval;
+        vm->csr.tval[priv]  = tval;
         // Modify exception stack in csr.status
         riscv_trap_priv_helper(vm, priv);
         // Jump to trap vector, switch to target priv
@@ -247,11 +252,11 @@ void riscv_send_aia_irq(rvvm_hart_t* vm, bool smode, uint32_t irq)
         rvvm_aia_regfile_t* aia = &vm->aia[smode];
         if (likely(atomic_load_uint32_relax(&aia->eidelivery))) {
             uint32_t thresh = atomic_load_uint32_relax(&aia->eithreshold) - 1;
-            uint32_t msip = smode ? RISCV_INTERRUPT_SEXTERNAL : RISCV_INTERRUPT_MEXTERNAL;
-            uint32_t reg = irq >> 5;
-            uint32_t val = (1U << (irq & 0x1F));
-            uint32_t eie = atomic_load_uint32_relax(&aia->eie[reg]);
-            uint32_t prev = atomic_or_uint32(&aia->eip[reg], val);
+            uint32_t msip   = smode ? RISCV_INTERRUPT_SEXTERNAL : RISCV_INTERRUPT_MEXTERNAL;
+            uint32_t reg    = irq >> 5;
+            uint32_t val    = (1U << (irq & 0x1F));
+            uint32_t eie    = atomic_load_uint32_relax(&aia->eie[reg]);
+            uint32_t prev   = atomic_or_uint32(&aia->eip[reg], val);
             if (likely((irq < thresh) && (val & eie) && !(val & prev))) {
                 // Newly arrived & enabled AIA IRQ below threshold
                 riscv_interrupt(vm, msip);
@@ -264,16 +269,16 @@ static uint32_t riscv_update_aia_internal(rvvm_hart_t* vm, bool smode, bool upda
 {
     uint32_t ret = 0;
     if (likely(vm->aia)) {
-        rvvm_aia_regfile_t* aia = &vm->aia[smode];
-        uint32_t thresh = atomic_load_uint32_relax(&aia->eithreshold) - 1;
-        uint32_t msip = smode ? RISCV_INTERRUPT_SEXTERNAL : RISCV_INTERRUPT_MEXTERNAL;
+        rvvm_aia_regfile_t* aia    = &vm->aia[smode];
+        uint32_t            thresh = atomic_load_uint32_relax(&aia->eithreshold) - 1;
+        uint32_t            msip   = smode ? RISCV_INTERRUPT_SEXTERNAL : RISCV_INTERRUPT_MEXTERNAL;
         if (update) {
             riscv_interrupt_clear(vm, msip);
         }
         if (likely(atomic_load_uint32_relax(&aia->eidelivery))) {
             for (size_t i = 0; i < RVVM_AIA_ARR_LEN; ++i) {
-                uint32_t eip = atomic_load_uint32_relax(&aia->eip[i]);
-                uint32_t eie = atomic_load_uint32_relax(&aia->eie[i]);
+                uint32_t eip  = atomic_load_uint32_relax(&aia->eip[i]);
+                uint32_t eie  = atomic_load_uint32_relax(&aia->eie[i]);
                 uint32_t bits = eip & eie;
                 if (bits) {
                     if (ret) {
@@ -281,8 +286,8 @@ static uint32_t riscv_update_aia_internal(rvvm_hart_t* vm, bool smode, bool upda
                         riscv_interrupt(vm, msip);
                         return ret;
                     } else {
-                        uint32_t bit = bit_clz32(bits) ^ 31;
-                        uint32_t irq = (i << 5) | bit;
+                        uint32_t bit  = bit_clz32(bits) ^ 31;
+                        uint32_t irq  = (i << 5) | bit;
                         uint32_t mask = ~(1U << bit);
                         if (likely(irq < thresh)) {
                             // Enabled AIA interrupt below threshold
@@ -367,14 +372,16 @@ static void riscv_handle_irqs(rvvm_hart_t* vm)
     uint32_t pending_irqs = riscv_interrupts_pending(vm);
     if (unlikely(pending_irqs)) {
         // Target privilege mode
-        uint8_t priv = RISCV_PRIV_MACHINE;
+        uint8_t  priv = RISCV_PRIV_MACHINE;
         uint32_t irqs = 0;
 
         // Delegate pending IRQs from M to the highest possible mode
         do {
-            irqs = pending_irqs & ~vm->csr.ideleg[priv];
+            irqs          = pending_irqs & ~vm->csr.ideleg[priv];
             pending_irqs &= vm->csr.ideleg[priv];
-            if (irqs) break;
+            if (irqs) {
+                break;
+            }
         } while (--priv);
 
         if (vm->priv_mode > priv) {
@@ -396,9 +403,9 @@ static void riscv_handle_irqs(rvvm_hart_t* vm)
         // Switch privilege
         riscv_switch_priv(vm, priv);
         // Write exception info
-        vm->csr.epc[priv] = vm->registers[RISCV_REG_PC];
+        vm->csr.epc[priv]   = vm->registers[RISCV_REG_PC];
         vm->csr.cause[priv] = irq | riscv_cause_irq_mask(vm);
-        vm->csr.tval[priv] = 0;
+        vm->csr.tval[priv]  = 0;
         // Jump to trap vector
         if (vm->csr.tvec[priv] & 1) {
             vm->registers[RISCV_REG_PC] = (vm->csr.tvec[priv] & (~3ULL)) + (irq << 2);
@@ -435,7 +442,7 @@ void riscv_hart_run(rvvm_hart_t* vm)
         riscv_run_till_event(vm);
         if (vm->trap) {
             vm->registers[RISCV_REG_PC] = vm->trap_pc;
-            vm->trap = false;
+            vm->trap                    = false;
         }
     }
 }
@@ -452,7 +459,7 @@ static void* riscv_hart_run_thread(void* ptr)
     return NULL;
 }
 
-void riscv_hart_spawn(rvvm_hart_t *vm)
+void riscv_hart_spawn(rvvm_hart_t* vm)
 {
     if (!vm->thread) {
         atomic_store_uint32(&vm->pending_events, 0);
