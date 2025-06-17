@@ -170,11 +170,6 @@ static void seccomp_setup_syscall_filter(bool all_threads) {
     struct sock_filter filter[] = {
         BPF_STMT(BPF_LD + BPF_W + BPF_ABS, offsetof(struct seccomp_data, nr)),
 
-#ifdef __X32_SYSCALL_BIT
-        // Handle x32 syscalls same as usual
-        BPF_STMT(BPF_ALU + BPF_AND + BPF_K, ~(__X32_SYSCALL_BIT)),
-#endif
-
         // Fast path for frequent syscalls
 #ifdef __NR_sched_yield
         BPF_SECCOMP_ALLOW_SYSCALL(__NR_sched_yield)
