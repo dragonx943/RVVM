@@ -32,7 +32,7 @@ static slow_path void spin_lock_debug_report(spinlock_t* lock, bool crash)
     UNUSED(lock);
 #endif
 #if defined(RVVM_VERSION)
-    rvvm_warn("Version: RVVM v" RVVM_VERSION);
+    rvvm_warn("Version: RVVM " RVVM_VERSION);
 #endif
     if (crash) {
         rvvm_fatal("Locking issue detected!");
