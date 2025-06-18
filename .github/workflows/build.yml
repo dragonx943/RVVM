@@ -9,92 +9,142 @@ on:
   schedule:
     - cron: "0 0 * * *"
 
-env:
-  CFLAGS: -Werror
-
 jobs:
-  linux-x86_64-build:
+  linux-build:
+    name: Build on linux (${{ matrix.arch }})
     runs-on: ubuntu-latest
+    env:
+      X11_DEPS: libx11-dev libxext-dev
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            cc: gcc
+            release_dir: release.linux.x86_64
+
+          - arch: riscv64
+            cc: riscv64-linux-gnu-gcc
+            deps: sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends gcc-riscv64-linux-gnu libc6-dev-riscv64-cross
+            release_dir: release.linux.riscv64
+
     steps:
     - name: Checkout
       uses: actions/checkout@v4.1.1
-    - name: Install libX11
-      run: sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends libx11-dev libxext-dev
+
+    - name: Install Dependencies
+      run: |
+        sudo DEBIAN_FRONTEND=noninteractive apt-get update
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends ${{ env.X11_DEPS }}
+        ${{ matrix.deps }}
+
     - name: Build
-      run: make
+      run: make CC=${{ matrix.cc }} CFLAGS="-Werror"
+
     - name: Run RISC-V Tests
+      if: matrix.arch == 'x86_64'
       run: timeout 600 make test
+
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4.3.1
       with:
         retention-days: 5
-        name: rvvm_linux_x86_64
+        name: rvvm_linux_${{ matrix.arch }}
         path: |
-          release.linux.x86_64/rvvm_x86_64
-          release.linux.x86_64/librvvm.so
-          release.linux.x86_64/librvvm_static.a
+          ${{ matrix.release_dir }}/rvvm_${{ matrix.arch }}
+          ${{ matrix.release_dir }}/librvvm.so
+          ${{ matrix.release_dir }}/librvvm_static.a
 
-  win32-x86_64-build:
+  windows-build:
+    name: Build on windows (${{ matrix.arch }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            cc: x86_64-w64-mingw32-gcc
+            deps: gcc-mingw-w64-x86-64-win32
+            release_dir: release.windows.x86_64
+          - arch: arm64
+            cc: clang --target=aarch64-w64-windows-gnu
+            deps: clang lld
+            release_dir: release.windows.arm64
     steps:
     - name: Checkout
       uses: actions/checkout@v4.1.1
-    - name: Set up MinGW
-      run: sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends gcc-mingw-w64-x86-64-win32
+
+    - name: Install Dependencies
+      run: |
+        sudo DEBIAN_FRONTEND=noninteractive apt-get update
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends ${{ matrix.deps }}
+
+    - name: Download and Extract LLVM-MinGW Toolchain
+      if: matrix.arch == 'arm64'
+      run: |
+        LLVM_MINGW_VERSION="20250613"
+        LLVM_MINGW_ARCHIVE="llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-x86_64.tar.xz"
+        LLVM_MINGW_URL="https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/${LLVM_MINGW_ARCHIVE}"
+        
+        echo "Downloading LLVM-MinGW from: ${LLVM_MINGW_URL}"
+        wget -q ${LLVM_MINGW_URL} -O ${LLVM_MINGW_ARCHIVE}
+        
+        echo "Extracting LLVM-MinGW..."
+        mkdir -p llvm-mingw
+        tar -xf ${LLVM_MINGW_ARCHIVE} -C llvm-mingw --strip-components=1
+        
+        echo "LLVM-MinGW extracted to: $(pwd)/llvm-mingw"
+        echo "${{ github.workspace }}/llvm-mingw/bin" >> $GITHUB_PATH
+
     - name: Build
-      run: make CC=x86_64-w64-mingw32-gcc
+      run: make CC="${{ matrix.cc }}"
+
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4.3.1
       with:
         retention-days: 5
-        name: rvvm_win32_x86_64
+        name: rvvm_win32_${{ matrix.arch }}
         path: |
-          release.windows.x86_64/rvvm_x86_64.exe
-          release.windows.x86_64/librvvm.dll
-          release.windows.x86_64/librvvm_static.a
+          ${{ matrix.release_dir }}/rvvm_${{ matrix.arch }}.exe
+          ${{ matrix.release_dir }}/librvvm.dll
+          ${{ matrix.release_dir }}/librvvm_static.a
 
-  macos-arm64-build:
+  macos-build:
+    name: Build on macOS (${{ matrix.arch }})
     runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            cflags: -target arm64-apple-macos11
+            release_dir: release.darwin.arm64
+
+          - arch: x86_64
+            cflags: -target x86_64-apple-macos10.12
+            release_dir: release.darwin.x86_64
+
     env:
       SDL2_TAR_LINK: https://github.com/libsdl-org/SDL/releases/download/release-2.30.9/SDL2-2.30.9.tar.gz
       SDL2_NAME: SDL2-2.30.9
-      CFLAGS: -target arm64-apple-macos11 -Werror -ISDL2-2.30.9/include
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4.1.1
-    - name: Download SDL2 headers
-      run: wget ${{env.SDL2_TAR_LINK}} -O - | tar -xzf - && mv ${{env.SDL2_NAME}}/include src/SDL2
-    - name: Build
-      run: make
-    - name: Upload Artifacts
-      uses: actions/upload-artifact@v4.3.1
-      with:
-        retention-days: 5
-        name: rvvm_macos_arm64
-        path: |
-          release.darwin.arm64/rvvm_arm64
-          release.darwin.arm64/librvvm.dylib
-          release.darwin.arm64/librvvm_static.a
+      CFLAGS: ${{ matrix.cflags }} -Werror -ISDL2/include
 
-  macos-x86_64-build:
-    runs-on: macos-latest
-    env:
-      SDL2_TAR_LINK: https://github.com/libsdl-org/SDL/releases/download/release-2.30.9/SDL2-2.30.9.tar.gz
-      SDL2_NAME: SDL2-2.30.9
-      CFLAGS: -target x86_64-apple-macos10.12 -Werror -ISDL2-2.30.9/include
     steps:
     - name: Checkout
       uses: actions/checkout@v4.1.1
+
     - name: Download SDL2 headers
       run: wget ${{env.SDL2_TAR_LINK}} -O - | tar -xzf - && mv ${{env.SDL2_NAME}}/include src/SDL2
+
     - name: Build
       run: make
+
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4.3.1
       with:
         retention-days: 5
-        name: rvvm_macos_x86_64
+        name: rvvm_macos_${{ matrix.arch }}
         path: |
-          release.darwin.x86_64/rvvm_x86_64
-          release.darwin.x86_64/librvvm.dylib
-          release.darwin.x86_64/librvvm_static.a
+          ${{ matrix.release_dir }}/rvvm_${{ matrix.arch }}
+          ${{ matrix.release_dir }}/librvvm.dylib
+          ${{ matrix.release_dir }}/librvvm_static.a
