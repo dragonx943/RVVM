@@ -8,12 +8,17 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
 // Must be defined before including <sys/ipc.h>
+#undef _GNU_SOURCE
 #define _GNU_SOURCE
+#undef _BSD_SOURCE
 #define _BSD_SOURCE
+#undef _DEFAULT_SOURCE
 #define _DEFAULT_SOURCE
+#undef _DARWIN_C_SOURCE
+#define _DARWIN_C_SOURCE
 
-#include "gui_window.h"
 #include "compiler.h"
+#include "gui_window.h"
 
 SOURCE_OPTIMIZATION_SIZE
 
@@ -69,10 +74,10 @@ X11_DLIB_SYM(XShmPutImage)
 X11_DLIB_SYM(XShmDetach)
 
 #define XShmQueryExtension XShmQueryExtension_dlib
-#define XShmCreateImage XShmCreateImage_dlib
-#define XShmAttach XShmAttach_dlib
-#define XShmPutImage XShmPutImage_dlib
-#define XShmDetach XShmDetach_dlib
+#define XShmCreateImage    XShmCreateImage_dlib
+#define XShmAttach         XShmAttach_dlib
+#define XShmPutImage       XShmPutImage_dlib
+#define XShmDetach         XShmDetach_dlib
 
 #endif
 
@@ -123,61 +128,61 @@ X11_DLIB_SYM(XFreeGC)
 X11_DLIB_SYM(XDestroyWindow)
 X11_DLIB_SYM(XCloseDisplay)
 
-#define XInitThreads XInitThreads_dlib
-#define XOpenDisplay XOpenDisplay_dlib
-#define XInternAtom XInternAtom_dlib
-#define XListPixmapFormats XListPixmapFormats_dlib
-#define XSetErrorHandler XSetErrorHandler_dlib
+#define XInitThreads          XInitThreads_dlib
+#define XOpenDisplay          XOpenDisplay_dlib
+#define XInternAtom           XInternAtom_dlib
+#define XListPixmapFormats    XListPixmapFormats_dlib
+#define XSetErrorHandler      XSetErrorHandler_dlib
 
-#define XCreateWindow XCreateWindow_dlib
-#define XCreateGC XCreateGC_dlib
-#define XStoreName XStoreName_dlib
-#define XSetWMNormalHints XSetWMNormalHints_dlib
-#define XSetWMProtocols XSetWMProtocols_dlib
+#define XCreateWindow         XCreateWindow_dlib
+#define XCreateGC             XCreateGC_dlib
+#define XStoreName            XStoreName_dlib
+#define XSetWMNormalHints     XSetWMNormalHints_dlib
+#define XSetWMProtocols       XSetWMProtocols_dlib
 #define XCreateBitmapFromData XCreateBitmapFromData_dlib
-#define XCreatePixmapCursor XCreatePixmapCursor_dlib
-#define XDefineCursor XDefineCursor_dlib
-#define XCreateImage XCreateImage_dlib
-#define XMapWindow XMapWindow_dlib
-#define XPutImage XPutImage_dlib
-#define XGrabKeyboard XGrabKeyboard_dlib
-#define XGrabPointer XGrabPointer_dlib
-#define XQueryPointer XQueryPointer_dlib
-#define XUngrabKeyboard XUngrabKeyboard_dlib
-#define XUngrabPointer XUngrabPointer_dlib
+#define XCreatePixmapCursor   XCreatePixmapCursor_dlib
+#define XDefineCursor         XDefineCursor_dlib
+#define XCreateImage          XCreateImage_dlib
+#define XMapWindow            XMapWindow_dlib
+#define XPutImage             XPutImage_dlib
+#define XGrabKeyboard         XGrabKeyboard_dlib
+#define XGrabPointer          XGrabPointer_dlib
+#define XQueryPointer         XQueryPointer_dlib
+#define XUngrabKeyboard       XUngrabKeyboard_dlib
+#define XUngrabPointer        XUngrabPointer_dlib
 
-#define XPending XPending_dlib
-#define XNextEvent XNextEvent_dlib
-#define XPeekEvent XPeekEvent_dlib
-#define XWarpPointer XWarpPointer_dlib
-#define XDisplayKeycodes XDisplayKeycodes_dlib
-#define XGetKeyboardMapping XGetKeyboardMapping_dlib
+#define XPending              XPending_dlib
+#define XNextEvent            XNextEvent_dlib
+#define XPeekEvent            XPeekEvent_dlib
+#define XWarpPointer          XWarpPointer_dlib
+#define XDisplayKeycodes      XDisplayKeycodes_dlib
+#define XGetKeyboardMapping   XGetKeyboardMapping_dlib
 
-#define XSync XSync_dlib
-#define XFlush XFlush_dlib
-#define XFree XFree_dlib
-#define XFreeCursor XFreeCursor_dlib
-#define XFreePixmap XFreePixmap_dlib
-#define XFreeGC XFreeGC_dlib
-#define XDestroyWindow XDestroyWindow_dlib
-#define XCloseDisplay XCloseDisplay_dlib
+#define XSync                 XSync_dlib
+#define XFlush                XFlush_dlib
+#define XFree                 XFree_dlib
+#define XFreeCursor           XFreeCursor_dlib
+#define XFreePixmap           XFreePixmap_dlib
+#define XFreeGC               XFreeGC_dlib
+#define XDestroyWindow        XDestroyWindow_dlib
+#define XCloseDisplay         XCloseDisplay_dlib
 
 #endif
 
 // Internal headers come after system headers because of safe_free()
-#include "threading.h"
-#include "spinlock.h"
-#include "vma_ops.h"
-#include "vector.h"
-#include "utils.h"
 #include "dlib.h"
+#include "spinlock.h"
+#include "threading.h"
+#include "utils.h"
+#include "vector.h"
+#include "vma_ops.h"
 
 // X11 window state
 typedef struct {
-    Window window;
-    GC gc;
+    Window  window;
+    GC      gc;
     XImage* ximage;
-    void* image_buffer;
+    void*   image_buffer;
 
 #ifdef USE_XSHM
     XShmSegmentInfo seginfo;
@@ -188,8 +193,8 @@ typedef struct {
 
     // These are used to restore the original pointer position
     Window grab_root;
-    int grab_pointer_x;
-    int grab_pointer_y;
+    int    grab_pointer_x;
+    int    grab_pointer_y;
 } x11_win_t;
 
 // Global X11 state
@@ -201,8 +206,8 @@ static int      x11_max_keycode;
 static int      x11_keysyms_per_keycode;
 
 static vector_t(gui_window_t*) x11_windows;
-static thread_ctx_t* x11_thread;
-static spinlock_t    x11_lock;
+static thread_ctx_t*           x11_thread;
+static spinlock_t              x11_lock;
 
 static hid_key_t x11_keysym_to_hid(KeySym keysym)
 {
@@ -350,9 +355,7 @@ static hid_key_t x11_event_key_to_hid(int keycode)
 static void x11_update_keymap(void)
 {
     XDisplayKeycodes(x11_dsp, &x11_min_keycode, &x11_max_keycode);
-    KeySym* keycodemap = XGetKeyboardMapping(x11_dsp,
-                                             x11_min_keycode,
-                                             x11_max_keycode - x11_min_keycode + 1,
+    KeySym* keycodemap = XGetKeyboardMapping(x11_dsp, x11_min_keycode, x11_max_keycode - x11_min_keycode + 1,
                                              &x11_keysyms_per_keycode);
     if (keycodemap) {
         if (x11_keycodemap) {
@@ -366,9 +369,9 @@ static void x11_update_keymap(void)
 
 static rgb_fmt_t x11_get_rgb_format(void)
 {
-    rgb_fmt_t format = RGB_FMT_A8R8G8B8;
-    int nfmts = 0;
-    XPixmapFormatValues* fmts = XListPixmapFormats(x11_dsp, &nfmts);
+    rgb_fmt_t            format = RGB_FMT_A8R8G8B8;
+    int                  nfmts  = 0;
+    XPixmapFormatValues* fmts   = XListPixmapFormats(x11_dsp, &nfmts);
     if (fmts) {
         for (int i = 0; i < nfmts; ++i) {
             if (fmts[i].depth == DefaultDepth(x11_dsp, DefaultScreen(x11_dsp))) {
@@ -383,9 +386,9 @@ static rgb_fmt_t x11_get_rgb_format(void)
 
 static gui_window_t* x11_find_window(Window x11_win)
 {
-    vector_foreach(x11_windows, i) {
+    vector_foreach (x11_windows, i) {
         gui_window_t* win = vector_at(x11_windows, i);
-        x11_win_t* x11 = win->win_data;
+        x11_win_t*    x11 = win->win_data;
         if (x11->window == x11_win) {
             return win;
         }
@@ -448,8 +451,8 @@ static void x11_handle_mouse_motion(XMotionEvent* xmotion)
         if (x11->grab && win->on_mouse_move) {
             int center_x = win->fb.width / 2;
             int center_y = win->fb.height / 2;
-            int dx = xmotion->x - center_x;
-            int dy = xmotion->y - center_y;
+            int dx       = xmotion->x - center_x;
+            int dy       = xmotion->y - center_y;
             if (dx || dy) {
                 XWarpPointer(x11_dsp, None, x11->window, 0, 0, 0, 0, center_x, center_y);
                 XFlush(x11_dsp);
@@ -537,14 +540,14 @@ static void x11_dispatch_events(void)
 
 static void* x11_event_thread(void* arg)
 {
-    fd_set fds = {0};
-    int fd = ConnectionNumber(x11_dsp);
-    bool running = true;
+    fd_set fds     = {0};
+    int    fd      = ConnectionNumber(x11_dsp);
+    bool   running = true;
 
     while (running) {
         FD_ZERO(&fds);
         FD_SET(fd, &fds);
-        if (select(fd + 1, &fds, NULL, NULL, NULL) > 0) {
+        if (select(fd + 1, &fds, NULL, NULL, NULL) > 0 && FD_ISSET(fd, &fds)) {
             scoped_spin_lock (&x11_lock) {
                 if (vector_size(x11_windows)) {
                     x11_dispatch_events();
@@ -597,9 +600,10 @@ static void x11_shutdown_display(void)
     }
 }
 
-#ifdef USE_XSHM
+#if defined(USE_XSHM)
 
 static bool xshm_error = false;
+
 static int x11_dummy_error_handler(Display* display, XErrorEvent* error)
 {
     UNUSED(display);
@@ -626,11 +630,9 @@ static void* x11_xshm_init(gui_window_t* win)
         return NULL;
     }
 
-    x11->ximage = XShmCreateImage(x11_dsp,
-                        DefaultVisual(x11_dsp, DefaultScreen(x11_dsp)),
-                        DefaultDepth(x11_dsp, DefaultScreen(x11_dsp)),
-                        ZPixmap, NULL, &x11->seginfo,
-                        win->fb.width, win->fb.height);
+    x11->ximage = XShmCreateImage(x11_dsp, DefaultVisual(x11_dsp, DefaultScreen(x11_dsp)),
+                                  DefaultDepth(x11_dsp, DefaultScreen(x11_dsp)), ZPixmap, NULL, &x11->seginfo,
+                                  win->fb.width, win->fb.height);
     if (!x11->ximage) {
         rvvm_error("XShmCreateImage() failed!");
         return NULL;
@@ -660,9 +662,9 @@ static void* x11_xshm_init(gui_window_t* win)
 
 static void* x11_xshm_attach(gui_window_t* win)
 {
-    x11_win_t* x11 = win->win_data;
-    void* old_handler = XSetErrorHandler(x11_dummy_error_handler);
-    void* xshm = x11_xshm_init(win);
+    x11_win_t* x11         = win->win_data;
+    void*      old_handler = XSetErrorHandler(x11_dummy_error_handler);
+    void*      xshm        = x11_xshm_init(win);
 
     // Process errors, if any
     XSync(x11_dsp, False);
@@ -689,29 +691,19 @@ static void x11_window_draw(gui_window_t* win)
 {
     x11_win_t* x11 = win->win_data;
     scoped_spin_lock (&x11_lock) {
-#ifdef USE_XSHM
-        if (x11->seginfo.shmaddr != NULL) {
-            XShmPutImage(x11_dsp,
-                        x11->window,
-                        x11->gc,
-                        x11->ximage,
-                        0, 0, 0, 0, // src, dst x & y
-                        x11->ximage->width,
-                        x11->ximage->height,
-                        False /* send_event */);
+#if defined(USE_XSHM)
+        if (x11->seginfo.shmaddr) {
+            // Update XShm image
+            XShmPutImage(x11_dsp, x11->window, x11->gc, x11->ximage, //
+                         0, 0, 0, 0, x11->ximage->width, x11->ximage->height, False);
             XFlush(x11_dsp);
-        } else
+            break;
+        }
 #endif
-        do {
-            XPutImage(x11_dsp,
-                    x11->window,
-                    x11->gc,
-                    x11->ximage,
-                    0, 0, 0, 0, // src, dst x & y
-                    x11->ximage->width,
-                    x11->ximage->height);
-            XFlush(x11_dsp);
-        } while (0);
+        // Update XImage
+        XPutImage(x11_dsp, x11->window, x11->gc, x11->ximage, //
+                  0, 0, 0, 0, x11->ximage->width, x11->ximage->height);
+        XFlush(x11_dsp);
     }
 }
 
@@ -721,22 +713,19 @@ static void x11_window_grab_input(gui_window_t* win, bool grab)
     if (x11->grab != grab) {
         x11->grab = grab;
         if (grab) {
+            // Save the original cursor position
+            Window       child = None;
+            int          win_x = 0, win_y = 0;
+            unsigned int mask = 0;
+            x11->grab_root    = None;
+            XQueryPointer(x11_dsp, x11->window, &x11->grab_root, &child, &x11->grab_pointer_x, &x11->grab_pointer_y,
+                          &win_x, &win_y, &mask);
+
             // Grab the input
             XGrabKeyboard(x11_dsp, x11->window, True, GrabModeAsync, GrabModeAsync, CurrentTime);
-            XGrabPointer(x11_dsp, x11->window, True,
-                    ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
-                    GrabModeAsync, GrabModeAsync, None, None, CurrentTime);
-
-            // Save the original cursor position
-            Window child = None;
-            int win_x = 0, win_y = 0;
-            unsigned int mask = 0;
-            x11->grab_root = None;
-            XQueryPointer(x11_dsp, x11->window, &x11->grab_root,
-                    &child, &x11->grab_pointer_x, &x11->grab_pointer_y,
-                    &win_x, &win_y, &mask);
-            XWarpPointer(x11_dsp, None, x11->window, 0, 0, 0, 0,
-                    win->fb.width / 2, win->fb.height / 2);
+            XGrabPointer(x11_dsp, x11->window, True, ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+                         GrabModeAsync, GrabModeAsync, None, None, CurrentTime);
+            XWarpPointer(x11_dsp, None, x11->window, 0, 0, 0, 0, win->fb.width / 2, win->fb.height / 2);
         } else {
             // Ungrab
             XUngrabKeyboard(x11_dsp, CurrentTime);
@@ -744,8 +733,7 @@ static void x11_window_grab_input(gui_window_t* win, bool grab)
 
             // Restore the original cursor position
             if (x11->grab_root) {
-                XWarpPointer(x11_dsp, None, x11->grab_root, 0, 0, 0, 0,
-                            x11->grab_pointer_x, x11->grab_pointer_y);
+                XWarpPointer(x11_dsp, None, x11->grab_root, 0, 0, 0, 0, x11->grab_pointer_x, x11->grab_pointer_y);
                 x11->grab_root = None;
             }
         }
@@ -761,45 +749,44 @@ static void x11_window_set_title(gui_window_t* win, const char* title)
 static void x11_window_remove(gui_window_t* win)
 {
     x11_win_t* x11 = win->win_data;
-
     scoped_spin_lock (&x11_lock) {
-        vector_foreach_back(x11_windows, i) {
+        vector_foreach_back (x11_windows, i) {
             if (vector_at(x11_windows, i) == win) {
                 vector_erase(x11_windows, i);
                 break;
             }
         }
-    }
 
-    // Restore input
-    x11_window_grab_input(win, false);
+        // Restore input
+        x11_window_grab_input(win, false);
 
-    // Destroy window
-    XDestroyWindow(x11_dsp, x11->window);
+        // Destroy window
+        XDestroyWindow(x11_dsp, x11->window);
 
-    // Cleanup
-#ifdef USE_XSHM
-    x11_free_xshm(x11);
+        // Cleanup
+#if defined(USE_XSHM)
+        x11_free_xshm(x11);
 #endif
-    if (x11->image_buffer) {
-        // Free framebuffer VMA
-        vma_free(x11->image_buffer, framebuffer_size(&win->fb));
-        x11->ximage->data = NULL;
+        if (x11->image_buffer) {
+            // Free framebuffer VMA
+            vma_free(x11->image_buffer, framebuffer_size(&win->fb));
+            x11->ximage->data = NULL;
+        }
+
+        XDestroyImage(x11->ximage);
+        XFreeGC(x11_dsp, x11->gc);
+        free(x11);
     }
 
-    XDestroyImage(x11->ximage);
-    XFreeGC(x11_dsp, x11->gc);
-    free(x11);
-
-    // Shutdown display connection & event thread
+    // Shutdown display connection & event thread if needed
     x11_shutdown_display();
 }
 
-#define X11_DLIB_RESOLVE(lib, sym) \
-do { \
-    sym = dlib_resolve(lib, #sym); \
-    success = success && !!sym; \
-} while (0)
+#define X11_DLIB_RESOLVE(lib, sym)                                                                                     \
+    do {                                                                                                               \
+        sym     = dlib_resolve(lib, #sym);                                                                             \
+        success = success && !!sym;                                                                                    \
+    } while (0)
 
 static bool x11_init_libs(void)
 {
@@ -848,7 +835,7 @@ static bool x11_init_libs(void)
 
     dlib_close(libx11);
 
-#ifdef USE_XSHM
+#if defined(USE_XSHM)
     dlib_ctx_t* libxext = dlib_open("Xext", DLIB_NAME_PROBE);
 
     X11_DLIB_RESOLVE(libxext, XShmQueryExtension);
@@ -881,30 +868,31 @@ bool x11_window_init(gui_window_t* win)
     x11_win_t* x11 = safe_new_obj(x11_win_t);
 
     // Initialize callbacks
-    win->win_data = x11;
-    win->draw = x11_window_draw;
-    win->remove = x11_window_remove;
+    win->win_data   = x11;
+    win->draw       = x11_window_draw;
+    win->remove     = x11_window_remove;
     win->grab_input = x11_window_grab_input;
-    win->set_title = x11_window_set_title;
+    win->set_title  = x11_window_set_title;
 
     XSetWindowAttributes attributes = {
-        .event_mask = KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask
-                    | PointerMotionMask | FocusChangeMask | StructureNotifyMask,
+        .event_mask = KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask
+                    | FocusChangeMask | StructureNotifyMask,
     };
-    x11->window = XCreateWindow(x11_dsp, DefaultRootWindow(x11_dsp),
-                                0, 0, win->fb.width, win->fb.height, 0,
-                                DefaultDepth(x11_dsp, DefaultScreen(x11_dsp)),
-                                InputOutput, CopyFromParent, CWEventMask, &attributes);
-    x11->gc = XCreateGC(x11_dsp, x11->window, 0, NULL);
+    x11->window = XCreateWindow(x11_dsp, DefaultRootWindow(x11_dsp), 0, 0, win->fb.width, win->fb.height, 0,
+                                DefaultDepth(x11_dsp, DefaultScreen(x11_dsp)), InputOutput, CopyFromParent, CWEventMask,
+                                &attributes);
+    x11->gc     = XCreateGC(x11_dsp, x11->window, 0, NULL);
 
     // Set window title
     XStoreName(x11_dsp, x11->window, "RVVM");
 
     // Window size hints
     XSizeHints hints = {
-        .flags = PMinSize | PMaxSize,
-        .min_width = win->fb.width, .min_height = win->fb.height,
-        .max_width = win->fb.width, .max_height = win->fb.height,
+        .flags      = PMinSize | PMaxSize,
+        .min_width  = win->fb.width,
+        .min_height = win->fb.height,
+        .max_width  = win->fb.width,
+        .max_height = win->fb.height,
     };
     XSetWMNormalHints(x11_dsp, x11->window, &hints);
 
@@ -912,26 +900,27 @@ bool x11_window_init(gui_window_t* win)
     XSetWMProtocols(x11_dsp, x11->window, &x11_wm_delete, 1);
 
     // Hide cursor
-    XColor color = {0};
+    XColor     color     = {0};
     const char pixels[8] = {0};
-    Pixmap pixmap = XCreateBitmapFromData(x11_dsp, x11->window, pixels, 8, 8);
-    Cursor cursor = XCreatePixmapCursor(x11_dsp, pixmap, pixmap, &color, &color, 0, 0);
+    Pixmap     pixmap    = XCreateBitmapFromData(x11_dsp, x11->window, pixels, 8, 8);
+    Cursor     cursor    = XCreatePixmapCursor(x11_dsp, pixmap, pixmap, &color, &color, 0, 0);
     XDefineCursor(x11_dsp, x11->window, cursor);
     XFreeCursor(x11_dsp, cursor);
     XFreePixmap(x11_dsp, pixmap);
 
     win->fb.format = x11_get_rgb_format();
-#ifdef USE_XSHM
+
+#if defined(USE_XSHM)
     win->fb.buffer = x11_xshm_attach(win);
 #endif
 
     if (!win->fb.buffer) {
-        x11->ximage = XCreateImage(x11_dsp, DefaultVisual(x11_dsp, DefaultScreen(x11_dsp)),
-                                   DefaultDepth(x11_dsp, DefaultScreen(x11_dsp)), ZPixmap, 0,
-                                   NULL, win->fb.width, win->fb.height, 8, 0);
+        x11->ximage       = XCreateImage(x11_dsp, DefaultVisual(x11_dsp, DefaultScreen(x11_dsp)),
+                                         DefaultDepth(x11_dsp, DefaultScreen(x11_dsp)), ZPixmap, 0, NULL, win->fb.width,
+                                         win->fb.height, 8, 0);
         x11->image_buffer = vma_alloc(NULL, framebuffer_size(&win->fb), VMA_RDWR);
         x11->ximage->data = x11->image_buffer;
-        win->fb.buffer = x11->image_buffer;
+        win->fb.buffer    = x11->image_buffer;
     }
 
     // Show window
