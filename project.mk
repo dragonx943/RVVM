@@ -19,7 +19,7 @@ endef
 
 ifneq (,$(filter linux,$(OS)))
 # Enable Wayland on Linux by default
-#TODO Fix CI: USE_WAYLAND ?= 1
+USE_WAYLAND ?= 1
 endif
 
 ifneq (,$(filter linux %bsd sunos,$(OS)))
