@@ -429,8 +429,12 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // Static build-time assertions
 #undef BUILD_ASSERT
-#if defined(USE_NO_BUILD_ASSERTS)
+#if defined(USE_NO_BUILD_ASSERT)
 #define BUILD_ASSERT(cond)
+#elif __STDC_VERSION__ >= 202000LL
+// Use C23 static_assert() (GCC 14 reports 202000LL for C23 as of now)
+#define BUILD_ASSERT(cond) static_assert(cond, MACRO_TOSTRING(cond))
+// Use C11 _Static_assert() (chibicc doesn't implement it despite advertising C11 support)
 #elif __STDC_VERSION__ >= 201112LL && !defined(__chibicc__)
 #define BUILD_ASSERT(cond) _Static_assert(cond, MACRO_TOSTRING(cond))
 #else
@@ -439,7 +443,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // Same as BUILD_ASSERT, but produces an expression with value 0
 #undef BUILD_ASSERT_EXPR
-#if defined(USE_NO_BUILD_ASSERTS)
+#if defined(USE_NO_BUILD_ASSERT)
 #define BUILD_ASSERT_EXPR(cond) 0
 #else
 #define BUILD_ASSERT_EXPR(cond) (sizeof(char[(cond) ? 1 : -1]) - 1)
