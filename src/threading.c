@@ -7,8 +7,8 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-// Make POSIX 2008,  GNU, BSD, Darwin features available in strict C standard mode
-// For clock_gettime(), pthread_condattr_setclock(), pthread_cond_timedwait_relative_np()
+// Make POSIX 2008, GNU, BSD, Darwin features available in strict C standard mode
+// For clock_gettime(), pthread_condattr_setclock(), pthread_cond_timedwait_relative_np(), syscall()
 #undef _GNU_SOURCE
 #define _GNU_SOURCE
 #undef _BSD_SOURCE
@@ -50,38 +50,43 @@ static BOOL   (*__stdcall set_waitable_timer)(HANDLE, const LARGE_INTEGER*, LONG
 #else
 
 // Use pthreads, pthread_cond
-// Use Linux futexes if present, even for condvar
+// Use futexes if present, even for condvar, except on Windows where futex timeout precision is terrible
 #include <pthread.h> // For pthread, pthread_cond, pthread_mutex
 #include <time.h>    // For clock_gettime(), if CLOCK_REALTIME/CLOCK_MONOTONIC are defined
 
-#if defined(__linux__) && CHECK_INCLUDE(linux/futex.h, 1) && CHECK_INCLUDE(sys/syscall.h, 1)
+#if defined(__linux__) && CHECK_INCLUDE(sys/syscall.h, 1)
 #include <sys/syscall.h> // For __NR_futex, __NR_futex_time64
 #include <unistd.h>      // For syscall()
+
 #if !defined(__NR_futex) && defined(__NR_futex_time64)
 #define __NR_futex __NR_futex_time64
 #endif
-#if defined(__NR_futex)
+
+#if defined(__NR_futex) && CHECK_INCLUDE(linux/futex.h, 1)
 #include <linux/futex.h> // For FUTEX_WAIT_PRIVATE, FUTEX_WAKE_PRIVATE
 #endif
+
 #if defined(__NR_futex) && defined(FUTEX_WAIT_PRIVATE) && defined(FUTEX_WAKE_PRIVATE)
 // Linux futexes available
 #define LINUX_FUTEX_IMPL 1
 #endif
+
 #endif
 
-#if defined(__FreeBSD__) && CHECK_INCLUDE(sys/types.h, 1) && CHECK_INCLUDE(sys/umtx.h, 1)
-#include <sys/types.h> // For _umtx_op
-#include <sys/umtx.h>  // For UMTX_OP_WAIT_UINT_PRIVATE, UMTX_OP_WAKE_PRIVATE
-#if defined(UMTX_OP_WAIT_UINT_PRIVATE) && defined(UMTX_OP_WAKE_PRIVATE)
-// FreeBSD futexes available
+#if defined(__FreeBSD__) && __FreeBSD__ >= 11
+// FreeBSD futexes (_umtx_op(), FreeBSD 11.0+)
+#define UMTX_OP_WAIT_UINT  11
+#define UMTX_OP_WAKE       3
+int _umtx_op(void* obj, int op, unsigned long val, void* uaddr, void* uaddr2);
+
 #define FREEBSD_FUTEX_IMPL 1
-#endif
+
 #endif
 
 #if defined(__APPLE__)
-#include "dlib.h"                                   // For __ulock_wait() probing
-
 // Mac OS futexes (__ulock_wait(), OS X 10.12+)
+#include "dlib.h" // For __ulock_wait() probing
+
 #define ULOCK_WAIT                           0x0001 // Compare and wait on a 32-bit value
 #define ULOCK_WAKE                           0x0001 // Wake one thread
 #define ULOCK_WAKE_ALL                       0x0101 // Wake all threads
@@ -272,7 +277,7 @@ static bool thread_futex_wait_native(void* ptr, uint32_t val, uint64_t timeout_n
     }
 #elif defined(FREEBSD_FUTEX_IMPL)
     void* ts_size = ts_ptr ? ((void*)(uintptr_t)sizeof(ts)) : NULL;
-    if (_umtx_op(ptr, UMTX_OP_WAIT_UINT_PRIVATE, val, ts_size, ts_ptr) >= 0) {
+    if (_umtx_op(ptr, UMTX_OP_WAIT_UINT, val, ts_size, ts_ptr) >= 0) {
         return true;
     }
 #endif
@@ -305,7 +310,7 @@ static bool thread_futex_wake_native(void* ptr, uint32_t num)
         return true;
     }
 #elif defined(FREEBSD_FUTEX_IMPL)
-    if (_umtx_op(ptr, UMTX_OP_WAKE_PRIVATE, num, NULL, NULL) >= 0) {
+    if (_umtx_op(ptr, UMTX_OP_WAKE, num, NULL, NULL) >= 0) {
         return true;
     }
 #elif defined(APPLE_FUTEX_IMPL)
