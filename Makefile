@@ -1,381 +1,630 @@
 # Makefile :)
-override NAME    := rvvm
-override SRCDIR  := src
-override VERSION := 0.7
 
+###################################################################################################
 #
-# Determine build host features
+# This is a build system in itself atop GNU Make, aiming simplicity and easy cross-compilation
 #
-
-ifdef WINDIR
-# Set by a Windows host, rule out Cygwin via uname
-override HOST_UNAME := $(firstword $(shell uname -o 2>/dev/null) Windows)
-ifeq ($(OS),Windows_NT)
-# Clean up garbage OS env passed on Windows by default
-override OS :=
-endif
-else
-# Assume a POSIX host
-override HOST_UNAME := $(firstword $(shell uname -s 2>/dev/null) POSIX)
-endif
-
-ifeq ($(HOST_UNAME),Windows)
-override HOST_WINDOWS := 1
-override NULL_STDERR := 2>nul
-override HOST_CPUS := $(firstword $(NUMBER_OF_PROCESSORS) 1)
-ifeq ($(PROCESSOR_ARCHITECTURE),AMD64)
-override HOST_ARCH := x86_64
-else
-ifeq ($(PROCESSOR_ARCHITECTURE),ARM64)
-override HOST_ARCH := arm64
-else
-override HOST_ARCH := i386
-endif
-endif
-
-else
-override HOST_POSIX := 1
-override NULL_STDERR := 2>/dev/null
-override HOST_CPUS := $(shell nproc $(NULL_STDERR) || sysctl -n hw.ncpu $(NULL_STDERR) || echo 1)
-override HOST_ARCH := $(firstword $(shell uname -m 2>/dev/null) Unknown)
-endif
-
+# The project specification (Name, sources, feature useflags, binary/library targets) resides in project.mk
 #
-# Some eye-candy stuff
+# Built-in variables (Some are controllable from env):
 #
+# - BUILDDIR:   Build directory, defaults for example to `release.windows.x86_64`
+#
+# - CC:         C compiler
+# - CXX:        C++ compiler
+# - CPPFLAGS:   User-supplied additional C/C++ preprocessor flags
+# - CFLAGS:     User-supplied additional C/C++ optimization/warning flags
+# - LDFLAGS:    User-supplied additional linker flags
+# - PKG_CONFIG: Package config tool (pkg-config)
+#
+# - CC_BRAND:   Compiler brand (gcc / clang / tcc / ...)
+# - CC_VERSION: Compiler version
+# - CC_TRIPLET: Compiler target triplet
+# - CC_PRETTY:  Compiler pretty name & version
+#
+# - ARCH:       Target architecture
+# - OS:         Target operating system (Lowercase)
+# - OS_PRETTY:  Target operating system (As in uname)
+# - HOST_ARCH:  Host architecture
+# - HOST_OS:    Host operating system (Lowercase)
+# - HOST_UNAME: Host operating system (As in uname)
+#
+# - GIT_DESCRIBE: Project version in the form from `git describe`
+#
+# - USE_LTO:         Use Link-Time optimizations
+# - USE_LIB:         Build dynamic libraries
+# - USE_LIB_STATIC:  Build static libraries
+# - USE_LIB_SHARING: Link to shared project libraries
+# - USE_OBJ_STAGE:   Use intermediate object file build step
+# - USE_DEBUG:       Optimized build with debug info
+# - USE_DEBUG_FULL:  Full debug build without optimizations
+# - USE_ASAN:        Use AddressSanitizer, implies USE_DEBUG
+# - USE_TSAN:        Use ThreadSanitizer, implies USE_DEBUG. Clang only!
+# - USE_MSAN:        Use MemorySanitizer, implies USE_DEBUG. Clang only!
+#
+###################################################################################################
 
+CC           ?= cc
+CXX          ?= c++
+PKG_CONFIG   ?= pkg-config
+CPPFLAGS     ?=
+CFLAGS       ?=
+LDFLAGS      ?=
+OS           ?=
+ARCH         ?=
+CC_BRAND     ?=
+CC_VERSION   ?=
+GIT_DESCRIBE ?=
+
+# Default target: all
+all:
+
+# Disable build-in suffix rules
+.SUFFIXES:
+
+###################################################################################################
+#
+# Internal constants & functions
+#
+###################################################################################################
+
+# String constants
 override EMPTY :=
 override SPACE := $(EMPTY) $(EMPTY)
+override TAB   := $(EMPTY)	$(EMPTY)
+override BSLSH := $(EMPTY)\$(EMPTY)
+override COMMA := ,
+override QUOT  := "
+override MAGIC := ␇
+override define NEWLINE
 
-override RESET   := $(shell tput me   $(NULL_STDERR) || tput sgr0 $(NULL_STDERR)    || printf "\\033[0m" $(NULL_STDERR))
-override BOLD    := $(shell tput md   $(NULL_STDERR) || tput bold $(NULL_STDERR)    || printf "\\033[1m" $(NULL_STDERR))
-override RED     := $(shell tput AF 1 $(NULL_STDERR) || tput setaf 1 $(NULL_STDERR) || printf "\\033[31m" $(NULL_STDERR))$(BOLD)
-override GREEN   := $(shell tput AF 2 $(NULL_STDERR) || tput setaf 2 $(NULL_STDERR) || printf "\\033[32m" $(NULL_STDERR))$(BOLD)
-override YELLOW  := $(shell tput AF 3 $(NULL_STDERR) || tput setaf 3 $(NULL_STDERR) || printf "\\033[33m" $(NULL_STDERR))$(BOLD)
-override WHITE   := $(shell tput AF 7 $(NULL_STDERR) || tput setaf 7 $(NULL_STDERR) || printf "\\033[37m" $(NULL_STDERR))$(BOLD)
-override TEXT    := $(RESET)$(BOLD)
 
-$(info $(RESET))
-ifneq (,$(findstring UTF, $(LANG)))
-$(info $(EMPTY)  ██▀███   ██▒   █▓ ██▒   █▓ ███▄ ▄███▓)
-$(info $(EMPTY) ▓██ ▒ ██▒▓██░   █▒▓██░   █▒▓██▒▀█▀ ██▒)
-$(info $(EMPTY) ▓██ ░▄█ ▒ ▓██  █▒░ ▓██  █▒░▓██    ▓██░)
-$(info $(EMPTY) ▒██▀▀█▄    ▒██ █░░  ▒██ █░░▒██    ▒██ )
-$(info $(EMPTY) ░██▓ ▒██▒   ▒▀█░     ▒▀█░  ▒██▒   ░██▒)
-$(info $(EMPTY) ░ ▒▓ ░▒▓░   ░ █░     ░ █░  ░ ▒░   ░  ░)
-$(info $(EMPTY)   ░▒ ░ ▒░   ░ ░░     ░ ░░  ░  ░      ░)
-$(info $(EMPTY)   ░░   ░      ░░       ░░  ░      ░   )
-$(info $(EMPTY)    ░           ░        ░         ░   )
-$(info $(EMPTY)               ░        ░              )
-$(info $(EMPTY))
-endif
+endef
 
-# Message prefixes
-override INFO_PREFIX := $(TEXT)[$(YELLOW)INFO$(TEXT)]
-override WARN_PREFIX := $(TEXT)[$(RED)WARN$(TEXT)]
+# List of known vendor fields in compiler triplet triplets
+# NOTE: This might be unnecessary in most cases, but please extend this list whenever needed.
+override TRIPLET_KNOWN_VENDORS := unknown pc apple amd intel suse redhat buildroot w64 uwp wrs ibm sun sgi sony
 
-# Automatically parallelize build
-JOBS ?= $(HOST_CPUS)
-override MAKEFLAGS += -j $(JOBS)
+# List of operating systems that may be part of ABI tuple, and should take priority when detected
+# NOTE: This might be unnecessary in most cases, but please extend this list whenever needed.
+override TRIPLET_KNOWN_OS_PRIO := android
 
-#
-# Determine build target features for cross-compilation
-#
+# List of known _parts_ of ABI field in compiler triplets
+# NOTE: This might be unnecessary in most cases, but please extend this list whenever needed.
+override TRIPLET_KNOWN_ABI_STR := abi gnu musl uclibc elf
 
-# Get compiler target triplet (arch-vendor-kernel-abi)
-override CC_TRIPLET := $(firstword $(shell $(CC) $(CFLAGS) -print-multiarch $(NULL_STDERR))$(shell $(CC) $(CFLAGS) -dumpmachine $(NULL_STDERR)))
-ifeq (,$(findstring -,$(CC_TRIPLET)))
-override CC_TRIPLET :=
-endif
+# List of known compiler brands (names) for fallback compiler detection
+override CC_KNOWN_BRANDS := clang gcc oneapi cosmocc cproc chibicc tcc xcc
 
-# Try to detect target OS via target triplet
-ifneq (,$(findstring linux,$(CC_TRIPLET)))
-override OS := Linux
-endif
-ifneq (,$(findstring android,$(CC_TRIPLET)))
-override OS := Android
-endif
-ifneq (,$(findstring mingw,$(CC_TRIPLET))$(findstring windows,$(CC_TRIPLET)))
-override OS := Windows
-endif
-ifneq (,$(findstring darwin,$(CC_TRIPLET))$(findstring macos,$(CC_TRIPLET)))
-override OS := Darwin
-endif
-ifneq (,$(findstring emscripten,$(CC_TRIPLET)))
-override OS := Emscripten
-endif
-ifneq (,$(findstring haiku,$(CC_TRIPLET)))
-override OS := Haiku
-endif
-ifneq (,$(findstring serenity,$(CC_TRIPLET)))
-override OS := Serenity
-endif
-ifneq (,$(findstring redox,$(CC_TRIPLET)))
-override OS := Redox
-endif
+# Generate a dependency on $2 for target $1
+override gen_dependency = $(if $1,$(if $2,$1: $2))
 
-# Assume target OS matches host if triplet didn't match any known cross toolchains
-ifndef OS
-override OS := $(HOST_UNAME)
-ifneq ($(CC),cc)
-$(info $(INFO_PREFIX) Assuming target OS=$(OS), set explicitly if cross-compiling$(RESET))
-endif
-endif
+# Checks whether the input consists exactly of a single word, returns it if so
+override var_single = $(if $(filter 1,$(words $1)),$1)
 
-# Detect target arch
-ifndef ARCH
-ifneq (,$(findstring -,$(CC_TRIPLET)))
-# Get target arch from target triplet
-override ARCH := $(firstword $(subst -, ,$(CC_TRIPLET)))
-else
-# This may fail on some compilers, fallback to host arch then
-override ARCH := $(HOST_ARCH)
-ifneq ($(CC),cc)
-$(info $(INFO_PREFIX) Assuming target ARCH=$(ARCH), set explicitly if cross-compiling$(RESET))
-endif
-endif
-endif
+# Get variable if it's actually defined without tripping --warn-undefined-variables
+override var_def = $(if $(filter undefined,$(origin $1)),,$($1))
+
+# Get variable if it's specifically defined in a Makefile source and not leaking in from env
+override var_src = $(if $(filter-out file override default automatic,$(origin $1)),,$($1))
+
+# Get variable if it's defined to a non-zero value
+override var_use = $(filter-out 0,$(firstword $(call var_def,$(filter-out $(call var_src,USEFLAGS_OFF),$1))))
+
+# Escape GNU Make variable into a single word
+override make_esc = $(subst $(SPACE),$(MAGIC)SPACE,$(subst $(NEWLINE),$(MAGIC)NEWLINE,$1))
+
+# Unescape GNU Make variable
+override make_unesc = $(subst $(MAGIC)SPACE,$(SPACE),$(subst $(MAGIC)NEWLINE,$(NEWLINE),$1))
+
+# Check whether variable $1 is equal to $2
+override equal = $(if $(filter $(call make_esc,$1)$(MAGIC)END,$(call make_esc,$2)$(MAGIC)END),eq)
+
+# Check whether variable $1 is not equal to $2
+override nonequal = $(if $(call equal,$1,$2),,ne)
+
+# Much like $(findstring find,in) but allows passing multiple words for matching
+override find_any_str = $(strip $(foreach find,$1,$(findstring $(find),$2)))
 
 # Lower-case the string
 override tolower = $(subst A,a,$(subst B,b,$(subst C,c,$(subst D,d,$(subst E,e,$(subst F,f,$(subst G,g,$(subst H,h,$(subst I,i,$(subst J,j,$(subst K,k,$(subst L,l,$(subst M,m,$(subst N,n,$(subst O,o,$(subst P,p,$(subst Q,q,$(subst R,r,$(subst S,s,$(subst T,t,$(subst U,u,$(subst V,v,$(subst W,w,$(subst X,x,$(subst Y,y,$(subst Z,z,$1))))))))))))))))))))))))))
 
-# Canonize architecture name
-# amd64 -> x86_64
-# aarch64 -> arm64
-# x86 -> i386
-# x86_64 -> i386 (If -m32 is used)
-override canonize_arch = $(patsubst x86_64,$(if $(filter -m32,$(CFLAGS)),i386,x86_64),$(patsubst amd64,x86_64,$(patsubst aarch64,arm64,$(patsubst x64,x86_64,$(patsubst x86,i386,$1)))))
+# Upper-case the string
+override toupper = $(subst a,A,$(subst b,B,$(subst c,C,$(subst d,D,$(subst e,E,$(subst f,F,$(subst g,G,$(subst h,H,$(subst i,I,$(subst j,J,$(subst k,K,$(subst l,L,$(subst m,M,$(subst n,N,$(subst o,O,$(subst p,P,$(subst q,Q,$(subst r,R,$(subst s,S,$(subst t,T,$(subst u,U,$(subst v,V,$(subst w,W,$(subst x,X,$(subst y,Y,$(subst z,Z,$1))))))))))))))))))))))))))
 
-# Use canonic architecture naming
-override ARCH := $(call canonize_arch,$(ARCH))
-override HOST_ARCH := $(call canonize_arch,$(HOST_ARCH))
+# Capitalize the string
+override capitalize = $(patsubst a%,A%,$(patsubst b%,B%,$(patsubst c%,C%,$(patsubst d%,D%,$(patsubst e%,E%,$(patsubst f%,F%,$(patsubst g%,G%,$(patsubst h%,H%,$(patsubst i%,I%,$(patsubst j%,J%,$(patsubst k%,K%,$(patsubst l%,L%,$(patsubst m%,M%,$(patsubst n%,N%,$(patsubst o%,O%,$(patsubst p%,P%,$(patsubst q%,Q%,$(patsubst r%,R%,$(patsubst s%,S%,$(patsubst t%,T%,$(patsubst u%,U%,$(patsubst v%,v%,$(patsubst w%,W%,$(patsubst x%,X%,$(patsubst y%,Y%,$(patsubst z%,Z%,$1))))))))))))))))))))))))))
 
-# Use lower-case OS name in release directory name
-override OS_PRETTY := $(OS)
-override OS := $(call tolower,$(OS))
+# Check whether this is a numeric string (But possibly with trailing garbage), returns it if so
+override is_numeric = $(filter 0% 1% 2% 3% 4% 5% 6% 7% 8% 9%,$1)
+
+# Check whether this may be a semantic version string (Starts with a numeric literal and has dots), returns it if so
+override is_semver = $(if $(findstring .,$1),$(call is_numeric,$1))
+
+# Returns l if list $1 is longer than list $2, g if list $1 is shorter than list $2, empty token if lists have equal length
+override words_cmp = $(if $(call nonequal,$(words $1),$(words $2)),$(if $(wordlist $(patsubst 0,1,$(words $2)),$(words $1),$1),g,l))
+
+# Returns l if digit $1 is less than digit $2, g if $1 is greater than $2, empty token if equal
+override dig_cmp = $(if $(call nonequal,$1,$2),$(if $(filter $1,$(lastword $(sort $1 $2))),g,l))
+
+# Split number into list of digits, returns 0 for non-numbers or empty values
+override num_split = $(strip $(filter 0 1 2 3 4 5 6 7 8 9,$(subst 0,0 ,$(subst 1,1 ,$(subst 2,2 ,$(subst 3,3 ,$(subst 4,4 ,$(subst 5,5 ,$(subst 6,6 ,$(subst 7,7 ,$(subst 8,8 ,$(subst 9,9 ,$(firstword $1 0)))))))))))))
+
+# Returns l if number $1 is less than number $2, g if $1 is greater than $2, empty token if equal
+override num_cmp = $(strip $(call words_cmp,$(call num_split,$1),$(call num_split,$2)) $(foreach pair,$(join $(call num_split,$1),$(patsubst %,$(MAGIC)%,$(call num_split,$2))),$(call dig_cmp,$(word 1,$(subst $(MAGIC), ,$(pair))),$(word 2,$(subst $(MAGIC), ,$(pair))))))
+
+# Split version into a list (major minor patch ...)
+override ver_split = $(strip $(subst ., ,$(subst -, ,$1.0.0.0.0)))
+
+# Returns l if version $1 is lower than version $2, g if version $1 is greater than version $2, empty token if equal
+override ver_cmp = $(firstword $(foreach pair,$(join $(call ver_split,$1),$(patsubst %,$(MAGIC)%,$(call ver_split,$2))),$(call num_cmp,$(word 1,$(subst $(MAGIC), ,$(pair))),$(word 2,$(subst $(MAGIC), ,$(pair))))))
+
+# Checks whether semantic version $1 is greater or equal than semantic version $2, returns it if so
+override ver_check = $(if $(filter l,$(call ver_cmp,$1,$2)),,$1)
+
+# Checks whether the running GNU Make version is greater or equal to passed
+override make_min_ver = $(call ver_check,$(MAKE_VERSION),$1)
+
+# Remove excess slashes in path
+override path_strip = $(subst //,/,$(subst //,/,$(subst //,/,$(subst //,/,$1))))
+
+# Escape internal path list for shell
+override path_shell = $(subst ?,\$(SPACE),$1)
+
+# Convert shell-escaped path list to an internal path representation suitable for GNU Make
+override path_make = $(subst \$(SPACE),?,$1)
+
+# Convert a single path variable (Possibly containing spaces) to an internal path representation
+override path_wrap = $(subst $(SPACE),?,$(call path_make,$1))
+
+# Escape string variable to an internal representation
+override str_wrap = $(QUOT)$(subst $(SPACE),$(MAGIC),$(subst $(QUOT),\$(QUOT),$(subst $(NEWLINE),\n,$(subst \,\\,$1)))$(QUOT))
+
+# Escape shell invocation containing internal path/string representations
+override shell_esc = $(foreach part,$1,$(if $(filter "%",$(part)),$(subst $(MAGIC),$(SPACE),$(part)),$(subst /,$(if $(filter windows,$(HOST_OS)),\,/),$(subst $(QUOT),\$(QUOT),$(call path_shell,$(part))))))
+
+# Invoke shell command with escaping
+override shell_ex = $(shell $(call shell_esc,$1))
+
+# Space-aware wildcard
+override safe_wildcard = $(foreach wc,$(call path_strip,$(call path_make,$1)),$(foreach lp,$(firstword $(subst *,$(SPACE),$(wc))),$(subst ?$(lp),$(SPACE)$(lp),$(call path_wrap,$(wildcard $(call path_shell,$(wc)))))))
+
+# Check whether some paths in list are missing in the filesystem, return them
+override paths_missing = $(filter-out $(call safe_wildcard,$1),$1)
+
+# Check whether all paths in list exist in system, returns 1 if so
+override paths_exist = $(if $(call paths_missing,$1),,1)
+
+# Check if path is a directory, returns 1 if so
+override is_dir = $(if $(call equal,$1/,$(wildcard $(call path_strip,$(call path_wrap,$1/)))),1)
+
+# List directory contents
+override ls_dir = $(if $1,$(call safe_wildcard,$(call path_wrap,$1)/*))
+
+# List directories inside a directory
+override next_dirs = $(if $1,$(call safe_wildcard,$(call path_wrap,$1)/*/))
+
+# Recusively list files in a directory (Space-aware, replaces spaces with ?)
+# NOTE: May only handle up to 8 levels of nesting, because GNU Make 3.7x doesn't support actuall recursive $(call)
+override tree_dir = $(strip $(call ls_dir,$1) $(foreach l1,$(call next_dirs,$1),$(call ls_dir,$(l1)) $(foreach l2,$(call next_dirs,$(l1)),$(call ls_dir,$(l2)) $(foreach l3,$(call next_dirs,$(l2)),$(call ls_dir,$(l3)) $(foreach l4,$(call next_dirs,$(l3)),$(call ls_dir,$(l4)) $(foreach l5,$(call next_dirs,$(l4)),$(call ls_dir,$(l5)) $(foreach l6,$(call next_dirs,$(l5)),$(call ls_dir,$(l6)) $(foreach l7,$(call next_dirs,$(l6)),$(call ls_dir,$(l7))))))))))
+
+# Recusive filesystem match of $2 in dir $1
+override recursive_match = $(filter $(subst *,%,$2),$(call tree_dir,$1))
+
+# Recusive filesystem wildcard
+override recursive_wildcard = $(foreach wc,$1,$(call recursive_match,$(dir $(wc)),$(wc)))
+
+# Create directories, i.e. portable mkdir -p $1
+override create_dirs = $(if $(call paths_exist,$1),,$(if $(filter windows,$(HOST_OS)),$(if $(foreach directory,$1,$(call shell_ex,mkdir $(directory) 2>&1)),),$(if $(call shell_ex,mkdir -p $1 2>&1),)))
+
+# Install file $1 at path $2 under permissions $3
+override install_file = $(foreach fd,$(call path_wrap,$2),$(foreach fs,$(call path_wrap,$1),$(call create_dirs,$(dir $(fd)))$(if $(call shell_ex,install -m $(firstword $3 0644) $(fs) $(fd) 2>&1),$(if $(call shell_ex,$(if $(filter windows,$(HOST_OS)),copy,cp) $1 $2 2>&1),))))
+
+# Install string $1 as file $2
+override install_string = $(foreach fd,$(call path_wrap,$2),$(call create_dirs,$(dir $(fd)))$(if $(call shell_ex,printf $(call str_wrap,$1) 2>&1 1>$(fd)),$(file >$(fd),$1)))
+
+# Canonize architecture from triplet / uname (Also lower-case it first)
+# amd64, x64, em64t -> x86_64
+# i86*              -> x86_64 (Solaris gimmick)
+# *86               -> i386
+# aarch64           -> arm64
+# riscv             -> riscv64
+# x86_64            -> i386 (If -m32 is passed in CFLAGS)
+override canonize_arch = $(patsubst x86_64,$(if $(filter -m32,$(CFLAGS)),i386,x86_64),$(patsubst riscv,riscv64,$(patsubst aarch64,arm64,$(patsubst i86%,x86_64,$(patsubst %86,i386,$(patsubst em64t,x86_64,$(patsubst amd64,x86_64,$(patsubst x64,x86_64,$(call tolower,$1)))))))))
+
+# Canonize OS from triplet / uname
+# mingw*   -> windows
+# macos*   -> darwin
+# solaris* -> sunos
+override canonize_os = $(patsubst solaris%,sunos,$(patsubst macos%,darwin,$(patsubst mingw%,windows,$(call tolower,$1))))
+
+# Canonize compiler brand
+# oneapi, llvm -> clang
+# cosmocc      -> gcc
+override canonize_cc = $(patsubst cosmocc,gcc,$(patsubst oneapi,clang,$(patsubst llvm,clang,$(call tolower,$1))))
+
+# Prettify OS name for printing (Also capitalizes the output)
+# *bsd  -> *BSD
+# *os   -> *OS
+# gnu   -> GNU
+# dos   -> DOS
+# cosmo -> Cosmopolitan
+override prettify_os = $(call capitalize,$(patsubst cosmo,Cosmopolitan,$(patsubst gnu,GNU,$(patsubst %os,%OS,$(patsubst dos,DOS,$(patsubst %bsd,%BSD,$1))))))
+
+# Prettify compiler name (Also capitalizes the output)
+# *cc    -> *CC (GCC, TCC)
+# clang  -> LLVM Clang
+# oneapi -> Intel OneAPI
+override prettify_cc = $(call capitalize,$(patsubst clang,LLVM Clang,$(patsubst %cc,%CC,$1)))
+
+# Check LDFLAG availability (I.e. whether a library may be linked). Broken on Emscripten, might be elsewhere too!
+override check_ldflag_avail = $(if $(findstring _start,$(subst main,_start,$(subst wmain,_start,$(subst WinMain,_start,$(if $(filter-out emscripten,$(OS)),$(shell $(CC) $(CFLAGS) $(LDFLAGS) $1 $(ONLY_STDERR))))))),$1)
+
+###################################################################################################
+#
+# Determine build host features, shell / logger helpers
+#
+###################################################################################################
+
+# Clean up garbage OS env passed on Windows
+override OS := $(filter-out Windows_NT,$(OS))
+
+# Get host uname; pipe stderr in a portable way. Don't use uname output if it's not exactly one word (Likely due to command failure).
+# NOTE: Cygwin and MSYS return garbage in uname -s, uname -o gives a prettier result.
+# NOTE: We might also get "MS/Windows" or "Windows_NT" from uname on e.q. w64devkit.
+override HOST_UNAME := $(call var_single,$(shell uname -s 2>&1))
+override HOST_UNAME := $(firstword $(if $(call find_any_str,- _ .,$(HOST_UNAME)),$(call var_single,$(shell uname -o 2>&1))) $(HOST_UNAME))
+override HOST_UNAME := $(firstword $(findstring Windows,$(HOST_UNAME)) $(HOST_UNAME) $(if $(call var_def,windir)$(call var_def,WINDIR),Windows,POSIX))
+
+# Canonize host OS, determine host architecture, where to pipe null & number of cores
+override HOST_OS   := $(call canonize_os,$(HOST_UNAME))
+override HOST_ARCH := $(call canonize_arch,$(firstword $(if $(filter windows,$(HOST_OS)),$(PROCESSOR_ARCHITECTURE),$(shell uname -m 2>/dev/null)) Unknown))
+override HOST_NULL := $(if $(filter windows,$(HOST_OS)),nul,/dev/null)
+override HOST_CPUS := $(firstword $(if $(filter windows,$(HOST_OS)),$(NUMBER_OF_PROCESSORS),$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null)) 1)
+
+# Helpers for piping $(shell) invocation output (stdout/stderr)
+override NULL_STDOUT := 1>$(HOST_NULL)
+override NULL_STDERR := 2>$(HOST_NULL)
+override PIPE_STDERR := 2>&1
+override ONLY_STDERR := $(PIPE_STDERR) $(NULL_STDOUT)
+
+# Print function
+ifneq (,$(call make_min_ver,3.81))
+# Use $(info $1) on GNU Make 3.81+ (See GNU Make NEWS file)
+override println = $(if $(info $1),)
+else
+# Use $(call shell_ex,printf $(call str_wrap,$1$(NEWLINE)) 1>&2) on legacy GNU Make
+override println = $(if $(call shell_ex,printf $(call str_wrap,$1$(NEWLINE)) 1>&2),)
+endif
+
+# Colorful logging attributes
+override VT_ESC  := 
+override VT_BELL := 
+override RESET   := $(VT_ESC)[0m
+override BOLD    := $(VT_ESC)[1m
+override RED     := $(VT_ESC)[31m$(BOLD)
+override GREEN   := $(VT_ESC)[32m$(BOLD)
+override YELLOW  := $(VT_ESC)[33m$(BOLD)
+override WHITE   := $(VT_ESC)[37m$(BOLD)
+override TEXT    := $(RESET)$(BOLD)
+
+# Logger prefixes
+override INFO_PREFIX := $(TEXT)[$(YELLOW)INFO$(TEXT)]
+override WARN_PREFIX := $(TEXT)[$(RED)WARN$(TEXT)]
+
+# Logger functions
+override log_info = $(call println,$(INFO_PREFIX) $1 $(RESET))
+override log_warn = $(call println,$(WARN_PREFIX) $1 $(RESET))
+
+# Automatically parallelize build to host cores
+JOBS ?= $(HOST_CPUS)
+override MAKEFLAGS += -j $(JOBS)
+
+###################################################################################################
+#
+# Determine build target features for proper cross-compilation
+#
+###################################################################################################
+
+# Get compiler target triplet in the form of arch-[vendor-]os[-abi]
+override CC_TRIPLET := $(call shell_ex,$(CC) $(CFLAGS) -dumpmachine $(NULL_STDERR))
+
+# Manually provide triplet for cosmocc (Note that in fact it's both x86_64 and arm64)
+override TRIPLET := $(firstword $(if $(findstring -,$(CC_TRIPLET)),$(CC_TRIPLET)) $(if $(findstring cosmocc,$(CC)),x86_64-cosmo))
+
+override TRIPLET_WORDS := $(subst -,$(SPACE),$(TRIPLET))
+override TRIPLET_ARCH  := $(word 1,$(TRIPLET_WORDS))
+override TRIPLET_2     := $(word 2,$(TRIPLET_WORDS))
+override TRIPLET_3     := $(word 3,$(TRIPLET_WORDS))
+override TRIPLET_4     := $(word 4,$(TRIPLET_WORDS))
+
+# Assume arch-vendor-os[-abi] triplet form by default
+override TRIPLET_OS := $(TRIPLET_3)
+ifeq (,$(TRIPLET_4))
+ifeq (,$(TRIPLET_3))
+# This is a pure arch-os triplet form
+override TRIPLET_OS := $(TRIPLET_2)
+else
+ifneq (,$(if $(filter-out $(TRIPLET_KNOWN_VENDORS),$(TRIPLET_2)),$(call find_any_str,$(TRIPLET_KNOWN_ABI_STR),$(TRIPLET_3))))
+# This is an ambiguous arch-os-abi form. The second tuple isn't a known vendor, and the third tuple contains known ABI string.
+override TRIPLET_OS := $(TRIPLET_2)
+endif
+endif
+endif
+
+# Handle special cases where OS name might be part of ABI tuple
+override TRIPLET_OS := $(firstword $(call find_any_str,$(TRIPLET_KNOWN_OS_PRIO),$(TRIPLET)) $(TRIPLET_OS))
+
+# Warn when neither compiler triplet nor user supplied enough cross-compile info
+ifeq (,$(filter cc,$(CC))$(TRIPLET_OS)$(OS)$(TRIPLET_ARCH)$(ARCH))
+$(call log_info,Assuming target $(HOST_ARCH)-$(HOST_OS). Set OS/ARCH manually if cross-compiling.)
+endif
+
+# Canonize OS/ARCH, prioritize: compiler triplet > user-supplied > host
+override OS      := $(call canonize_os,$(firstword $(TRIPLET_OS) $(OS) $(HOST_OS)))
+override ARCH    := $(call canonize_arch,$(firstword $(TRIPLET_ARCH) $(ARCH) $(HOST_ARCH)))
+override TRIPLET := $(ARCH)-$(OS)
 
 # For cross-compile checking (Cosmopolitan is treated as non-cross target)
-override TARGET_CROSS := $(if $(filter-out cosmopolitan,$(OS)),$(if $(filter-out $(ARCH),$(HOST_ARCH))$(filter-out $(OS_PRETTY),$(HOST_UNAME)),$(ARCH)-$(OS)))
+override TARGET_CROSS := $(if $(filter-out cosmo,$(OS)),$(if $(filter-out $(ARCH),$(HOST_ARCH))$(filter-out $(OS),$(HOST_OS)),$(ARCH)-$(OS)))
 
-# If PKG_CONFIG is not set, default to pkg-config for properly set up cross-compilation or native build
-ifneq (,$(if $(PKG_CONFIG),,$(if $(TARGET_CROSS),$(PKG_CONFIG_LIBDIR)$(PKG_CONFIG_SYSROOT_DIR),yes)))
-override PKG_CONFIG := pkg-config
+# Pretty OS name for printing (Taken from uname if target matches the host)
+override OS_PRETTY := $(if $(filter $(OS),$(HOST_OS)),$(HOST_UNAME),$(call prettify_os,$(OS)))
+
+###################################################################################################
+#
+# Determine compiler brand & version
+#
+###################################################################################################
+
+# Search for "<cc_brand> version N[.x.y]" pattern in $(cc -v) dump (Works for GCC, Clang, TCC)
+override CC_VERSION_DUMP    := $(call shell_ex,$(CC) -v $(PIPE_STDERR))
+override CC_VERSION_TRIPLET := $(foreach tmp,$(subst $(SPACE)version$(SPACE),$(MAGIC)version$(MAGIC),$(strip $(CC_VERSION_DUMP))),$(if $(findstring $(MAGIC)version$(MAGIC),$(tmp)),$(tmp)))
+override CC_VERSION_TRIPLET := $(strip $(foreach tmp,$(CC_VERSION_TRIPLET),$(if $(call is_numeric,$(word 3,$(subst $(MAGIC),$(SPACE),$(tmp)))),$(subst $(MAGIC),$(SPACE),$(tmp)))))
+
+# If compiler version triplet is empty & CC_BRAND isn't provided, fallback to heuristics
+override CC_BRAND := $(call canonize_cc,$(firstword $(word 1,$(CC_VERSION_TRIPLET)) $(CC_BRAND) $(call find_any_str,oneapi clang gcc cosmocc cproc,$(call tolower,$(CC_VERSION_DUMP))) unknown))
+
+# If neither compiler version triplet nor $(cc -dumpfullversion -dumpversion) provide a proper version, fallback to user-supplied CC_VERSION or whatever we've got
+override CC_VERSION := $(firstword $(call is_semver,$(word 3,$(CC_VERSION_TRIPLET))) $(call is_semver,$(call shell_ex,$(CC) -dumpfullversion -dumpversion $(NULL_STDERR))) $(CC_VERSION) $(word 3,$(CC_VERSION_TRIPLET)))
+
+ifeq ($(ARCH),e2k)
+# LCC is not a real GCC, but lies about being one
+# Workaround build failures by explicitly marking it as different compiler brand
+override CC_BRAND := ПТН ПНХ
 endif
 
-# Check pkg-config presence via pkg-config --version
-override PKG_CONFIG := $(if $(PKG_CONFIG),$(if $(shell $(PKG_CONFIG) --version $(NULL_STDERR)),$(PKG_CONFIG)))
+# Check whether this compiler supports standard GNU extensions
+override CC_IS_GCC   := $(if $(filter gcc,$(CC_BRAND)),1)
+override CC_IS_CLANG := $(if $(filter clang,$(CC_BRAND)),1)
+override CC_IS_GNU   := $(firstword $(CC_IS_GCC) $(CC_IS_CLANG))
 
-# For fully linked build, pkg-config dependency may be ignored via IGNORE_PKG_CONFIG=1
-override HAS_PKG_CONFIG := $(if $(IGNORE_PKG_CONFIG),1,$(if $(filter-out 0,$(USE_FULL_LINKING)),$(if $(PKG_CONFIG),1,0),1))
+# Compiler version checks
+override gcc_min_ver   = $(if $(filter gcc,$(CC_BRAND)),$(call ver_check,$(CC_VERSION),$1))
+override clang_min_ver = $(if $(filter clang,$(CC_BRAND)),$(call ver_check,$(CC_VERSION),$1))
+override gnuc_min_ver  = $(if $(filter gcc clang,$(CC_BRAND)),$(call ver_check,$(CC_VERSION),$1))
 
-# Pass -static to pkg-config if needed
-ifneq (,$(PKG_CONFIG))
-override PKG_CONFIG := $(PKG_CONFIG) $(filter -static,$(LDFLAGS))
-endif
+# Pretty compiler info for printing
+override CC_PRETTY := $(call prettify_cc,$(CC_BRAND)) $(CC_VERSION)
 
+###################################################################################################
 #
-# Set up target-specific build options
+# Set up target-specific build options (File extensions, low-level platform libs, pkg-config, etc)
 #
+###################################################################################################
 
-# Windows-specific build options
+# POSIX: Use .so lib extension
+override BIN_EXT :=
+override LIB_EXT := .so
+
+# Windows: Use .exe/.dll extensions, link statically
 ifeq ($(OS),windows)
-override LDFLAGS += -static
 override BIN_EXT := .exe
 override LIB_EXT := .dll
-USE_WIN32_GUI ?= 1
-else
+override LDFLAGS := $(LDFLAGS) -static
+endif
 
-# Emscripten-specific build options
-ifeq ($(OS),emscripten)
-override CFLAGS += -pthread
-override LDFLAGS += -s TOTAL_MEMORY=512MB
-override BIN_EXT := .html
-override LIB_EXT := .so
-USE_SDL ?= 2
-USE_NET ?= 0
-USE_LIB ?= 0
-else
-
-# POSIX build options
-override BIN_EXT :=
+# MacOS: Use .dylib lib extension
 ifeq ($(OS),darwin)
 override LIB_EXT := .dylib
-else
-override LIB_EXT := .so
 endif
 
-# Check for lib presence before linking (there is no pthread on Android, etc)
-ifneq (,$(findstring main, $(shell $(CC) -pthread $(CFLAGS) $(LDFLAGS) -lpthread 2>&1)))
-override CFLAGS += -pthread
-endif
-ifneq (,$(findstring main, $(shell $(CC) $(CFLAGS) $(LDFLAGS) -lpthread 2>&1)))
-override LDFLAGS += -lpthread
-endif
-ifneq (,$(findstring main, $(shell $(CC) $(CFLAGS) $(LDFLAGS) -lrt 2>&1)))
-override LDFLAGS += -lrt
-endif
-ifneq (,$(findstring main, $(shell $(CC) $(CFLAGS) $(LDFLAGS) -ldl 2>&1)))
-override LDFLAGS += -ldl
-endif
-
-# Linking to libatomic on x86_64 is redundant and may cause issues
-ifeq (,$(findstring -,$(CC_TRIPLET))$(filter-out x86_64,$(ARCH)))
-ifneq (,$(findstring main, $(shell $(CC) $(CFLAGS) $(LDFLAGS) -latomic 2>&1)))
-override LDFLAGS += -latomic
-else
-override CFLAGS += -DNO_LIBATOMIC
-endif
-endif
-
-# Set some addiional options based on POSIX flavor
-
-ifneq (,$(findstring linux,$(OS))$(findstring bsd,$(OS))$(findstring sunos,$(OS)))
-# Enable X11 on Linux, *BSD, SunOS (Solaris) by default
-USE_X11 ?= 1
-endif
-
-ifeq ($(OS),haiku)
-USE_HAIKU_GUI ?= 1
-endif
-
-ifneq (,$(findstring darwin,$(OS))$(findstring serenity,$(OS)))
-# Enable SDL2 on Darwin, Serenity by default
-USE_SDL ?= 2
-endif
-
-ifneq (,$(findstring redox,$(OS)))
-# Enable SDL1 and disable networking on Redox by default
-USE_SDL ?= 1
+# Emscripten: Use .mjs extension
+# Disable setjmp & implicit traps for optimization, enable pthreads + main thread proxying, allow memory growth, enable full filesystem & fetch API
+ifeq ($(OS),emscripten)
+override BIN_EXT := .mjs
+override CFLAGS  := -pthread -O3 -s SUPPORT_LONGJMP=0 $(CFLAGS)
+override LDFLAGS := -s DEFAULT_TO_CXX=0 -s BINARYEN_IGNORE_IMPLICIT_TRAPS=1 -s ALLOW_MEMORY_GROWTH=1 \
+-s MEMORY_GROWTH_LINEAR_STEP=1mb -s PROXY_TO_PTHREAD=1 -s FORCE_FILESYSTEM=1 -s FETCH=1 $(LDFLAGS)
+# Disable shared library & network by default
+USE_LIB ?= 0
 USE_NET ?= 0
 endif
 
-endif
+# SunOS (Solaris, Illumos): LTO is broken, duh
+ifeq ($(OS),sunos)
+USE_LTO ?= 0
 endif
 
-#
-# Default build configuration
-#
+# POSIX: Link to libpthread, librt, libdl when available
+override LDFLAGS := $(LDFLAGS) $(if $(filter-out windows,$(OS)),$(call check_ldflag_avail,-lpthread) $(call check_ldflag_avail,-lrt) $(call check_ldflag_avail,-ldl))
 
-# CPU features
-USE_RV32 ?= 1
-USE_RV64 ?= 1
+# Link to libatomic if available, unless detected a GCC/Clang targetting x86_64/arm64, where linking it should be avoided
+ifneq (,$(if $(filter-out gcc clang,$(CC_BRAND)$(filter-out x86_64 arm64,$(ARCH))),$(call check_ldflag_avail,-latomic)))
+override LDFLAGS := $(LDFLAGS) -latomic
+else
+override USE_NO_LIBATOMIC ?= 1
+endif
+
+# Disable pkg-config if it's a cross-compile target and neither PKG_CONFIG_LIBDIR or PKG_CONFIG_SYSROOT_DIR are set, pass -static if needed
+override PKG_CONFIG := $(if $(if $(TARGET_CROSS),$(call var_def,PKG_CONFIG_LIBDIR)$(call var_def,PKG_CONFIG_SYSROOT_DIR)$(filter-out pkg-config,$(PKG_CONFIG)),1),$(PKG_CONFIG) $(filter -static,$(LDFLAGS)))
+
+###################################################################################################
+#
+# Determine project tag, revision, commit id via git
+#
+###################################################################################################
+
+override GIT_DESCRIBE       := $(firstword $(call var_single,$(call shell_ex,git describe --tags --always --dirty $(PIPE_STDERR))) $(GIT_DESCRIBE))
+override GIT_DIRTY          := $(if $(filter %-dirty,$(GIT_DESCRIBE)),dirty)
+override GIT_TAG_REV_COMMIT := $(patsubst %-dirty,%,$(GIT_DESCRIBE))
+override GIT_COMMIT         := $(lastword $(subst -g,$(SPACE),$(GIT_TAG_REV_COMMIT)))
+override GIT_TAG_REV        := $(firstword $(filter-out $(GIT_COMMIT),$(patsubst %-g$(GIT_COMMIT),%,$(GIT_TAG_REV_COMMIT))) v0.1.0)
+override GIT_REVISION       := $(call is_numeric,$(if $(GIT_COMMIT),$(lastword $(subst -,$(SPACE),$(GIT_TAG_REV)))))
+override GIT_TAG            := $(patsubst %-$(GIT_REVISION),%,$(GIT_TAG_REV))
+override GIT_VERSION        := $(GIT_TAG)$(if $(GIT_REVISION),-r$(GIT_REVISION))$(if $(GIT_COMMIT),.g$(GIT_COMMIT)$(if $(GIT_DIRTY),+$(GIT_DIRTY)))
+
+###################################################################################################
+#
+# Project outputs handling, any of these may be overriden by project spec
+#
+###################################################################################################
+
+# Decide BUILDDIR / OBJDIR / SRCDIR
+override BUILD_TYPE := $(if $(call var_use,USE_DEBUG_FULL),debug,release)
+override BUILDDIR   ?= $(BUILD_TYPE).$(OS).$(ARCH)
+override SRCDIR     := src
+override OBJDIR     := $(BUILDDIR)/obj
+
+# Convert base target name into target filename (For target binary invocation, etc)
+override bin_target        = $(patsubst %,$(BUILDDIR)/%_$(ARCH)$(BIN_EXT),$1)
+override lib_target        = $(patsubst %,$(BUILDDIR)/lib%$(LIB_EXT),$1)
+override lib_static_target = $(patsubst %,$(BUILDDIR)/lib%_static.a,$1)
+
+# Covert target filenames to base target names
+override bin_base        = $(patsubst $(call bin_target,%),%,$1)
+override lib_base        = $(patsubst $(call lib_target,%),%,$1)
+override lib_static_base = $(patsubst $(call lib_static_target,%),%,$1)
+
+# Get list of sources from target base, uses a `BIN_SRC_$(name)` list by default
+override bin_base_src = $(call var_src,bin_src_$1)
+override lib_base_src = $(call var_src,lib_src_$1)
+
+# Get list of libraries from target base, expects a `BIN_LIBS_$(name)` list by default
+override bin_base_libs = $(call var_src,bin_libs_$1)
+override lib_base_libs = $(call var_src,lib_libs_$1)
+
+###################################################################################################
+#
+# Project specification
+#
+# Supported variables (Useflags are controllable from env):
+# - NAME:    Project name, used for install paths, pkg-config; Passed as -DPROJECT_VERSION=...
+# - DESC:    Project description, used for pkg-config generation
+# - LOGO:    Project ASCII logo (If any), shown in build splash
+# - URL:     Project homepage URL
+# - VERSION: Project version (Fallback if git describe fails, useful for release source archives)
+#
+# - SRCDIR:   Project source directory, defaults to src
+# - HDRDIR:   Project headers directory, defaults to $(SRCDIR)
+# - BUILDDIR: Build directory, defaults to $(BUILD_TYPE).$(OS).$(ARCH), for example release.linux.i386
+# - OBJDIR:   Object files directory, defaults to $(BUILDDIR)/obj
+#
+#
+# - BIN_TARGETS: List of binary targets to build
+# - LIB_TARGETS: List of library targets to build
+#
+# - BIN_SRC_$(bin): List of source files to build a respective binary target
+# - LIB_SRC_$(lib): List of source files to build a respective library target
+#
+# - BIN_LIBS_$(bin): List of pkg-config / project libraries to link into the respective binary target
+# - LIB_LIBS_$(lib): List of pkg-config / project libraries to link into the respective library target
+#
+# - USE_*:         Useflag, passed as -DUSE_FLAG=$(USE_FLAG) if set to non-zero value, controls build features
+# - DEPS_USE_*:    List of flags on which respective USE_FLAG flag depends, which should have a non-zero value
+# - IMPLY_USE_*:   List of useflags which are auto-enabled when a respective USE_FLAG is enabled
+# - SRC_USE_*:     Sources which should be built ONLY when a respective USE_FLAG is enabled
+# - CFLAGS_USE_*:  CFLAGS to be passed when a respective USE_FLAG is enabled
+# - LDFLAGS_USE_*: LDFLAGS to be passed when a respective USE_FLAG is enabled
+# - LIBS_USE_*:    List of pkg-config/project libraries to link ONLY when a respective USE_FLAG is enabled
+#
+###################################################################################################
+
+include project.mk
+
+# Validate project spec variables
+override NAME            := $(firstword $(call var_src,NAME) Project)
+override DESC            := $(call var_src,DESC)
+override LOGO            := $(call var_src,LOGO)
+override URL             := $(call var_src,URL)
+override VERSION         := $(firstword $(GIT_VERSION) $(call var_src,VERSION) v0.1.0)
+override SRCDIR          := $(call path_wrap,$(SRCDIR))
+override HDRDIR          := $(firstword $(call path_wrap,$(call var_src,HDRDIR)) $(SRCDIR))
+override BUILDDIR        := $(call path_wrap,$(BUILDDIR))
+override OBJDIR          := $(call path_wrap,$(OBJDIR))
+
+override NAME_LOWER := $(call tolower,$(NAME))
+override NAME_UPPER := $(call toupper,$(NAME))
+
+override BIN_BASE_LIST := $(call bin_base,$(call path_make,$(call var_src,BIN_TARGETS)))
+override LIB_BASE_LIST := $(call lib_base,$(call path_make,$(call var_src,LIB_TARGETS)))
+
+override BIN_TARGETS        := $(call bin_target,$(BIN_BASE_LIST))
+override LIB_TARGETS        := $(call lib_target,$(LIB_BASE_LIST))
+override LIB_STATIC_TARGETS := $(call lib_static_target,$(LIB_BASE_LIST))
+
+###################################################################################################
+#
+# Common build configuration
+#
+###################################################################################################
+
+# Compile options
+USE_LTO         ?= 1 # Use Link-Time Optimizations
+USE_LIB         ?= 1 # Build shared libraries
+USE_LIB_STATIC  ?= 0 # Build static libraries
+USE_LIB_SHARING ?= 0 # Link to shared project libraries
+USE_OBJ_STAGE   ?= 1 # Use intermediate object file build step
+USE_DEBUG       ?= 0 # Optimized build with debug info
+USE_DEBUG_FULL  ?= 0 # Full debug build without optimizations
+USE_WARNS       ?= 3 # Warning level
+USE_ASAN        ?= 0 # Use AddressSanitizer
+USE_TSAN        ?= 0 # Use ThreadSanitizer
+USE_MSAN        ?= 0 # Use MemorySanitizer
+
+# Feature options (Enable USE_NET if you wish to use sockets, etc)
 USE_FPU ?= 1
-USE_RVV ?= 0
-
-# Infrastructure
-USE_LTO ?= 1
-USE_DEBUG ?= 0
-USE_DEBUG_FULL ?= 0
-USE_SPINLOCK_DEBUG ?= 1
-USE_LIB ?= 1
-USE_LIB_STATIC ?= 0
-USE_JNI ?= 1
-USE_ISOLATION ?= 1
-
-# Acceleration/accessibility
-USE_JIT ?= 1
-USE_GUI ?= 1
+USE_NET ?= 0
 USE_SDL ?= 0
-USE_NET ?= 1
-USE_GDBSTUB ?= 1
 
-# Devices
-USE_FDT ?= 1
-USE_PCI ?= 1
-USE_VFIO ?= 1
+override DEPS_USE_LTO         := CC_IS_GNU
+override DEPS_USE_LIB         := CC_IS_GNU
+override DEPS_USE_LIB_STATIC  := USE_OBJ_STAGE
+override DEPS_USE_LIB_SHARING := USE_LIB
+override DEPS_USE_ASAN        := CC_IS_GNU
+override DEPS_USE_TSAN        := CC_IS_CLANG
+override DEPS_USE_MSAN        := CC_IS_CLANG
 
-override BUILD_TYPE := release
-ifeq ($(USE_DEBUG_FULL),1)
-# Full debug with much less optimizations
-override BUILD_TYPE := debug
-endif
+override IMPLY_USE_DEBUG_FULL := USE_DEBUG
+override IMPLY_USE_ASAN       := USE_DEBUG
+override IMPLY_USE_TSAN       := USE_DEBUG
 
-# Build output directory
-BUILDDIR ?= $(BUILD_TYPE).$(OS).$(ARCH)
-
-# Executable file name
-BINARY ?= $(NAME)_$(ARCH)$(BIN_EXT)
-
-# Determine build commit id
-GIT_COMMIT ?= $(firstword $(shell git describe --match=NeVeRmAtCh_TaG --always --dirty $(NULL_STDERR)))
-ifneq (,$(GIT_COMMIT))
-override VERSION := $(VERSION)-$(GIT_COMMIT)
-endif
-
-#
-# Set up sources, libs, CFLAGS & LDFLAGS
-#
-
-# Generic compiler flags
-override CFLAGS := -I$(SRCDIR) -DRVVM_VERSION=\"$(VERSION)\" $(CFLAGS)
-
-# Select sources to compile
-override SRC := $(wildcard $(SRCDIR)/*.c $(SRCDIR)/devices/*.c)
-
-# Useflag sources
-override SRC_USE_WIN32_GUI := $(SRCDIR)/devices/win32window.c
-override SRC_CXX_USE_HAIKU_GUI := $(SRCDIR)/devices/haiku_window.cpp
-override SRC_USE_X11 := $(SRCDIR)/devices/x11window_xlib.c
-override SRC_USE_SDL := $(SRCDIR)/devices/sdl_window.c
-override SRC_USE_WAYLAND := $(SRCDIR)/devices/wayland_window.c
-
-override SRC_USE_TAP_LINUX := $(SRCDIR)/devices/tap_linux.c
-override SRC_USE_NET := $(SRCDIR)/networking.c $(SRCDIR)/devices/tap_user.c
-override SRC_USE_JIT := $(SRCDIR)/rvjit/rvjit.c $(SRCDIR)/rvjit/rvjit_emit.c
-override SRC_USE_JNI := $(SRCDIR)/bindings/jni/rvvm_jni.c
-override SRC_USE_RV32 := $(SRCDIR)/cpu/riscv32_interpreter.c
-override SRC_USE_RV64 := $(SRCDIR)/cpu/riscv64_interpreter.c
-
-# Useflag CFLAGS
 override CFLAGS_USE_DEBUG := -DDEBUG -g -fno-omit-frame-pointer
-override CFLAGS_USE_DEBUG_FULL := -DUSE_DEBUG -DDEBUG -O0 -ggdb -fno-omit-frame-pointer
-override CFLAGS_USE_LIB := -fPIC
+override CFLAGS_USE_LIB   := -fPIC $(if $(call gnuc_min_ver,10.0), -Bsymbolic-functions)
+override CFLAGS_USE_ASAN  := -fsanitize=address
+override CFLAGS_USE_TSAN  := -fsanitize=thread
+override CFLAGS_USE_MSAN  := -fsanitize=memory
 
-# Useflag LDFLAGS
-# Needed for floating-point functions like fetestexcept/feraiseexcept
 override LDFLAGS_USE_FPU := -lm
 
-# Useflag LIBS
-override LIBS_USE_SDL := sdl$(subst 1,,$(USE_SDL))
-override LIBS_USE_X11 := x11 xext
-override LIBS_USE_WAYLAND := wayland-client xkbcommon
-
-# Useflag dependencies
-override NEED_USE_X11 := USE_GUI HAS_PKG_CONFIG
-override NEED_USE_SDL := USE_GUI HAS_PKG_CONFIG
-override NEED_USE_WAYLAND := USE_GUI HAS_PKG_CONFIG
-override NEED_USE_WIN32_GUI := USE_GUI
-override NEED_USE_HAIKU_GUI := USE_GUI
-override NEED_USE_JNI := USE_LIB
-override NEED_USE_GDBSTUB := USE_NET
-
-#
-# Target-specific useflags handling
-#
+override LIBS_USE_SDL := sdl$(firstword $(USE_SDL) 2)
 
 ifeq ($(OS),windows)
 # Windows-specific libraries to link to
-ifneq (,$(findstring main, $(subst WinMain,main,$(shell $(CC) $(CFLAGS) $(LDFLAGS) -lgdi32 2>&1))))
-# On WinCE it's not expected to link gdi32
-override LDFLAGS_USE_WIN32_GUI := -lgdi32
-endif
-ifneq (,$(findstring main, $(subst WinMain,main,$(shell $(CC) $(CFLAGS) $(LDFLAGS) -lws2 2>&1))))
-# On WinCE there is no _32 suffix
-override LDFLAGS_USE_NET := -lws2
-else
-override LDFLAGS_USE_NET := -lws2_32
-endif
+# NOTE: Prefer linking to wsock32 on i386 for Win95/NT 3.x compat, this still allows to use WinSock 2.x when available
+override LDFLAGS_USE_WIN32_GUI := $(call check_ldflag_avail,-lgdi32)
+override LDFLAGS_USE_NET       := $(if $(if $(filter i386,$(ARCH)),$(call check_ldflag_avail,-lwsock32)),-lwsock32,$(if $(call check_ldflag_avail,-lws2_32),-lws2_32,$(call check_ldflag_avail,-lws2)))
 endif
 
 ifeq ($(OS),haiku)
 # Haiku-specific libraries to link to
 override LDFLAGS_USE_HAIKU_GUI := -lbe
-override LDFLAGS_USE_NET := -lnetwork
+override LDFLAGS_USE_NET       := -lnetwork
 endif
 
 ifeq ($(OS),sunos)
 # Solaris-specific libraries to link to
-override LDFLAGS_USE_NET := -lsocket
+override LDFLAGS_USE_NET := $(call check_ldflag_avail,-lsocket)
 endif
 
 ifeq ($(OS),emscripten)
@@ -383,374 +632,444 @@ ifeq ($(OS),emscripten)
 override CFLAGS_USE_SDL := -s USE_SDL=$(USE_SDL)
 endif
 
-# Check if RVJIT supports the target architecture
-ifeq ($(USE_JIT),1)
-ifeq (,$(findstring 86,$(ARCH))$(findstring arm,$(ARCH))$(findstring riscv,$(ARCH)))
-override USE_JIT := 0
-$(info $(INFO_PREFIX) No RVJIT support for current target$(RESET))
-endif
-endif
-
-ifeq ($(USE_TAP_LINUX),1)
-$(info $(WARN_PREFIX) Linux TAP is deprecated in favor of USE_NET due to checksum issues)
-endif
-
+###################################################################################################
 #
-# Useflag automation magic
+# Useflags automation magic
 #
+###################################################################################################
 
-ifeq (,$(.VARIABLES))
+ifndef .VARIABLES
 # Backward compatibility with ancient GNU Make (3.x) where .VARIABLES is not even supported yet
-.VARIABLES := $(filter USE_%,$(shell grep '^USE_' Makefile)) $(filter SRC_USE_%,$(shell grep '^override SRC_USE_' Makefile))
+# Dump all words in Makefile and env, then filter actual variables via $(origin)
+override WORD_DUMP  := $(shell cat Makefile) $(shell cat project.mk) $(shell printenv | sed 's;=.*;;')
+override .VARIABLES := $(strip $(foreach var,$(WORD_DUMP),$(if $(call var_def,$(var)),$(var))))
 endif
 
-override USEFLAGS := $(sort $(filter USE_%,$(.VARIABLES)))
+override USEFLAGS  := $(sort $(filter USE_%,$(.VARIABLES)))
+override SRC_COND  := $(sort $(filter SRC_USE_%,$(.VARIABLES)))
+override LIBS_COND := $(sort $(filter LIBS_USE_%,$(.VARIABLES)))
 
-# Filter out all conditionally compiled C/C++ sources
-override SRC_CONDITIONAL := $(filter SRC_USE_%,$(.VARIABLES))
-override SRC := $(filter-out $(foreach cond_src,$(SRC_CONDITIONAL),$($(cond_src))),$(SRC))
-override SRC_CXX := $(filter-out $(foreach cond_src,$(SRC_CONDITIONAL),$($(cond_src))),$(SRC_CXX))
+override useflag_filter_deps = $(foreach useflag,$(USEFLAGS_ON),$(if $(strip $(foreach dep,$(call var_src,DEPS_$(useflag)),$(if $(call var_use,$(filter-out $(filter-out $(USEFLAGS_ON),$(USEFLAGS)),$(dep))),,$(dep)$(call log_warn,$(useflag) depends on $(dep))))),,$(useflag)))
 
-# Disable all useflags which depend on another disabled useflags
-override _ := $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(foreach need_useflag,$(NEED_$(useflag)),\
-$(if $(filter 0,$($(need_useflag))),$(eval override $(useflag) := 0)$(info $(WARN_PREFIX) $(useflag) depends on $(need_useflag)$(RESET))))))
+# List enabled and implied useflags which have all of their dependencies satisfied
+override USEFLAGS_ON := $(foreach useflag,$(USEFLAGS),$(if $(call var_use,$(useflag)),$(useflag)))
+override USEFLAGS_ON := $(call useflag_filter_deps)
+override USEFLAGS_ON := $(call useflag_filter_deps)
+override USEFLAGS_ON := $(strip $(USEFLAGS_ON) $(filter-out $(USEFLAGS_ON),$(sort $(foreach useflag,$(USEFLAGS_ON),$(call var_src,IMPLY_$(useflag))))))
+override USEFLAGS_ON := $(call useflag_filter_deps)
+override USEFLAGS_ON := $(call useflag_filter_deps)
 
-# Include actually enabled C/C++ sources
-override SRC := $(SRC) $(sort $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(SRC_$(useflag)))))
-override SRC_CXX := $(SRC_CXX) $(strip $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(SRC_CXX_$(useflag)))))
+# List disabled useflags
+override USEFLAGS_OFF := $(filter-out $(USEFLAGS_ON),$(USEFLAGS))
 
+# List conditionally disabled sources to filter them out later
+override SRC_OFF := $(sort $(foreach src,$(SRC_COND),$(if $(filter $(patsubst SRC_USE_%,USE_%,$(src)),$(USEFLAGS_ON)),,$(call var_src,$(src)))))
 
-# Handle library include paths / linking when pkg-config is available
-ifneq (,$(PKG_CONFIG))
-override LIBS := $(strip $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(LIBS_$(useflag)))))
-override _ := $(foreach lib, $(LIBS),$(if $(shell $(PKG_CONFIG) $(lib) --cflags --libs $(NULL_STDERR)),,$(info $(WARN_PREFIX) Possibly missing library: $(lib)$(RESET))))
+# List all possible library names
+override LIBS_ALL := $(sort $(foreach lib,$(LIBS_COND),$(call var_src,$(lib))) $(foreach bin,$(BIN_BASE_LIST),$(call bin_base_libs,$(bin))) $(foreach lib,$(LIB_BASE_LIST),$(call lib_base_libs,$(lib))))
 
-# Set libraries include paths
-override CFLAGS := $(CFLAGS) $(sort $(foreach lib, $(LIBS),$(shell $(PKG_CONFIG) $(lib) --cflags-only-I $(NULL_STDERR))))
+# List conditionally disabled libraries to filter them out later
+override LIBS_OFF := $(sort $(foreach lib,$(LIBS_COND),$(if $(filter $(patsubst LIBS_USE_%,USE_%,$(lib)),$(USEFLAGS_ON)),,$(call var_src,$(lib)))))
 
-ifeq ($(USE_FULL_LINKING),1)
-# Proper library linking (Do not use sort here for correct linking order)
-override LDFLAGS := $(LDFLAGS) $(strip $(foreach lib, $(LIBS),$(shell $(PKG_CONFIG) $(lib) --libs $(NULL_STDERR))))
-else
-# Pass libdir rpath to linker for dynamic loader to work on Nix, etc
-ifneq (,$(findstring linux,$(OS))$(findstring darwin,$(OS)))
-override WL_RPATH := -Wl,-rpath,
-override LIBDIRS := $(sort $(foreach lib, $(LIBS),$(shell $(PKG_CONFIG) $(lib) --variable libdir $(NULL_STDERR))))
-override LDFLAGS := $(LDFLAGS) $(sort $(foreach libdir, $(LIBDIRS),$(WL_RPATH)$(libdir)))
-endif
-endif
-endif
+# List all enabled libraries
+override LIBS_ON := $(filter-out $(LIBS_OFF),$(LIBS_ALL))
 
+# Set useflags -DUSE_* definitions
+override CPPFLAGS := $(CPPFLAGS) $(foreach useflag,$(USEFLAGS_ON),-D$(useflag)=$(firstword $(call var_use,$(useflag)) 1))
 
 # Set useflags CFLAGS
-override CFLAGS := $(CFLAGS) $(strip $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(CFLAGS_$(useflag)))))
+override CFLAGS := $(CFLAGS) $(foreach useflag,$(USEFLAGS_ON),$(call var_src,CFLAGS_$(useflag)))
 
 # Set useflags LDFLAGS
-override LDFLAGS := $(LDFLAGS) $(strip $(foreach useflag,$(USEFLAGS),$(if $(filter-out 0,$($(useflag))),$(LDFLAGS_$(useflag)))))
+override LDFLAGS := $(LDFLAGS) $(foreach useflag,$(USEFLAGS_ON),$(call var_src,LDFLAGS_$(useflag)))
 
-# Set useflags C definitions
-override CFLAGS := $(CFLAGS) $(strip $(foreach useflag, $(USEFLAGS),$(if $(filter-out 0,$($(useflag))),-D$(useflag)=$($(useflag)))))
+# Handle library include paths
+override LIBS_PKG := $(sort $(filter-out $(LIB_BASE_LIST),$(LIBS_ON)))
+override CPPFLAGS := $(CPPFLAGS) $(foreach lib,$(LIBS_PKG),$(call shell_ex,$(PKG_CONFIG) $(lib) --cflags-only-I $(NULL_STDERR)))
+override _        := $(foreach lib,$(LIBS_PKG),$(if $(call shell_ex,$(PKG_CONFIG) $(lib) --cflags --libs $(NULL_STDERR)),,$(call log_warn,Possibly missing library: $(lib))))
 
+###################################################################################################
 #
-# Output & Object files handling
+# Target & object file handling
 #
+###################################################################################################
 
-# Output directories / files
-override OBJDIR := $(BUILDDIR)/obj
-override BINARY := $(BUILDDIR)/$(BINARY)
-override SHARED := $(BUILDDIR)/lib$(NAME)$(LIB_EXT)
-override STATIC := $(BUILDDIR)/lib$(NAME)_static.a
+# Check whether any C++ sources are present in list
+override src_has_cxx = $(filter %.cpp %.cxx %.cc,$1)
 
-# Combine the object files
-override OBJS := $(SRC:$(SRCDIR)/%.c=$(OBJDIR)/%.o) $(SRC_CXX:$(SRCDIR)/%.cpp=$(OBJDIR)/%.o)
-override LIB_OBJS := $(filter-out main.o,$(OBJS))
-override DEPS := $(OBJS:.o=.d)
-override DIRS := $(sort $(BUILDDIR) $(OBJDIR) $(dir $(OBJS)))
+# Convert source paths to object file paths
+override src_to_obj = $(if $(call var_use,USE_OBJ_STAGE),$(patsubst %.c,$(OBJDIR)/%.o,$(patsubst %.cpp,$(OBJDIR)/%.o,$(patsubst %.cxx,$(OBJDIR)/%.o,$(patsubst %.cc,$(OBJDIR)/%.o,$1)))))
 
-# Create directories for object files
-ifeq ($(HOST_POSIX),1)
-override _ := $(shell mkdir -p $(DIRS))
-else
-override _ := $(foreach directory,$(DIRS),$(shell mkdir $(subst /,\\,$(directory)) $(NULL_STDERR))$(shell mkdir $(directory) $(NULL_STDERR)))
-endif
+# Get full source tree for list of libraries (For USE_LIB_SHARING), up to 8 levels of nesting is supported
+override lib_walk_src = $(filter-out $(LIBS_ALL),$1) $(foreach lib,$(filter-out $(LIBS_OFF),$(filter $(LIB_BASE_LIST),$1)),$(filter-out $(SRC_OFF),$(call lib_base_src,$(lib))) $(call lib_base_libs,$(lib)))
+override lib_tree_src = $(strip $(call lib_walk_src,$(call lib_walk_src,$(call lib_walk_src,$(call lib_walk_src,$(call lib_walk_src,$(call lib_walk_src,$(call lib_walk_src,$(call lib_walk_src,$1)))))))))
 
+# Covert list of base library names to project-owned library targets (For USE_LIB_SHARING)
+override libs_to_targets = $(if $(call var_use,USE_LIB_SHARING),$(strip $(foreach lib,$(filter-out $(LIBS_OFF),$(filter $(LIB_BASE_LIST),$1)),$(call lib_target,$(lib)))))
+
+# Covert list of base library names to LDFLAGS provided by pkg-config
+override libs_to_pkgconf = $(strip $(foreach lib,$(filter-out $(LIBS_OFF),$(filter-out $(LIB_BASE_LIST),$1)),$(call shell_ex,$(PKG_CONFIG) $(lib) --libs $(NULL_STDERR))))
+
+# Get full tree of pkg-config LDFLAGS for list of libraries (For USE_LIB_SHARING), up to 8 levels of nesting is supported
+override lib_walk_pkg = $(filter-out $(LIBS_ALL),$1) $(call libs_to_pkgconf,$1) $(foreach lib,$(filter-out $(LIBS_OFF),$(filter $(LIB_BASE_LIST),$1)),$(call lib_base_libs,$(lib)))
+override lib_tree_pkg = $(strip $(call lib_walk_pkg,$(call lib_walk_pkg,$(call lib_walk_pkg,$(call lib_walk_pkg,$(call lib_walk_pkg,$(call lib_walk_pkg,$(call lib_walk_pkg,$(call lib_walk_pkg,$1)))))))))
+
+# Covert list of base library names to LDFLAGS
+override libs_to_ldflags = $(if $(call var_use,USE_LIB_SHARING),-L$(BUILDDIR) $(patsubst %,-l%,$(filter $(LIB_BASE_LIST),$1)) $(call libs_to_pkgconf,$1),$(call lib_tree_pkg,$1))
+
+# Get list of base library names on which the target in question directly depends on
+override bin_target_libs = $(strip $(filter-out $(LIBS_OFF),$(call bin_base_libs,$(call bin_base,$1))))
+override lib_target_libs = $(strip $(filter-out $(LIBS_OFF),$(call lib_base_libs,$(call lib_base,$1))))
+
+override bin_target_own_libs = $(call libs_to_targets,$(filter $(LIB_BASE_LIST),$(call bin_target_libs,$1)))
+override lib_target_own_libs = $(call libs_to_targets,$(filter $(LIB_BASE_LIST),$(call lib_target_libs,$1)))
+
+# Get list of sources for target
+override bin_target_src = $(strip $(filter-out $(SRC_OFF),$(call bin_base_src,$(call bin_base,$1))) $(if $(call var_use,USE_LIB_SHARING),,$(call lib_tree_src,$(call bin_target_libs,$1))))
+override lib_target_src = $(strip $(filter-out $(SRC_OFF),$(call lib_base_src,$(call lib_base,$1))) $(if $(call var_use,USE_LIB_SHARING),,$(call lib_tree_src,$(call lib_target_libs,$1))))
+override lib_static_src = $(strip $(filter-out $(SRC_OFF),$(call lib_base_src,$(call lib_static_base,$1))))
+
+# Get list of object files for target
+override bin_target_obj = $(call src_to_obj,$(call bin_target_src,$1))
+override lib_target_obj = $(call src_to_obj,$(call lib_target_src,$1))
+override lib_static_obj = $(call src_to_obj,$(call lib_static_src,$1))
+
+# Get final link list for target - Remove duplicate object/library files
+override bin_target_link = $(strip $(sort $(if $(call var_use,USE_OBJ_STAGE),$(call bin_target_obj,$1),$(call bin_target_src,$1))) $(call libs_to_ldflags,$(call bin_target_libs,$1)))
+override lib_target_link = $(strip $(sort $(if $(call var_use,USE_OBJ_STAGE),$(call lib_target_obj,$1),$(call lib_target_src,$1))) $(call libs_to_ldflags,$(call lib_target_libs,$1)))
+
+# Get CC or CXX for binary/library linking based on presence of C++ code
+override bin_target_ld = $(if $(if $(call var_use,USE_OBJ_STAGE),$(call src_has_cxx,$(call bin_target_src,$1))),$(CXX) $(CXX_STD),$(CC) $(CC_STD))
+override lib_target_ld = $(if $(if $(call var_use,USE_OBJ_STAGE),$(call src_has_cxx,$(call lib_target_src,$1))),$(CXX) $(CXX_STD),$(CC) $(CC_STD))
+
+# Generate lists of object files for binary and library dependencies - Do not sort
+override BIN_OBJ := $(foreach bin,$(BIN_TARGETS),$(call bin_target_obj,$(bin)))
+override LIB_OBJ := $(foreach lib,$(LIB_TARGETS),$(call lib_target_obj,$(lib)))
+
+# Generate list of library targets for binary dependencies
+override BIN_LIBS := $(sort $(foreach bin,$(BIN_TARGETS),$(call bin_target_own_libs,$(bin))))
+
+override OBJ  := $(sort $(BIN_OBJ) $(LIB_OBJ))
+override DEPS := $(patsubst %.o,%.d,$(OBJ))
+override DIRS := $(sort $(BUILDDIR) $(OBJDIR) $(dir $(OBJ)))
+override _    := $(call create_dirs,$(DIRS))
+
+###################################################################################################
 #
-# Detect compiler brand & features, set up optimization/warning options
+# Set up optimization/warning options
 #
+###################################################################################################
 
 # Generic conservative build options
-override OPTIMIZE_OPTS := -O2
+override OPTIMIZE_OPTS := $(if $(call var_use,USE_DEBUG_FULL),-O0,-O2)
 override WARN_OPTS     :=
 override CC_STD        := -std=c99
 override CXX_STD       :=
 
-# NOTE: Internal functions for compiler version parsing
-override has_numbers = $(findstring 1,$1)$(findstring 2,$1)$(findstring 3,$1)$(findstring 4,$1)$(findstring 5,$1)$(findstring 6,$1)$(findstring 7,$1)$(findstring 8,$1)$(findstring 9,$1)
-override filter_ver_triplet = $(if $(filter version,$(word 2,$1)),$(if $(call has_numbers, $(word 3,$1)),$1))
-
-# Search for "<cc_brand> version N[.x.y]" pattern in $(cc -v) dump
-override CC_V_DUMP         := $(shell $(CC) -v 2>&1)
-override CC_TMP            := $(CC_V_DUMP)
-override CC_VERSION_STRING := $(strip $(foreach word,$(CC_V_DUMP),$(call filter_ver_triplet, $(CC_TMP))$(eval override CC_TMP := $(wordlist 2,$(words $(CC_TMP)),$(CC_TMP)))))
-
-ifneq (,$(CC_VERSION_STRING))
-# Successfuly determined compiler brand
-override CC_BRAND   := $(firstword $(CC_VERSION_STRING))
-override CC_VERSION := $(word 3,$(CC_VERSION_STRING))
-ifeq (,$(findstring .,$(CC_VERSION)))
-# Try to get full compiler version via $(cc -dumpfullversion -dumpversion)
-override CC_TMP := $(firstword $(shell $(CC) -dumpfullversion -dumpversion $(NULL_STDERR)))
-ifneq (,$(findstring .,$(CC_TMP)))
-# Successfuly determined full compiler version
-override CC_VERSION := $(CC_TMP)
-endif
-endif
-endif
-
-ifeq ($(ARCH),e2k)
-# LCC is not a real GCC, but lies about being one
-# Workaround build failures by explicitly marking it as different compiler brand
-override CC_BRAND := ПТН ПНХ
-endif
-ifeq (,$(CC_BRAND))
-# Failed to determine compiler brand
-override CC_BRAND := Unknown
-endif
-
-# Use $(CC_PRETTY) for printing compiler info, $(CC_BRAND) to match lowercase gcc/clang/tcc
-override CC_PRETTY := $(RED)$(CC_BRAND) $(CC_VERSION)
-override CC_BRAND  := $(call tolower,$(CC_BRAND))
-
-# Compiler version checks
-override CC_AT_LEAST_1_0 := $(filter-out 0.%,$(CC_VERSION))
-override CC_AT_LEAST_2_0 := $(filter-out 1.%,$(CC_AT_LEAST_1_0))
-override CC_AT_LEAST_3_0 := $(filter-out 2.%,$(CC_AT_LEAST_2_0))
-override CC_AT_LEAST_4_0 := $(filter-out 3.%,$(CC_AT_LEAST_3_0))
-override CC_AT_LEAST_5_0 := $(filter-out 4.%,$(CC_AT_LEAST_4_0))
-override CC_AT_LEAST_6_0 := $(filter-out 5.%,$(CC_AT_LEAST_5_0))
-override CC_AT_LEAST_7_0 := $(filter-out 6.%,$(CC_AT_LEAST_6_0))
-
-
-ifneq (,$(filter gcc,$(CC_BRAND))$(filter clang,$(CC_BRAND)))
-# Common handling for GCC/Clang
-
-ifneq (,$(CC_AT_LEAST_3_0))
-# Common warning options for older GCC / Clang compilers
-override WARN_OPTS := -Wall -Wextra
-endif
-
-ifneq (,$(CC_AT_LEAST_7_0))
-# Common warning options (Strict safety & portability, stack/object size limits) for GCC/Clang 7.0+
-# NOTE: -Wbad-function-cast, -Wcast-align, need fixes in codebase
-override WARN_OPTS := -Wall -Wextra -Wcast-qual -Wshadow -Wvla -Wpointer-arith -Walloca -Wduplicated-cond \
--Wtrampolines -Wlarger-than=1048576 -Wframe-larger-than=32768 -Wdouble-promotion -Werror=return-type
-endif
-
-# Check LTO support on GCC/Clang 5.0+
-ifeq ($(if $(CC_AT_LEAST_5_0),$(USE_LTO)),1)
-override LTO_CHECK_OUT := $(OBJDIR)/lto_lest$(BIN_EXT)
-override LTO_SUPPORTED := $(if $(wildcard $(LTO_CHECK_OUT)),1)
+# Check LTO support on GCC/Clang 5.0+ if USE_LTO is enabled
+override LTO_SUPPORTED :=
+ifneq (,$(if $(call var_use,USE_LTO),$(call gnuc_min_ver,5.0)))
+override LTO_CHECK_SRC := $(OBJDIR)/lto_lest.c
+override LTO_CHECK_BIN := $(OBJDIR)/lto_lest$(BIN_EXT)
+override LTO_SUPPORTED := $(if $(call paths_exist,$(LTO_CHECK_BIN)),1)
 ifeq (,$(LTO_SUPPORTED))
-override LTO_ERROR     := $(shell echo "int main(){return 0;}" | $(CC) -O2 -flto -xc -o $(LTO_CHECK_OUT) - 2>&1)
+$(if $(call paths_missing,$(LTO_CHECK_SRC)),$(call install_string,int main(){return 0;},$(LTO_CHECK_SRC)))
+override LTO_ERROR := $(call shell_ex,$(CC) $(CFLAGS) $(LDFLAGS) -O2 -flto $(LTO_CHECK_SRC) -o $(LTO_CHECK_BIN) $(ONLY_STDERR))
 ifeq (,$(findstring lto,$(LTO_ERROR))$(findstring LTO,$(LTO_ERROR)))
 override LTO_SUPPORTED := 1
 else
-$(info $(INFO_PREFIX) LTO is not supported by this toolchain: $(wordlist 2,8,$(LTO_ERROR))$(RESET))
+$(call log_info,LTO is not supported by this toolchain: $(wordlist 2,8,$(LTO_ERROR)))
 endif
 endif
 endif
 
+# Enable basic -Wall warnings on GCC/Clang 3.0+ if USE_WARNS >= 1
+ifneq (,$(if $(filter g,$(call num_cmp,$(call var_use,USE_WARNS),0)),$(call gnuc_min_ver,3.0)))
+override WARN_OPTS := -Wall
 endif
 
-ifeq ($(CC_BRAND),gcc)
-# GNU GCC or derivatives (MinGW)
-override CC_PRETTY := GCC $(CC_VERSION)
-ifneq (,$(CC_AT_LEAST_5_0))
-override CC_STD  := -std=gnu11 -Wstrict-prototypes -Wold-style-declaration -Wold-style-definition
-override CXX_STD := -std=gnu++11
-endif
-override OPTIMIZE_OPTS := -O2 $(if $(LTO_SUPPORTED),-flto=auto) -frounding-math $(if $(CC_AT_LEAST_4_0),-fvisibility=hidden -fno-math-errno) $(if $(CC_AT_LEAST_6_0),-fno-plt)
-override WARN_OPTS     := $(WARN_OPTS) -Wno-missing-braces $(if $(CC_AT_LEAST_4_0),-Wno-missing-field-initializers)
+# Enable extra warnings on GCC/Clang 7.0+ if USE_WARNS >= 2
+ifneq (,$(if $(filter g,$(call num_cmp,$(call var_use,USE_WARNS),1)),$(call gnuc_min_ver,7.0)))
+override WARN_OPTS := -Wall -Wextra -Wcast-qual -Wcast-align -Wshadow -Werror=return-type
 endif
 
-ifeq ($(CC_BRAND),clang)
-# LLVM Clang or derivatives (Zig CC, Emscripten)
-override CC_PRETTY := LLVM Clang $(CC_VERSION)
-ifneq (,$(CC_AT_LEAST_4_0))
+# Enable strict warnings (Strict safety & portability) on GCC/Clang 7.0+ if USE_WARNS >= 3
+# NOTE: -Wbad-function-cast needs fixes in codebase
+ifneq (,$(if $(filter g,$(call num_cmp,$(call var_use,USE_WARNS),2)),$(call gnuc_min_ver,7.0)))
+override WARN_OPTS := -Wall -Wextra -Wcast-qual -Wcast-align -Wshadow -Wvla -Wpointer-arith -Walloca -Wduplicated-cond \
+-Wtrampolines -Wlarger-than=1048576 -Wframe-larger-than=32768 -Wdouble-promotion -Werror=return-type
+endif
+
+# Enable C11/C++11 standard with GNU extensions, disallow K&R style functions on Clang 4.0+
+ifneq (,$(call clang_min_ver,4.0))
 override CC_STD  := -std=gnu11 -Wstrict-prototypes -Wold-style-definition
 override CXX_STD := -std=gnu++11
 endif
-override OPTIMIZE_OPTS := -O2 $(if $(LTO_SUPPORTED),-flto) $(if $(CC_AT_LEAST_4_0),-frounding-math) -fvisibility=hidden -fno-math-errno
-override WARN_OPTS     := $(WARN_OPTS) -Wno-unknown-warning-option -Wno-unsupported-floating-point-opt -Wno-ignored-optimization-argument \
--Wno-missing-braces -Wno-missing-field-initializers -Wno-ignored-pragmas -Wno-atomic-alignment $(if $(CC_AT_LEAST_4_0),-Wdocumentation)
+
+# Enable C11/C++11 standard with GNU extensions, disallow K&R style functions on GCC 5.0+
+ifneq (,$(call gcc_min_ver,5.0))
+override CC_STD  := -std=gnu11 -Wstrict-prototypes -Wold-style-declaration -Wold-style-definition
+override CXX_STD := -std=gnu++11
 endif
+
+# Set compiler-specific optimization options
+# Enable -O2 unless USE_DEBUG_FULL is set, which enables -O0
+#
+# Enable -flto=auto on GCC 5.0+, -flto-incremental on GCC 15.0+
+# Enable -fvisibility=hidden -frounding-math -fno-math-errno on GCC 4.0+
+# Enable -fno-plt -fno-semantic-interposition on GCC 6.0+
+#
+# Enable -flto on Clang 5.0+
+# Enable -fvisibility=hidden -fno-math-errno on Clang 3.0+,
+# Enable -frounding-math on Clang 4.0+
+#
+# Enable -Bsymbolic-functions on GCC/Clang 4.0+
+override OPTIMIZE_OPTS := $(OPTIMIZE_OPTS) \
+$(if $(LTO_SUPPORTED),$(if $(call gcc_min_ver,5.0),-flto=auto) $(if $(call gcc_min_ver,15.0),-flto-incremental=$(OBJDIR))) \
+$(if $(call gcc_min_ver,4.0),-fvisibility=hidden -fno-math-errno -frounding-math) \
+$(if $(call gcc_min_ver,6.0),-fno-plt -fno-semantic-interposition) \
+$(if $(LTO_SUPPORTED),$(if $(call clang_min_ver,5.0),-flto)) \
+$(if $(call clang_min_ver,3.0),-fvisibility=hidden -fno-math-errno) \
+$(if $(call clang_min_ver,4.0),-frounding-math) \
+$(if $(call gnuc_min_ver,4.0),-Bsymbolic-functions)
+
+# Set compiler-specific warning & suppression options
+#
+# Enable -Wno-missing-braces on GCC 3.0+
+# Enable -Wno-missing-field-initializers on GCC 4.0+
+#
+# Enable -Wno-unknown-warning-option -Wno-unsupported-floating-point-opt -Wno-ignored-optimization-argument on Clang 3.0+
+# Enable -Wno-missing-braces -Wno-missing-field-initializers -Wno-ignored-pragmas -Wno-atomic-alignment on Clang 3.0+
+# Enable -Wdocumentation on Clang 4.0+
+override WARN_OPTS := $(WARN_OPTS) \
+$(if $(call gcc_min_ver,3.0),-Wno-missing-braces) $(if $(call gcc_min_ver,4.0),-Wno-missing-field-initializers) \
+$(if $(call clang_min_ver,3.0),-Wno-unknown-warning-option -Wno-unsupported-floating-point-opt -Wno-ignored-optimization-argument) \
+$(if $(call clang_min_ver,3.0),-Wno-missing-braces -Wno-missing-field-initializers -Wno-ignored-pragmas -Wno-atomic-alignment) \
+$(if $(call clang_min_ver,4.0),-Wdocumentation)
 
 # Produce final CFLAGS/LDFLAGS, strip excess spaces
-override CFLAGS  := $(strip $(OPTIMIZE_OPTS) $(WARN_OPTS) $(CFLAGS))
-override LDFLAGS := $(strip $(LDFLAGS))
+override CPPFLAGS := $(strip -I$(SRCDIR) $(if $(filter-out $(SRCDIR),$(HDRDIR)),-I$(HDRDIR)) -D$(NAME_UPPER)_VERSION="$(VERSION)" $(CPPFLAGS))
+override CFLAGS   := $(strip $(OPTIMIZE_OPTS) $(WARN_OPTS) $(CFLAGS))
+override LDFLAGS  := $(strip $(LDFLAGS))
 
+###################################################################################################
 #
-# Check previous build flags, force a rebuild if necessary
+# Check previous build flags, trigger a rebuild if necessary
 #
+###################################################################################################
 
-override CFLAGS_TXT   := $(OBJDIR)/cflags.txt
-override LDFLAGS_TXT  := $(OBJDIR)/ldflags.txt
-override CURR_CFLAGS  := $(CC) $(CC_VERSION) $(CFLAGS)
-override CURR_LDFLAGS := $(LD) $(CC_VERSION) $(LDFLAGS)
-sinclude $(CFLAGS_TXT) $(LDFLAGS_TXT)
+override CC_INFO      := $(OBJDIR)/cc_info.txt
+override LD_INFO      := $(OBJDIR)/ld_info.txt
+override CC_TRIGGER   := $(OBJDIR)/cc_trigger.txt
+override LD_TRIGGER   := $(OBJDIR)/ld_trigger.txt
+override CURR_CC_INFO := $(CC) $(CC_VERSION) $(CPPFLAGS) $(CFLAGS)
+override CURR_LD_INFO := $(LDFLAGS)
 
-ifneq ($(CURR_CFLAGS),$(PREV_CFLAGS))
-ifneq (,$(PREV_CFLAGS))
-$(info $(INFO_PREFIX) CFLAGS changed, doing a full rebuild$(RESET))
-endif
-override MAKEFLAGS += -B
-else
-ifneq ($(CURR_LDFLAGS),$(PREV_LDFLAGS))
-$(info $(INFO_PREFIX) LDFLAGS changed, relinking binaries$(RESET))
-override _ := $(shell rm $(BINARY) $(SHARED) $(NULL_STDERR))
-endif
-endif
+# Separate CC_INFO and CC_TRIGGER to prevent repeated parsing of the Makefile when CC_TRIGGER dependency is overwritten
+sinclude $(CC_INFO) $(LD_INFO)
 
-ifneq (,$(filter-out 3.%,$(MAKE_VERSION)))
-override _ := $(file >$(CFLAGS_TXT),PREV_CFLAGS := $(CURR_CFLAGS))
-override _ := $(file >$(LDFLAGS_TXT),PREV_LDFLAGS := $(CURR_LDFLAGS))
-else
-override _ := $(shell echo "PREV_CFLAGS := $(subst ",\\",$(CURR_CFLAGS))" > $(CFLAGS_TXT))
-override _ := $(shell echo "PREV_LDFLAGS := $(subst ",\\",$(CURR_LDFLAGS))" > $(LDFLAGS_TXT))
+ifneq ($(CURR_CC_INFO),$(call var_src,PREV_CC_INFO))
+$(call install_string,$(subst $(SPACE),$(NEWLINE),$(CPPFLAGS) $(WARN_OPTS)),compile_flags.txt)
+$(call install_string,PREV_CC_INFO := $(CURR_CC_INFO),$(CC_INFO))
+$(call install_string,This file triggers source rebuild,$(CC_TRIGGER))
 endif
 
-#
-# Compiler invocation helpers
-#
-
-# Link using CC or CXX if any C++ code is present
-override CC_LD := $(CC)
-ifneq (,$(strip $(SRC_CXX)))
-override CC_LD := $(CXX)
+ifneq ($(CURR_LD_INFO),$(call var_src,PREV_LD_INFO))
+$(call install_string,PREV_LD_INFO := $(CURR_LD_INFO),$(LD_INFO))
+$(call install_string,This file triggers linker rebuild,$(LD_TRIGGER))
 endif
 
+###################################################################################################
 #
 # Print build information
 #
+###################################################################################################
 
-$(info $(TEXT)Detected OS: $(GREEN)$(OS_PRETTY)$(RESET))
-$(info $(TEXT)Detected CC: $(GREEN)$(CC_PRETTY)$(RESET))
-$(info $(TEXT)Target arch: $(GREEN)$(ARCH)$(RESET))
-$(info $(TEXT)Version:     $(GREEN)RVVM $(VERSION)$(RESET))
-$(info $(EMPTY))
+# Show the project logo if terminal supports unicode
+ifneq (,$(if $(findstring UTF,$(LANG)),$(LOGO)))
+$(call println,$(RESET))
+$(call println,$(LOGO))
+endif
 
+ifneq (,$(call var_use,VERBOSE))
+override VERBOSE_VARS := HOST_UNAME HOST_OS HOST_ARCH CC_BRAND CC_VERSION CC_TRIPLET LTO_SUPPORTED \
+OS ARCH GIT_DESCRIBE USEFLAGS_ON CC_STD CXX_STD CPPFLAGS CFLAGS LDFLAGS SRC_OFF LIBS_PKG BIN_TARGETS LIB_TARGETS
+$(call println,$(RESET))
+$(call log_info,Verbose build info:)
+override _ := $(foreach var,$(VERBOSE_VARS),$(call println,$(GREEN)$(var)$(RESET): $($(var))))
+endif
+
+# Print build information
+$(call println,$(RESET))
+$(call println,$(TEXT)Detected OS: $(GREEN)$(OS_PRETTY)$(RESET))
+$(call println,$(TEXT)Detected CC: $(GREEN)$(CC_PRETTY)$(RESET))
+$(call println,$(TEXT)Target arch: $(GREEN)$(ARCH)$(RESET))
+$(call println,$(TEXT)Version:     $(GREEN)$(NAME) $(VERSION)$(RESET))
+$(call println,$(RESET))
+
+# Allow tests to run with USE_LIB_SHARING
+export LD_LIBRARY_PATH   := $(BUILDDIR)$(if $(call var_def,LD_LIBRARY_PATH),:$(LD_LIBRARY_PATH))
+export DYLD_LIBRARY_PATH := $(BUILDDIR)$(if $(call var_def,DYLD_LIBRARY_PATH),:$(DYLD_LIBRARY_PATH))
+
+###################################################################################################
 #
 # Make targets
 #
+###################################################################################################
 
-.PHONY: all         # Build everything (Default)
-all: bin lib
+# Handle header dependencies generated by the compiler
+sinclude $(DEPS)
 
-.PHONY: bin         # Build the main executable
-bin: $(BINARY)
-
-.PHONY: lib         # Build shared / static libraries based on useflags
-lib: $(if $(findstring 1,$(USE_LIB)),$(SHARED)) $(if $(findstring 1,$(USE_LIB_STATIC)),$(STATIC))
-
-# Ignore deleted header files
-%.h:
+# Ignore deleted header/dependency files
+%.h %.hpp %.hh %.hxx %.d %.c %.cpp %.cxx %.cc:
 	@:
 
-# C object files
-$(OBJDIR)/%.o: $(SRCDIR)/%.c Makefile
-	$(info $(TEXT)[$(YELLOW)CC$(TEXT)] $< $(RESET))
-	@$(CC) $(CC_STD) $(CFLAGS) -MMD -MF $(patsubst %.o, %.d, $@) -o $@ -c $<
+# Ignore not yet created CC/LD rebuild triggers
+$(call path_shell,$(CC_TRIGGER) $(LD_TRIGGER)):
+	@:
 
-# C++ object files
-$(OBJDIR)/%.o: $(SRCDIR)/%.cpp Makefile
-	$(info $(TEXT)[$(YELLOW)CXX$(TEXT)] $< $(RESET))
-	@$(CXX) $(CXX_STD) $(CFLAGS) -MMD -MF $(patsubst %.o, %.d, $@) -o $@ -c $<
 
-# Main binary
-$(BINARY): $(OBJS)
-	$(info $(TEXT)[$(GREEN)LD$(TEXT)] $@ $(RESET))
-	@$(CC_LD) $(CFLAGS) $(OBJS) $(LDFLAGS) -o $@
 
-# Shared library
-$(SHARED): $(LIB_OBJS)
-	$(info $(TEXT)[$(GREEN)LD$(TEXT)] $@ $(RESET))
-	@$(CC_LD) $(CFLAGS) $(LIB_OBJS) $(LDFLAGS) -shared -o $@
+# C object files (.c)
+$(call path_shell,$(OBJDIR)/%.o: %.c Makefile project.mk $(CC_TRIGGER))
+	$(call println,$(TEXT)[$(YELLOW)CC$(TEXT)] $< $(RESET))
+	@$(foreach out,$(call path_wrap,$@),$(call shell_esc,$(CC) $(CC_STD) $(CPPFLAGS) $(CFLAGS) $(if $(CC_IS_GNU),-MMD -MF $(patsubst %.o,%.d,$(out))) -o $(out) -c $(call path_wrap,$<)))
 
-# Static library
-$(STATIC): $(LIB_OBJS)
-	$(info $(TEXT)[$(GREEN)AR$(TEXT)] $@ $(RESET))
-	@$(AR) -rcs $@ $(LIB_OBJS)
 
-.PHONY: test        # Run RISC-V tests
+
+# C++ object files (.cpp / .cxx / .cc)
+$(call path_shell,$(OBJDIR)/%.o: %.cpp Makefile project.mk $(CC_TRIGGER))
+	$(call println,$(TEXT)[$(YELLOW)CC$(TEXT)] $< $(RESET))
+	@$(foreach out,$(call path_wrap,$@),$(call shell_esc,$(CXX) $(CXX_STD) $(CPPFLAGS) $(CFLAGS) $(if $(CC_IS_GNU),-MMD -MF $(patsubst %.o,%.d,$(out))) -o $(out) -c $(call path_wrap,$<)))
+
+$(call path_shell,$(OBJDIR)/%.o: %.cxx Makefile project.mk $(CC_TRIGGER))
+	$(call println,$(TEXT)[$(YELLOW)CC$(TEXT)] $< $(RESET))
+	@$(foreach out,$(call path_wrap,$@),$(call shell_esc,$(CXX) $(CXX_STD) $(CPPFLAGS) $(CFLAGS) $(if $(CC_IS_GNU),-MMD -MF $(patsubst %.o,%.d,$(out))) -o $(out) -c $(call path_wrap,$<)))
+
+$(call path_shell,$(OBJDIR)/%.o: %.cc Makefile project.mk $(CC_TRIGGER))
+	$(call println,$(TEXT)[$(YELLOW)CC$(TEXT)] $< $(RESET))
+	@$(foreach out,$(call path_wrap,$@),$(call shell_esc,$(CXX) $(CXX_STD) $(CPPFLAGS) $(CFLAGS) $(if $(CC_IS_GNU),-MMD -MF $(patsubst %.o,%.d,$(out))) -o $(out) -c $(call path_wrap,$<)))
+
+
+
+# Binaries
+$(call path_shell,$(BIN_TARGETS): $(BIN_OBJ) $(BIN_LIBS) $(CC_TRIGGER) $(LD_TRIGGER))
+	$(call println,$(TEXT)[$(GREEN)LD$(TEXT)] $@ $(RESET))
+	@$(foreach out,$(call path_wrap,$@),$(call shell_esc,$(call bin_target_ld,$(out)) $(CPPFLAGS) $(CFLAGS) $(call bin_target_link,$(out)) $(LDFLAGS) -o $(out)))
+
+
+
+# Set -Wl,--subsystem,windows,--out-implib,$@.a for Windows libraries
+override shared_extra = $(if $(filter windows,$(OS)),-Wl$(COMMA)--subsystem$(COMMA)windows$(COMMA)--out-implib$(COMMA)$(patsubst %$(LIB_EXT),%.a,$1))
+
+# Shared libraries
+$(call path_shell,$(LIB_TARGETS): $(LIB_OBJ) $(CC_TRIGGER) $(LD_TRIGGER))
+	$(call println,$(TEXT)[$(GREEN)LD$(TEXT)] $@ $(RESET))
+	@$(foreach out,$(call path_wrap,$@),$(call shell_esc,$(call lib_target_ld,$(out)) $(CPPFLAGS) $(CFLAGS) $(call lib_target_link,$(out)) $(LDFLAGS) -shared $(call shared_extra,$(out)) -o $(out)))
+
+# Generate internal shared library dependencies, up to 8 levels of nesting is supported
+override libs_dependants = $(filter-out $1,$(strip $(foreach lib,$(LIB_TARGETS),$(if $(filter-out $1,$(call lib_target_own_libs,$(lib))),,$(lib)))))
+override LIBS_PREV := $(call libs_dependants,)
+override LIBS_NEXT := $(filter-out $(LIBS_PREV),$(call libs_dependants,$(LIBS_PREV)))
+ifneq (,$(LIBS_NEXT))
+$(call gen_dependency,$(LIBS_NEXT),$(LIBS_PREV))
+override LIBS_PREV := $(LIBS_PREV) $(LIBS_NEXT)
+override LIBS_NEXT := $(filter-out $(LIBS_PREV),$(call libs_dependants,$(LIBS_PREV)))
+ifneq (,$(LIBS_NEXT))
+$(call gen_dependency,$(LIBS_NEXT),$(LIBS_PREV))
+override LIBS_PREV := $(LIBS_PREV) $(LIBS_NEXT)
+override LIBS_NEXT := $(filter-out $(LIBS_PREV),$(call libs_dependants,$(LIBS_PREV)))
+ifneq (,$(LIBS_NEXT))
+$(call gen_dependency,$(LIBS_NEXT),$(LIBS_PREV))
+override LIBS_PREV := $(LIBS_PREV) $(LIBS_NEXT)
+override LIBS_NEXT := $(filter-out $(LIBS_PREV),$(call libs_dependants,$(LIBS_PREV)))
+ifneq (,$(LIBS_NEXT))
+$(call gen_dependency,$(LIBS_NEXT),$(LIBS_PREV))
+override LIBS_PREV := $(LIBS_PREV) $(LIBS_NEXT)
+override LIBS_NEXT := $(filter-out $(LIBS_PREV),$(call libs_dependants,$(LIBS_PREV)))
+ifneq (,$(LIBS_NEXT))
+$(call gen_dependency,$(LIBS_NEXT),$(LIBS_PREV))
+override LIBS_PREV := $(LIBS_PREV) $(LIBS_NEXT)
+override LIBS_NEXT := $(filter-out $(LIBS_PREV),$(call libs_dependants,$(LIBS_PREV)))
+ifneq (,$(LIBS_NEXT))
+$(call gen_dependency,$(LIBS_NEXT),$(LIBS_PREV))
+override LIBS_PREV := $(LIBS_PREV) $(LIBS_NEXT)
+override LIBS_NEXT := $(filter-out $(LIBS_PREV),$(call libs_dependants,$(LIBS_PREV)))
+ifneq (,$(LIBS_NEXT))
+$(call gen_dependency,$(LIBS_NEXT),$(LIBS_PREV))
+override LIBS_PREV := $(LIBS_PREV) $(LIBS_NEXT)
+override LIBS_NEXT := $(filter-out $(LIBS_PREV),$(call libs_dependants,$(LIBS_PREV)))
+ifneq (,$(LIBS_NEXT))
+$(call gen_dependency,$(LIBS_NEXT),$(LIBS_PREV))
+endif
+endif
+endif
+endif
+endif
+endif
+endif
+endif
+
+
+
+# Static libraries
+$(call path_shell,$(LIB_STATIC_TARGETS): $(LIB_OBJ))
+	$(call println,$(TEXT)[$(GREEN)AR$(TEXT)] $@ $(RESET))
+	@$(call shell_esc,$(AR) -rcs $(call path_wrap,$@) $(call lib_static_obj,$(call path_wrap,$@)))
+
+
+
+# Phony targets
+.PHONY: all         # Build everything (Default)
+all: lib bin
+
+.PHONY: bin         # Build executables
+bin: $(call path_shell,$(BIN_TARGETS))
+
+.PHONY: lib         # Build shared / static libraries
+lib: $(if $(call var_use,USE_LIB),$(LIB_TARGETS)) $(if $(call var_use,USE_LIB_STATIC),$(LIB_STATIC_TARGETS))
+
+
+
+.PHONY: test        # Run tests
 test: bin
-	$(if $(wildcard $(BUILDDIR)/riscv-tests.tar.gz),,@cd "$(BUILDDIR)"; curl -LO "https://github.com/LekKit/riscv-tests/releases/download/rvvm-tests/riscv-tests.tar.gz")
-	@tar xzf "$(BUILDDIR)/riscv-tests.tar.gz" -C $(BUILDDIR)
-ifeq ($(USE_RV32),1)
-	@echo
-	@echo "$(INFO_PREFIX) Running RISC-V Tests (riscv32)$(RESET)"
-	@echo
-	@for file in "$(BUILDDIR)/riscv-tests/rv32"*; do \
-		result=$$($(BINARY) $$file -nonet -nogui -rv32 | tr -d '\0'); \
-		result="$${result##* }"; \
-		if [ "$$result" -eq "0" ]; then \
-		echo "$(TEXT)[$(GREEN)PASS$(TEXT)] $$file$(RESET)"; \
-		else \
-		echo "$(TEXT)[$(RED)FAIL: $$result$(TEXT)] $$file$(RESET)"; \
-		exit -1; \
-		fi; \
-	done
-endif
-ifeq ($(USE_RV64),1)
-	@echo
-	@echo "$(INFO_PREFIX) Running RISC-V Tests (riscv64)$(RESET)"
-	@echo
-	@for file in "$(BUILDDIR)/riscv-tests/rv64"*; do \
-		result=$$($(BINARY) $$file -nonet -nogui -rv64 | tr -d '\0'); \
-		result="$${result##* }"; \
-		if [ "$$result" -eq "0" ]; then \
-		echo "$(TEXT)[$(GREEN)PASS$(TEXT)] $$file$(RESET)"; \
-		else \
-		echo "$(TEXT)[$(RED)FAIL: $$result$(TEXT)] $$file$(RESET)"; \
-		exit -1; \
-		fi; \
-	done
-endif
 
-override CPPCHECK_GENERIC_OPTIONS := -f -j$(JOBS) --inline-suppr --std=c99 -q -I $(SRCDIR)
-override CPPCHECK_SUPPRESS_OPTIONS :=  --suppress=unmatchedSuppression --suppress=missingIncludeSystem \
---suppress=constParameterPointer --suppress=constVariablePointer --suppress=constParameterCallback \
---suppress=constVariable --suppress=variableScope --suppress=knownConditionTrueFalse \
---suppress=unusedStructMember --suppress=uselessAssignmentArg --suppress=unreadVariable --suppress=syntaxError
-ifneq ($(CPPCHECK_FAST),1)
-override CPPCHECK_GENERIC_OPTIONS += --check-level=exhaustive
-else
-override CPPCHECK_SUPPRESS_OPTIONS += --suppress=normalCheckLevelMaxBranches
-endif
+
+
+override CPPCHECK_OPTS := -q -f -j$(JOBS) --std=c99 -D__CPPCHECK__ -I$(SRCDIR) --inline-suppr --error-exitcode=1 --cppcheck-build-dir=$(OBJDIR) \
+--check-level=exhaustive --enable=all --inconclusive \
+--suppress=unmatchedSuppression --suppress=missingIncludeSystem --suppress=missingInclude --suppress=syntaxError \
+--suppress=cstyleCast --suppress=unusedFunction --suppress=constParameterCallback --suppress=useStandardLibrary --suppress=uselessAssignmentArg \
+$(if $(filter l,$(call num_cmp,$(USE_WARNS),6)),--suppress=unusedStructMember --suppress=variableScope) \
+$(if $(filter l,$(call num_cmp,$(USE_WARNS),5)),--suppress=constParameterPointer --suppress=constVariablePointer) \
+$(if $(filter l,$(call num_cmp,$(USE_WARNS),4)),--suppress=knownConditionTrueFalse --suppress=badBitmaskCheck) \
+$(if $(filter l,$(call num_cmp,$(USE_WARNS),3)),--suppress=unreadVariable --suppress=constVariable) \
+$(if $(filter l,$(call num_cmp,$(USE_WARNS),2)),--suppress=funcArgNamesDifferent --suppress=shadowVariable) \
+$(if $(filter l,$(call num_cmp,$(USE_WARNS),1)),--suppress=truncLongCastAssignment --suppress=unreachableCode) \
+$(call var_src,CPPCHECK_SUPPRESSIONS) \
 
 .PHONY: cppcheck    # Run cppcheck static analysis
 cppcheck:
-	$(info $(INFO_PREFIX) Running Cppcheck analysis$(RESET))
-ifeq ($(CPPCHECK_ALL),1)
-	@cppcheck $(CPPCHECK_GENERIC_OPTIONS) $(CPPCHECK_SUPPRESS_OPTIONS) --enable=all --inconclusive $(SRCDIR)
-else
-	@cppcheck $(CPPCHECK_GENERIC_OPTIONS) $(CPPCHECK_SUPPRESS_OPTIONS) --enable=warning,performance,portability $(SRCDIR)
-endif
+	$(call log_info,Running cppcheck static analysis)
+	@cppcheck $(CPPCHECK_OPTS) $(SRCDIR)
+
+
 
 .PHONY: clean       # Clean the build directory
 clean:
-	$(info $(INFO_PREFIX) Cleaning up$(RESET))
-ifeq ($(HOST_POSIX),1)
-	@-rm -f $(BINARY) $(SHARED)
-	@-rm -r $(OBJDIR)
-else
-	@-rm -f $(BINARY) $(SHARED) $(NULL_STDERR) ||:
+	$(call log_info,Cleaning up)
+	@-rm $(BIN_TARGETS) $(LIB_TARGETS) $(LIB_STATIC_TARGETS) $(NULL_STDERR) ||:
 	@-rm -r $(OBJDIR) $(NULL_STDERR) ||:
-	@-del $(subst /,\\, $(BINARY) $(SHARED)) $(NULL_STDERR) ||:
-	@-rmdir /S /Q $(subst /,\\, $(OBJDIR)) $(NULL_STDERR) ||:
+ifeq ($(HOST_OS),windows)
+	@-del $(subst /,\, $(BIN_TARGETS) $(LIB_TARGETS) $(LIB_STATIC_TARGETS)) $(NULL_STDERR) ||:
+	@-rmdir /S /Q $(subst /,\, $(OBJDIR)) $(NULL_STDERR) ||:
 endif
+	@-rmdir $(BUILDDIR) $(NULL_STDERR) ||:
+
+
 
 # System-wide install
-DESTDIR ?=
+DESTDIR ?= $(if $(filter windows,$(HOST_OS)),pkg)
 PREFIX  ?= /usr
 
 # Handle all the weird GNU-style installation variables
@@ -762,62 +1081,53 @@ includedir  ?= $(prefix)/include
 datarootdir ?= $(prefix)/share
 datadir     ?= $(datarootdir)
 
-define GEN_PKGCONFIG
-prefix=$(prefix)\n\
-exec_prefix=$(exec_prefix)\n\
-libdir=$(libdir)\n\
-includedir=$(includedir)\n\
-\n\
-Name: rvvm\n\
-Description: The RISC-V Virtual Machine Library\n\
-URL: https://github.com/LekKit/RVVM\n\
-Version: $(VERSION)\n\
-Requires.private: $(LIBS)\n\
-Libs: -L$(libdir) -lrvvm\n\
-Cflags: -I$(includedir) -DLIBRVVM_SHARED\n
-endef
+# Generate pkg-config spec contents for a library $1 with suffix $2 (Like _static)
+override define gen_pkg_config
+prefix=$(prefix)
+exec_prefix=$(exec_prefix)
+libdir=$(libdir)
+includedir=$(includedir)
 
-override GEN_PKGCONFIG := $(subst \n ,\n,$(GEN_PKGCONFIG))
+Name: $1
+Description: $(DESC)
+URL: $(URL)
+Version: $(VERSION)
+Requires.private: $(LIBS_PKG)
+Libs: -L$(libdir) -l$1$2
+Cflags: -I$(includedir) -I$(includedir)/$1 $(if $2,,-DLIB$(call toupper,$1)_SHARED)
+endef
 
 .PHONY: install     # Install the package
 install: all
-ifeq ($(HOST_POSIX),1)
-	$(info $(INFO_PREFIX) Installing to prefix $(DESTDIR)$(prefix)$(RESET))
-	@install -d                            $(DESTDIR)$(bindir)
-	@install -m 0755 $(BINARY)             $(DESTDIR)$(bindir)/rvvm
-ifneq (,$(findstring 1,$(USE_LIB)$(USE_LIB_STATIC)))
-	@install -d                            $(DESTDIR)$(libdir)
-	@install -d                            $(DESTDIR)$(libdir)/pkgconfig
-	@printf "$(GEN_PKGCONFIG)" >           $(DESTDIR)$(libdir)/pkgconfig/rvvm.pc
-	@install -d                            $(DESTDIR)$(includedir)/rvvm/
-	@install -m 0644 $(SRCDIR)/rvvmlib.h   $(DESTDIR)$(includedir)/rvvm/rvvmlib.h
-	@install -m 0644 $(SRCDIR)/fdtlib.h    $(DESTDIR)$(includedir)/rvvm/fdtlib.h
-	@install -m 0644 $(SRCDIR)/devices/*.h $(DESTDIR)$(includedir)/rvvm/
-endif
-ifeq ($(USE_LIB),1)
-	@install -m 0755 $(SHARED)             $(DESTDIR)$(libdir)/librvvm$(LIB_EXT)
-endif
-ifeq ($(USE_LIB_STATIC),1)
-	@install -m644 $(STATIC)               $(DESTDIR)$(libdir)/librvvm_static.a
-endif
-	@install -d                            $(DESTDIR)$(datadir)/licenses/rvvm/
-	@install -m 0644 LICENSE*              $(DESTDIR)$(datadir)/licenses/rvvm/
-else
-	$(info $(WARN_PREFIX) Install target unsupported on non-POSIX!$(RESET))
-endif
+	$(call log_info,Installing to $(DESTDIR)$(prefix))
+# Install binaries
+	$(foreach bin,$(BIN_TARGETS),$(call install_file,$(bin),$(DESTDIR)$(bindir)/$(call bin_base,$(bin))$(BIN_EXT),0755))
+# Install headers
+	$(foreach header,$(if $(call var_use,USE_LIB)$(call var_use,USE_LIB_STATIC),$(call recursive_match,$(HDRDIR),*.h *.hpp *.hh *.hxx)),$(call install_file,$(header),$(DESTDIR)$(includedir)/$(NAME_LOWER)/$(patsubst $(HDRDIR)/%,%,$(header)),0644))
+# Install shared libraries
+	$(foreach lib,$(if $(call var_use,USE_LIB),$(LIB_TARGETS)),$(call install_file,$(lib),$(DESTDIR)$(libdir)/lib$(call lib_base,$(lib))$(LIB_EXT),0755))
+# Install pkg-config pc files for shared libraries
+	$(foreach lib,$(if $(call var_use,USE_LIB),$(LIB_TARGETS)),$(call install_string,$(call gen_pkg_config,$(call lib_base,$(lib)),),$(DESTDIR)$(libdir)/pkgconfig/$(call lib_base,$(lib)).pc))
+# Install static libraries
+	$(foreach lib,$(if $(call var_use,USE_LIB_STATIC),$(LIB_STATIC_TARGETS)),$(call install_file,$(lib),$(DESTDIR)$(libdir)/lib$(call lib_static_base,$(lib))_static.a,0644))
+# Install pkg-config pc files for static libraries
+	$(foreach lib,$(if $(call var_use,USE_LIB_STATIC),$(LIB_STATIC_TARGETS)),$(call install_string,$(call gen_pkg_config,$(call lib_static_base,$(lib)),_static),$(DESTDIR)$(libdir)/pkgconfig/$(call lib_static_base,$(lib))-static.pc))
+# Install licenses
+	$(foreach license,$(call safe_wildcard,LICENSE*),$(call install_file,$(license),$(DESTDIR)$(datadir)/licenses/$(NAME_LOWER)/$(license),0644))
+	@:
+
+
 
 .PHONY: help        # Show this help message
 help:
-	$(info $(INFO_PREFIX) Available make useflags:$(RESET))
-	$(foreach useflag, $(USEFLAGS),$(info $(EMPTY) $(useflag)=$($(useflag))))
-	$(info $(INFO_PREFIX) Available make targets:$(RESET))
-	@grep '^.PHONY:' Makefile | sed 's/\.PHONY://g'
-	@echo $(NULL_STDERR)
+	$(call log_info,Available make useflags:$(foreach useflag, $(USEFLAGS),$(NEWLINE) $(useflag)=$($(useflag))))
+	$(call println,$(RESET))
+	$(call log_info,Available make targets:$(subst #,$(TEXT),$(subst .PHONY:,$(NEWLINE)$(GREEN),$(shell grep '^.PHONY:' Makefile $(NULL_STDERR)))))
+	$(call println,$(RESET))
+	@:
 
 .PHONY: info        # Show this help message
 info: help
 
 .PHONY: list        # Show this help message
 list: help
-
-sinclude $(DEPS)
