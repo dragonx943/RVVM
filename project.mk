@@ -19,7 +19,7 @@ endef
 
 ifneq (,$(filter linux,$(OS)))
 # Enable Wayland on Linux by default
-#USE_WAYLAND ?= 1
+#TODO Fix CI: USE_WAYLAND ?= 1
 endif
 
 ifneq (,$(filter linux %bsd sunos,$(OS)))
@@ -52,27 +52,30 @@ ifneq (,$(filter emscripten,$(OS)))
 USE_SDL ?= 2
 endif
 
+# Infrastructure
+USE_SPINLOCK_DEBUG ?= 1
+USE_ISOLATION      ?= 1
+USE_JNI            ?= 1
+
+# Acceleration
+USE_JIT ?= 1
+USE_KVM ?= 0
+
 # CPU features
 USE_RV32 ?= 1
 USE_RV64 ?= 1
 USE_FPU  ?= 1
 USE_RVV  ?= 0
 
-# Infrastructure
-USE_SPINLOCK_DEBUG ?= 1
-USE_JNI            ?= 1
-USE_ISOLATION      ?= 1
-
-# Acceleration/accessibility
-USE_JIT     ?= 1
+# User features
 USE_GUI     ?= 1
 USE_SDL     ?= 0
 USE_NET     ?= 1
+USE_SOUND   ?= 0
 USE_GDBSTUB ?= 1
 
-# Devices
+# Board features
 USE_FDT  ?= 1
-USE_PCI  ?= 1
 USE_VFIO ?= 1
 
 ifneq (,$(call var_use,USE_TAP_LINUX))
@@ -98,18 +101,21 @@ override SRC_USE_RV64      := $(SRCDIR)/cpu/riscv64_interpreter.c
 
 # Useflag dependencies
 override RVJIT_SUPPORTS_ARCH := $(if $(filter i386 x86_64 arm% riscv%,$(ARCH)),1)
+override DEPS_USE_JIT        := RVJIT_SUPPORTS_ARCH
 
 override DEPS_USE_X11       := USE_GUI
 override DEPS_USE_SDL       := USE_GUI
 override DEPS_USE_WAYLAND   := USE_GUI
 override DEPS_USE_WIN32_GUI := USE_GUI
 override DEPS_USE_HAIKU_GUI := USE_GUI
-override DEPS_USE_JNI       := USE_LIB USE_NET
-override DEPS_USE_GDBSTUB   := USE_NET
-override DEPS_USE_JIT       := RVJIT_SUPPORTS_ARCH
+
+override DEPS_USE_ALSA := USE_SOUND
+
+override DEPS_USE_JNI     := USE_LIB USE_NET
+override DEPS_USE_GDBSTUB := USE_NET
 
 # Libraries
-override LIBS_USE_SDL     := sdl$(firstword $(USE_SDL) 1)
+override LIBS_USE_SDL     := sdl$(filter-out 1,$(USE_SDL))
 override LIBS_USE_X11     := x11 xext
 override LIBS_USE_WAYLAND := wayland-client xkbcommon
 
