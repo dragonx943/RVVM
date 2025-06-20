@@ -607,7 +607,7 @@ override CFLAGS_USE_MSAN  := -fsanitize=memory
 
 override LDFLAGS_USE_FPU := -lm
 
-override LIBS_USE_SDL := sdl$(firstword $(USE_SDL) 2)
+override LIBS_USE_SDL := sdl$(filter-out 1,$(USE_SDL))
 
 ifeq ($(OS),windows)
 # Windows-specific libraries to link to
