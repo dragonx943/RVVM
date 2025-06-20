@@ -11,10 +11,11 @@ on:
 
 jobs:
   linux-build:
-    name: Build on linux (${{ matrix.arch }})
+    name: Build on Linux (${{ matrix.arch }})
     runs-on: ubuntu-latest
     env:
       X11_DEPS: libx11-dev libxext-dev
+      WAYLAND_DEPS: libwayland-client0 libxkbcommon-dev libwayland-dev
     strategy:
       fail-fast: false
       matrix:
@@ -27,6 +28,11 @@ jobs:
             cc: riscv64-linux-gnu-gcc
             deps: sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends gcc-riscv64-linux-gnu libc6-dev-riscv64-cross
             release_dir: release.linux.riscv64
+          
+          - arch: arm64
+            cc: aarch64-linux-gnu-gcc
+            deps: sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+            release_dir: release.linux.arm64
 
     steps:
     - name: Checkout
@@ -35,7 +41,7 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo DEBIAN_FRONTEND=noninteractive apt-get update
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends ${{ env.X11_DEPS }}
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends ${{ env.X11_DEPS }} ${{ env.WAYLAND_DEPS }}
         ${{ matrix.deps }}
 
     - name: Build
@@ -56,7 +62,7 @@ jobs:
           ${{ matrix.release_dir }}/librvvm_static.a
 
   windows-build:
-    name: Build on windows (${{ matrix.arch }})
+    name: Build on Windows (${{ matrix.arch }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -64,12 +70,14 @@ jobs:
         include:
           - arch: x86_64
             cc: x86_64-w64-mingw32-gcc
-            deps: gcc-mingw-w64-x86-64-win32
             release_dir: release.windows.x86_64
           - arch: arm64
-            cc: clang --target=aarch64-w64-windows-gnu
-            deps: clang lld
+            cc: aarch64-w64-mingw32-gcc
             release_dir: release.windows.arm64
+          - arch: i386
+            cc: i686-w64-mingw32-gcc
+            cflags: -march=i386
+            release_dir: release.windows.i386
     steps:
     - name: Checkout
       uses: actions/checkout@v4.1.1
@@ -77,13 +85,11 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo DEBIAN_FRONTEND=noninteractive apt-get update
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends ${{ matrix.deps }}
 
     - name: Download and Extract LLVM-MinGW Toolchain
-      if: matrix.arch == 'arm64'
       run: |
         LLVM_MINGW_VERSION="20250613"
-        LLVM_MINGW_ARCHIVE="llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-x86_64.tar.xz"
+        LLVM_MINGW_ARCHIVE="llvm-mingw-${LLVM_MINGW_VERSION}-msvcrt-ubuntu-22.04-x86_64.tar.xz "  
         LLVM_MINGW_URL="https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/${LLVM_MINGW_ARCHIVE}"
         
         echo "Downloading LLVM-MinGW from: ${LLVM_MINGW_URL}"
@@ -97,7 +103,7 @@ jobs:
         echo "${{ github.workspace }}/llvm-mingw/bin" >> $GITHUB_PATH
 
     - name: Build
-      run: make CC="${{ matrix.cc }}"
+      run: make CC="${{ matrix.cc }}" CFLAGS="${{ matrix.cflags }}"
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4.3.1
@@ -133,11 +139,18 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4.1.1
 
+    - name: Install Dependencies
+      run: brew install coreutils
+
     - name: Download SDL2 headers
       run: wget ${{env.SDL2_TAR_LINK}} -O - | tar -xzf - && mv ${{env.SDL2_NAME}}/include src/SDL2
 
     - name: Build
       run: make
+
+    - name: Run RISC-V Tests
+      if: matrix.arch == 'x86_64'
+      run: gtimeout 600 make test
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4.3.1
@@ -147,4 +160,48 @@ jobs:
         path: |
           ${{ matrix.release_dir }}/rvvm_${{ matrix.arch }}
           ${{ matrix.release_dir }}/librvvm.dylib
+          ${{ matrix.release_dir }}/librvvm_static.a
+  
+  freebsd-build:
+    name: Build on FreeBSD (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    env:
+      X11_DEPS: libx11-dev libxext-dev
+      FREEBSD_VERSION: 14.3
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            cc: clang
+            target: x86_64-unknown-freebsd14.3
+            release_dir: release.freebsd.amd64
+            freebsd_arch: amd64/amd64
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4.1.1
+
+    - name: Install Dependencies
+      run: |
+        sudo DEBIAN_FRONTEND=noninteractive apt-get update
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends clang lld wget xz-utils ${{ env.X11_DEPS }}
+    
+    - name: Download FreeBSD sysroot
+      run: |
+        mkdir -p ${{ github.workspace }}/sysroot-${{ matrix.arch }}
+        wget -qO- "https://download.freebsd.org/ftp/releases/${{ matrix.freebsd_arch }}/${{ env.FREEBSD_VERSION }}-RELEASE/base.txz" | tar -Jxf - -C "${{ github.workspace }}/sysroot-${{ matrix.arch }}"
+
+
+    - name: Build
+      run: make -j1 CC=${{ matrix.cc }} CFLAGS="-target ${{ matrix.target }} --sysroot=${{ github.workspace }}/sysroot-${{ matrix.arch }}"  LD="lld" LDFLAGS="--sysroot=${{ github.workspace }}/sysroot-${{ matrix.arch }}" OS=FreeBSD USE_GUI=0
+    
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4.3.1
+      with:
+        retention-days: 5
+        name: rvvm_freebsd_${{ matrix.arch }}
+        path: |
+          ${{ matrix.release_dir }}/rvvm_${{ matrix.arch }}
+          ${{ matrix.release_dir }}/librvvm.so
           ${{ matrix.release_dir }}/librvvm_static.a
