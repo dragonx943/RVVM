@@ -824,14 +824,14 @@ endif
 # Enable -frounding-math on Clang 4.0+
 #
 # Enable -Bsymbolic-functions on GCC/Clang 4.0+
-override OPTIMIZE_OPTS := $(OPTIMIZE_OPTS) \
+override OPTIMIZE_OPTS := $(strip $(OPTIMIZE_OPTS) \
 $(if $(LTO_SUPPORTED),$(if $(call gcc_min_ver,5.0),-flto=auto) $(if $(call gcc_min_ver,15.0),-flto-incremental=$(OBJDIR))) \
 $(if $(call gcc_min_ver,4.0),-fvisibility=hidden -fno-math-errno -frounding-math) \
 $(if $(call gcc_min_ver,6.0),-fno-plt -fno-semantic-interposition) \
 $(if $(LTO_SUPPORTED),$(if $(call clang_min_ver,5.0),-flto)) \
 $(if $(call clang_min_ver,3.0),-fvisibility=hidden -fno-math-errno) \
 $(if $(call clang_min_ver,4.0),-frounding-math) \
-$(if $(call gnuc_min_ver,4.0),-Bsymbolic-functions)
+$(if $(call gnuc_min_ver,4.0),-Bsymbolic-functions))
 
 # Set compiler-specific warning & suppression options
 #
@@ -841,11 +841,11 @@ $(if $(call gnuc_min_ver,4.0),-Bsymbolic-functions)
 # Enable -Wno-unknown-warning-option -Wno-unsupported-floating-point-opt -Wno-ignored-optimization-argument on Clang 3.0+
 # Enable -Wno-missing-braces -Wno-missing-field-initializers -Wno-ignored-pragmas -Wno-atomic-alignment on Clang 3.0+
 # Enable -Wdocumentation on Clang 4.0+
-override WARN_OPTS := $(WARN_OPTS) \
+override WARN_OPTS := $(strip $(WARN_OPTS) \
 $(if $(call gcc_min_ver,3.0),-Wno-missing-braces) $(if $(call gcc_min_ver,4.0),-Wno-missing-field-initializers) \
 $(if $(call clang_min_ver,3.0),-Wno-unknown-warning-option -Wno-unsupported-floating-point-opt -Wno-ignored-optimization-argument) \
 $(if $(call clang_min_ver,3.0),-Wno-missing-braces -Wno-missing-field-initializers -Wno-ignored-pragmas -Wno-atomic-alignment) \
-$(if $(call clang_min_ver,4.0),-Wdocumentation)
+$(if $(call clang_min_ver,4.0),-Wdocumentation))
 
 # Produce final CFLAGS/LDFLAGS, strip excess spaces
 override CPPFLAGS := $(strip -I$(SRCDIR) $(if $(filter-out $(SRCDIR),$(HDRDIR)),-I$(HDRDIR)) -D$(NAME_UPPER)_VERSION="$(VERSION)" $(CPPFLAGS))
