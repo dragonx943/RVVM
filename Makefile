@@ -147,8 +147,11 @@ override words_cmp = $(if $(call nonequal,$(words $1),$(words $2)),$(if $(wordli
 # Returns l if digit $1 is less than digit $2, g if $1 is greater than $2, empty token if equal
 override dig_cmp = $(if $(call nonequal,$1,$2),$(if $(filter $1,$(lastword $(sort $1 $2))),g,l))
 
+# Insert spaces around every digit
+override dig_split = $(strip $(subst 0, 0 ,$(subst 1, 1 ,$(subst 2, 2 ,$(subst 3, 3 ,$(subst 4, 4 ,$(subst 5, 5 ,$(subst 6, 6 ,$(subst 7, 7 ,$(subst 8, 8 ,$(subst 9, 9 ,$(firstword $1 0))))))))))))
+
 # Split number into list of digits, returns 0 for non-numbers or empty values
-override num_split = $(strip $(filter 0 1 2 3 4 5 6 7 8 9,$(subst 0,0 ,$(subst 1,1 ,$(subst 2,2 ,$(subst 3,3 ,$(subst 4,4 ,$(subst 5,5 ,$(subst 6,6 ,$(subst 7,7 ,$(subst 8,8 ,$(subst 9,9 ,$(firstword $1 0)))))))))))))
+override num_split = $(filter 0 1 2 3 4 5 6 7 8 9,$(call dig_split,$1))
 
 # Returns l if number $1 is less than number $2, g if $1 is greater than $2, empty token if equal
 override num_cmp = $(strip $(call words_cmp,$(call num_split,$1),$(call num_split,$2)) $(foreach pair,$(join $(call num_split,$1),$(patsubst %,$(MAGIC)%,$(call num_split,$2))),$(call dig_cmp,$(word 1,$(subst $(MAGIC), ,$(pair))),$(word 2,$(subst $(MAGIC), ,$(pair))))))
@@ -223,20 +226,25 @@ override install_file = $(foreach fd,$(call path_wrap,$2),$(foreach fs,$(call pa
 # Install string $1 as file $2
 override install_string = $(foreach fd,$(call path_wrap,$2),$(call create_dirs,$(dir $(fd)))$(if $(call shell_ex,printf $(call str_wrap,$1) 2>&1 1>$(fd)),$(file >$(fd),$1)))
 
-# Canonize architecture from triplet / uname (Also lower-case it first)
-# amd64, x64, em64t -> x86_64
-# i86*              -> x86_64 (Solaris gimmick)
-# *86               -> i386
-# aarch64           -> arm64
-# riscv             -> riscv64
-# x86_64            -> i386 (If -m32 is passed in CFLAGS)
-override canonize_arch = $(patsubst x86_64,$(if $(filter -m32,$(CFLAGS)),i386,x86_64),$(patsubst riscv,riscv64,$(patsubst aarch64,arm64,$(patsubst i86%,x86_64,$(patsubst %86,i386,$(patsubst em64t,x86_64,$(patsubst amd64,x86_64,$(patsubst x64,x86_64,$(call tolower,$1)))))))))
+# Canonize architecture from triplet / uname (Also lower-case it)
+# amd64, x64, em64t, i86*  -> x86_64 (i86 is a Solaris gimmick)
+# *86                      -> i386
+# aarch64*, armv8*, armv9* -> arm64
+# aarch64_be*              -> arm64be
+# arm*, thumbv*            -> arm
+# armeb*                   -> armeb
+# mipsisa64*               -> mips64
+# mipsisa32*               -> mips
+# riscv, riscv64*          -> riscv64
+# riscv32*                 -> riscv32
+# x86_64                   -> i386 (If -m32 is passed in CFLAGS)
+override canonize_arch = $(patsubst !%,%,$(patsubst x86_64,$(if $(filter -m32,$(CFLAGS)),i386,x86_64),$(patsubst riscv,riscv64,$(patsubst riscv64%,riscv64,$(patsubst riscv32%,riscv32,$(patsubst mipsisa64%,mips64,$(patsubst mipsisa32%,mips,$(patsubst thumbv%,arm,$(patsubst arm%,arm,$(patsubst armeb%,!armeb,$(patsubst arm64%,!arm64,$(patsubst armv8%,arm64,$(patsubst armv9%,arm64,$(patsubst aarch64%,arm64,$(patsubst aarch64_be%,!arm64be,$(patsubst x86_64%,x86_64,$(patsubst i86%,x86_64,$(patsubst %86,i386,$(patsubst em64t,x86_64,$(patsubst amd64,x86_64,$(patsubst x64,x86_64,$(call tolower,$1))))))))))))))))))))))
 
-# Canonize OS from triplet / uname
+# Canonize OS from triplet / uname (Also lower-case it and remove trailing OS version)
 # mingw*   -> windows
 # macos*   -> darwin
 # solaris* -> sunos
-override canonize_os = $(patsubst solaris%,sunos,$(patsubst macos%,darwin,$(patsubst mingw%,windows,$(call tolower,$1))))
+override canonize_os = $(patsubst solaris%,sunos,$(patsubst macos%,darwin,$(patsubst mingw%,windows,$(call tolower,$(if $(findstring .,$1),$(firstword $(call dig_split,$1)),$1)))))
 
 # Canonize compiler brand
 # oneapi, llvm -> clang
