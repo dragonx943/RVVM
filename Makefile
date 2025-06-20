@@ -29,7 +29,7 @@
 # - HOST_OS:    Host operating system (Lowercase)
 # - HOST_UNAME: Host operating system (As in uname)
 #
-# - GIT_DESCRIBE: Project version in the form from `git describe`
+# - GIT_DESCRIBE: Project version in the form from `git describe`, also accessible as GIT_COMMIT
 #
 # - USE_LTO:         Use Link-Time optimizations
 # - USE_LIB:         Build dynamic libraries
@@ -473,14 +473,13 @@ override PKG_CONFIG := $(if $(if $(TARGET_CROSS),$(call var_def,PKG_CONFIG_LIBDI
 #
 ###################################################################################################
 
-override GIT_DESCRIBE       := $(firstword $(call var_single,$(call shell_ex,git describe --tags --always --dirty $(PIPE_STDERR))) $(GIT_DESCRIBE))
-override GIT_DIRTY          := $(if $(filter %-dirty,$(GIT_DESCRIBE)),dirty)
-override GIT_TAG_REV_COMMIT := $(patsubst %-dirty,%,$(GIT_DESCRIBE))
-override GIT_COMMIT         := $(lastword $(subst -g,$(SPACE),$(GIT_TAG_REV_COMMIT)))
-override GIT_TAG_REV        := $(firstword $(filter-out $(GIT_COMMIT),$(patsubst %-g$(GIT_COMMIT),%,$(GIT_TAG_REV_COMMIT))) v0.1.0)
-override GIT_REVISION       := $(call is_numeric,$(if $(GIT_COMMIT),$(lastword $(subst -,$(SPACE),$(GIT_TAG_REV)))))
-override GIT_TAG            := $(patsubst %-$(GIT_REVISION),%,$(GIT_TAG_REV))
-override GIT_VERSION        := $(GIT_TAG)$(if $(GIT_REVISION),-r$(GIT_REVISION))$(if $(GIT_COMMIT),.g$(GIT_COMMIT)$(if $(GIT_DIRTY),+$(GIT_DIRTY)))
+override GIT_DESCRIBE := $(firstword $(call var_single,$(call shell_ex,git describe --tags --always --dirty $(PIPE_STDERR))) $(call var_def,GIT_DESCRIBE) $(call var_def,GIT_COMMIT))
+override GIT_DIRTY    := $(if $(filter %-dirty,$(GIT_DESCRIBE)),dirty)
+override TMP          := $(patsubst %-dirty,%,$(GIT_DESCRIBE))
+override GIT_COMMIT   := $(lastword $(subst -g,$(SPACE),$(TMP)))
+override TMP          := $(patsubst %-g$(GIT_COMMIT),%,$(TMP))
+override GIT_REVISION := $(if $(GIT_COMMIT),$(call is_numeric,$(lastword $(subst -,$(SPACE),$(TMP)))))
+override GIT_TAG      := $(if $(GIT_REVISION),$(patsubst %-$(GIT_REVISION),%,$(TMP)))
 
 ###################################################################################################
 #
@@ -555,7 +554,7 @@ override NAME            := $(firstword $(call var_src,NAME) Project)
 override DESC            := $(call var_src,DESC)
 override LOGO            := $(call var_src,LOGO)
 override URL             := $(call var_src,URL)
-override VERSION         := $(firstword $(GIT_VERSION) $(call var_src,VERSION) v0.1.0)
+override VERSION         := $(firstword $(GIT_TAG) $(call var_src,VERSION) v0.1.0)$(if $(GIT_COMMIT),-g$(GIT_COMMIT))$(if $(GIT_DIRTY),-$(GIT_DIRTY))
 override SRCDIR          := $(call path_wrap,$(SRCDIR))
 override HDRDIR          := $(firstword $(call path_wrap,$(call var_src,HDRDIR)) $(SRCDIR))
 override BUILDDIR        := $(call path_wrap,$(BUILDDIR))
