@@ -473,13 +473,17 @@ override PKG_CONFIG := $(if $(if $(TARGET_CROSS),$(call var_def,PKG_CONFIG_LIBDI
 #
 ###################################################################################################
 
-override GIT_DESCRIBE := $(firstword $(call var_single,$(call shell_ex,git describe --tags --always --dirty $(PIPE_STDERR))) $(call var_def,GIT_DESCRIBE) $(call var_def,GIT_COMMIT))
+override GIT_DESCRIBE := $(firstword $(call var_single,$(call shell_ex,git describe --tags --always --long --dirty $(PIPE_STDERR))) $(call var_def,GIT_DESCRIBE) $(call var_def,GIT_COMMIT))
 override GIT_DIRTY    := $(if $(filter %-dirty,$(GIT_DESCRIBE)),dirty)
 override TMP          := $(patsubst %-dirty,%,$(GIT_DESCRIBE))
 override GIT_COMMIT   := $(lastword $(subst -g,$(SPACE),$(TMP)))
-override TMP          := $(patsubst %-g$(GIT_COMMIT),%,$(TMP))
-override GIT_REVISION := $(if $(GIT_COMMIT),$(call is_numeric,$(lastword $(subst -,$(SPACE),$(TMP)))))
-override GIT_TAG      := $(if $(GIT_REVISION),$(patsubst %-$(GIT_REVISION),%,$(TMP)))
+override TMP          := $(filter-out $(GIT_COMMIT),$(patsubst %-g$(GIT_COMMIT),%,$(TMP)))
+override GIT_REVISION := $(call is_numeric,$(lastword $(subst -,$(SPACE),$(TMP))))
+override GIT_TAG      := $(patsubst %-$(GIT_REVISION),%,$(TMP))
+
+# Produce a git version in the form of tag-g1234567-dirty for dev builds, tag for releases,
+# and just a commit hash for non-tagged projects. Takes a fallback tag (For shallow clones).
+override git_version = $(firstword $(patsubst %,%$(if $(filter 0,$(GIT_REVISION)$(GIT_DIRTY)),,-g$(GIT_COMMIT)),$(firstword $(GIT_TAG) $1)) $(GIT_COMMIT))$(patsubst %,-%,$(GIT_DIRTY))
 
 ###################################################################################################
 #
@@ -491,6 +495,7 @@ override GIT_TAG      := $(if $(GIT_REVISION),$(patsubst %-$(GIT_REVISION),%,$(T
 override BUILD_TYPE := $(if $(call var_use,USE_DEBUG_FULL),debug,release)
 override BUILDDIR   ?= $(BUILD_TYPE).$(OS).$(ARCH)
 override SRCDIR     := src
+override HDRDIR     := $(SRCDIR)
 override OBJDIR     := $(BUILDDIR)/obj
 
 # Convert base target name into target filename (For target binary invocation, etc)
@@ -550,15 +555,15 @@ override lib_base_libs = $(call var_src,lib_libs_$1)
 include project.mk
 
 # Validate project spec variables
-override NAME            := $(firstword $(call var_src,NAME) Project)
-override DESC            := $(call var_src,DESC)
-override LOGO            := $(call var_src,LOGO)
-override URL             := $(call var_src,URL)
-override VERSION         := $(firstword $(GIT_TAG) $(call var_src,VERSION) v0.1.0)$(if $(GIT_COMMIT),-g$(GIT_COMMIT))$(if $(GIT_DIRTY),-$(GIT_DIRTY))
-override SRCDIR          := $(call path_wrap,$(SRCDIR))
-override HDRDIR          := $(firstword $(call path_wrap,$(call var_src,HDRDIR)) $(SRCDIR))
-override BUILDDIR        := $(call path_wrap,$(BUILDDIR))
-override OBJDIR          := $(call path_wrap,$(OBJDIR))
+override NAME     := $(firstword $(call var_src,NAME) Project)
+override DESC     := $(call var_src,DESC)
+override LOGO     := $(call var_src,LOGO)
+override URL      := $(call var_src,URL)
+override VERSION  := $(call git_version,$(call var_src,VERSION))
+override SRCDIR   := $(call path_wrap,$(SRCDIR))
+override HDRDIR   := $(call path_wrap,$(HDRDIR))
+override BUILDDIR := $(call path_wrap,$(BUILDDIR))
+override OBJDIR   := $(call path_wrap,$(OBJDIR))
 
 override NAME_LOWER := $(call tolower,$(NAME))
 override NAME_UPPER := $(call toupper,$(NAME))
