@@ -2,206 +2,143 @@ name: Build
 
 on:
   workflow_dispatch:
+  release:
+    types: [published]
   push:
-    branches: [ "staging" ]
   pull_request:
-    branches: [ "staging" ]
   schedule:
     - cron: "0 0 * * *"
 
 jobs:
-  linux-build:
-    name: Build on Linux (${{ matrix.arch }})
-    runs-on: ubuntu-latest
+  build:
+    name: Build on ${{ matrix.os }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
     env:
-      X11_DEPS: libx11-dev libxext-dev
-      WAYLAND_DEPS: libwayland-client0 libxkbcommon-dev libwayland-dev
+      BUILDDIR: build
+      USE_ANALYZER: 1
+
     strategy:
       fail-fast: false
       matrix:
         include:
-          - arch: x86_64
-            cc: gcc
-            release_dir: release.linux.x86_64
+          - os: linux
+            arch: x86_64
+            make: make CFLAGS="-Werror"
+            runner: ubuntu-latest
+            apt-pkgs: libx11-dev libxext-dev libwayland-dev libxkbcommon-dev
+            test: yes
 
-          - arch: riscv64
-            cc: riscv64-linux-gnu-gcc
-            deps: sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends gcc-riscv64-linux-gnu libc6-dev-riscv64-cross
-            release_dir: release.linux.riscv64
-          
-          - arch: arm64
-            cc: aarch64-linux-gnu-gcc
-            deps: sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross
-            release_dir: release.linux.arm64
+            # RVVM FPU tests fail with 8087, use SSE2
+          - os: linux
+            arch: i386
+            make: make CFLAGS="-Werror -m32 -mfpmath=sse -msse2"
+            runner: ubuntu-latest
+            apt-pkgs: gcc-multilib libx11-dev libxext-dev libwayland-dev libxkbcommon-dev
+            test: yes
+
+          - os: linux
+            arch: arm64
+            make: make CFLAGS="-Werror"
+            runner: ubuntu-24.04-arm
+            apt-pkgs: libx11-dev libxext-dev libwayland-dev libxkbcommon-dev
+            test: yes
+
+          - os: linux
+            arch: riscv64
+            make: make CC=riscv64-linux-gnu-gcc CFLAGS="-Werror"
+            runner: ubuntu-latest
+            apt-pkgs: gcc-riscv64-linux-gnu libc6-dev-riscv64-cross libx11-dev libxext-dev libwayland-dev libxkbcommon-dev
+
+          - os: windows
+            arch: x86_64
+            make: make CC=x86_64-w64-mingw32-gcc CFLAGS="-Werror"
+            runner: ubuntu-latest
+
+          - os: windows
+            arch: arm64
+            make: make CC=aarch64-w64-mingw32-gcc CFLAGS="-Werror"
+            runner: ubuntu-latest
+
+          - os: windows
+            arch: i386
+            make: make CC=i686-w64-mingw32-gcc CFLAGS="-Werror -march=i386"
+            runner: ubuntu-latest
+
+          - os: macos
+            arch: x86_64
+            make: make CFLAGS="-Werror -target x86_64-apple-macos10.12 -ISDL2/include"
+            runner: macos-latest
+            test: yes
+
+          - os: macos
+            arch: arm64
+            make: make CFLAGS="-Werror -target arm64-apple-macos11 -ISDL2/include"
+            runner: macos-latest
+            test: yes
+
+          - os: freebsd
+            arch: x86_64
+            make: make USE_GUI=0 CC=clang CFLAGS="-Werror -target x86_64-unknown-freebsd14.3 --sysroot=freebsd-sysroot" LD="lld" LDFLAGS="--sysroot=freebsd-sysroot"
+            runner: ubuntu-latest
+            apt-pkgs: clang lld wget xz-utils
+            freebsd_sysroot_url: https://download.freebsd.org/ftp/releases/amd64/amd64/14.3-RELEASE/base.txz
 
     steps:
     - name: Checkout
       uses: actions/checkout@v4.1.1
 
     - name: Install Dependencies
+      if: matrix.apt-pkgs
       run: |
         sudo DEBIAN_FRONTEND=noninteractive apt-get update
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends ${{ env.X11_DEPS }} ${{ env.WAYLAND_DEPS }}
-        ${{ matrix.deps }}
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends ${{ matrix.apt-pkgs }}
 
-    - name: Build
-      run: make CC=${{ matrix.cc }} CFLAGS="-Werror"
-
-    - name: Run RISC-V Tests
-      if: matrix.arch == 'x86_64'
-      run: timeout 600 make test
-
-    - name: Upload Artifacts
-      uses: actions/upload-artifact@v4.3.1
-      with:
-        retention-days: 5
-        name: rvvm_linux_${{ matrix.arch }}
-        path: |
-          ${{ matrix.release_dir }}/rvvm_${{ matrix.arch }}
-          ${{ matrix.release_dir }}/librvvm.so
-          ${{ matrix.release_dir }}/librvvm_static.a
-
-  windows-build:
-    name: Build on Windows (${{ matrix.arch }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x86_64
-            cc: x86_64-w64-mingw32-gcc
-            release_dir: release.windows.x86_64
-          - arch: arm64
-            cc: aarch64-w64-mingw32-gcc
-            release_dir: release.windows.arm64
-          - arch: i386
-            cc: i686-w64-mingw32-gcc
-            cflags: -march=i386
-            release_dir: release.windows.i386
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4.1.1
-
-    - name: Install Dependencies
-      run: |
-        sudo DEBIAN_FRONTEND=noninteractive apt-get update
-
-    - name: Download and Extract LLVM-MinGW Toolchain
+    - name: Download LLVM-MinGW Toolchain
+      if: matrix.os == 'windows' && matrix.runner == 'ubuntu-latest'
       run: |
         LLVM_MINGW_VERSION="20250613"
-        LLVM_MINGW_ARCHIVE="llvm-mingw-${LLVM_MINGW_VERSION}-msvcrt-ubuntu-22.04-x86_64.tar.xz "  
+        LLVM_MINGW_ARCHIVE="llvm-mingw-${LLVM_MINGW_VERSION}-msvcrt-ubuntu-22.04-x86_64.tar.xz "
         LLVM_MINGW_URL="https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/${LLVM_MINGW_ARCHIVE}"
-        
+
         echo "Downloading LLVM-MinGW from: ${LLVM_MINGW_URL}"
         wget -q ${LLVM_MINGW_URL} -O ${LLVM_MINGW_ARCHIVE}
-        
+
         echo "Extracting LLVM-MinGW..."
         mkdir -p llvm-mingw
         tar -xf ${LLVM_MINGW_ARCHIVE} -C llvm-mingw --strip-components=1
-        
+
         echo "LLVM-MinGW extracted to: $(pwd)/llvm-mingw"
         echo "${{ github.workspace }}/llvm-mingw/bin" >> $GITHUB_PATH
 
-    - name: Build
-      run: make CC="${{ matrix.cc }}" CFLAGS="${{ matrix.cflags }}"
-
-    - name: Upload Artifacts
-      uses: actions/upload-artifact@v4.3.1
-      with:
-        retention-days: 5
-        name: rvvm_win32_${{ matrix.arch }}
-        path: |
-          ${{ matrix.release_dir }}/rvvm_${{ matrix.arch }}.exe
-          ${{ matrix.release_dir }}/librvvm.dll
-          ${{ matrix.release_dir }}/librvvm_static.a
-
-  macos-build:
-    name: Build on macOS (${{ matrix.arch }})
-    runs-on: macos-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: arm64
-            cflags: -target arm64-apple-macos11
-            release_dir: release.darwin.arm64
-
-          - arch: x86_64
-            cflags: -target x86_64-apple-macos10.12
-            release_dir: release.darwin.x86_64
-
-    env:
-      SDL2_TAR_LINK: https://github.com/libsdl-org/SDL/releases/download/release-2.30.9/SDL2-2.30.9.tar.gz
-      SDL2_NAME: SDL2-2.30.9
-      CFLAGS: ${{ matrix.cflags }} -Werror -ISDL2/include
-
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4.1.1
-
-    - name: Install Dependencies
-      run: brew install coreutils
-
     - name: Download SDL2 headers
-      run: wget ${{env.SDL2_TAR_LINK}} -O - | tar -xzf - && mv ${{env.SDL2_NAME}}/include src/SDL2
-
-    - name: Build
-      run: make
-
-    - name: Run RISC-V Tests
-      if: matrix.arch == 'x86_64'
-      run: gtimeout 600 make test
-
-    - name: Upload Artifacts
-      uses: actions/upload-artifact@v4.3.1
-      with:
-        retention-days: 5
-        name: rvvm_macos_${{ matrix.arch }}
-        path: |
-          ${{ matrix.release_dir }}/rvvm_${{ matrix.arch }}
-          ${{ matrix.release_dir }}/librvvm.dylib
-          ${{ matrix.release_dir }}/librvvm_static.a
-  
-  freebsd-build:
-    name: Build on FreeBSD (${{ matrix.arch }})
-    runs-on: ubuntu-latest
-    env:
-      X11_DEPS: libx11-dev libxext-dev
-      FREEBSD_VERSION: 14.3
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x86_64
-            cc: clang
-            target: x86_64-unknown-freebsd14.3
-            release_dir: release.freebsd.amd64
-            freebsd_arch: amd64/amd64
-    
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4.1.1
-
-    - name: Install Dependencies
+      if: matrix.os == 'macos'
       run: |
-        sudo DEBIAN_FRONTEND=noninteractive apt-get update
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends clang lld wget xz-utils ${{ env.X11_DEPS }}
-    
+        SDL2_VERSION="2.30.12"
+        SDL2_NAME="SDL2-${SDL2_VERSION}"
+        SDL2_URL="https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/${SDL2_NAME}.tar.gz"
+        wget ${SDL2_URL} -O - | tar -xzf -
+        mv ${SDL2_NAME} SDL2
+
     - name: Download FreeBSD sysroot
+      if: matrix.os == 'freebsd'
       run: |
-        mkdir -p ${{ github.workspace }}/sysroot-${{ matrix.arch }}
-        wget -qO- "https://download.freebsd.org/ftp/releases/${{ matrix.freebsd_arch }}/${{ env.FREEBSD_VERSION }}-RELEASE/base.txz" | tar -Jxf - -C "${{ github.workspace }}/sysroot-${{ matrix.arch }}"
-
+        mkdir freebsd-sysroot
+        wget -qO- ${{ matrix.freebsd_sysroot_url }} | tar -Jxf - -C freebsd-sysroot
 
     - name: Build
-      run: make -j1 CC=${{ matrix.cc }} CFLAGS="-target ${{ matrix.target }} --sysroot=${{ github.workspace }}/sysroot-${{ matrix.arch }}"  LD="lld" LDFLAGS="--sysroot=${{ github.workspace }}/sysroot-${{ matrix.arch }}" OS=FreeBSD USE_GUI=0
-    
+      run: ${{ matrix.make }}
+
+    - name: Run tests
+      if: matrix.test
+      timeout-minutes: 10
+      run: ${{ matrix.make }} test
+
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4.3.1
       with:
+        compression-level: 9
         retention-days: 5
-        name: rvvm_freebsd_${{ matrix.arch }}
+        name: rvvm_${{ matrix.os }}_${{ matrix.arch }}
         path: |
-          ${{ matrix.release_dir }}/rvvm_${{ matrix.arch }}
-          ${{ matrix.release_dir }}/librvvm.so
-          ${{ matrix.release_dir }}/librvvm_static.a
+          build/*
+          !build/*/
