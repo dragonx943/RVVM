@@ -589,10 +589,13 @@ USE_LIB_SHARING ?= 0 # Link to shared project libraries
 USE_OBJ_STAGE   ?= 1 # Use intermediate object file build step
 USE_DEBUG       ?= 0 # Optimized build with debug info
 USE_DEBUG_FULL  ?= 0 # Full debug build without optimizations
-USE_WARNS       ?= 3 # Warning level
-USE_ASAN        ?= 0 # Use AddressSanitizer
-USE_TSAN        ?= 0 # Use ThreadSanitizer
-USE_MSAN        ?= 0 # Use MemorySanitizer
+
+# Warning / Static analysis / Sanitizer options
+USE_WARNS      ?= 3 # Warning level
+USE_ANALYZER   ?= 0 # Use Clang Static Analyzer / GCC static analyzer
+USE_ASAN       ?= 0 # Use AddressSanitizer
+USE_TSAN       ?= 0 # Use ThreadSanitizer
+USE_MSAN       ?= 0 # Use MemorySanitizer
 
 # Feature options (Enable USE_NET if you wish to use sockets, etc)
 USE_FPU ?= 1
@@ -603,9 +606,10 @@ override DEPS_USE_LTO         := CC_IS_GNU
 override DEPS_USE_LIB         := CC_IS_GNU
 override DEPS_USE_LIB_STATIC  := USE_OBJ_STAGE
 override DEPS_USE_LIB_SHARING := USE_LIB
-override DEPS_USE_ASAN        := CC_IS_GNU
-override DEPS_USE_TSAN        := CC_IS_CLANG
-override DEPS_USE_MSAN        := CC_IS_CLANG
+
+override DEPS_USE_ASAN     := CC_IS_GNU
+override DEPS_USE_TSAN     := CC_IS_CLANG
+override DEPS_USE_MSAN     := CC_IS_CLANG
 
 override IMPLY_USE_DEBUG_FULL := USE_DEBUG
 override IMPLY_USE_ASAN       := USE_DEBUG
@@ -830,6 +834,7 @@ endif
 # Enable -flto=auto on GCC 5.0+, -flto-incremental on GCC 15.0+
 # Enable -fvisibility=hidden -frounding-math -fno-math-errno on GCC 4.0+
 # Enable -fno-plt -fno-semantic-interposition on GCC 6.0+
+# Enable -fanalyzer for USE_ANALYZER on GCC 10.1+
 #
 # Enable -flto on Clang 5.0+
 # Enable -fvisibility=hidden -fno-math-errno on Clang 3.0+,
@@ -840,6 +845,7 @@ override OPTIMIZE_OPTS := $(strip $(OPTIMIZE_OPTS) \
 $(if $(LTO_SUPPORTED),$(if $(call gcc_min_ver,5.0),-flto=auto) $(if $(call gcc_min_ver,15.0),-flto-incremental=$(OBJDIR))) \
 $(if $(call gcc_min_ver,4.0),-fvisibility=hidden -fno-math-errno -frounding-math) \
 $(if $(call gcc_min_ver,6.0),-fno-plt -fno-semantic-interposition) \
+$(if $(call var_use,USE_ANALYZER),$(if $(call gcc_min_ver,10.1),-fanalyzer)) \
 $(if $(LTO_SUPPORTED),$(if $(call clang_min_ver,5.0),-flto)) \
 $(if $(call clang_min_ver,3.0),-fvisibility=hidden -fno-math-errno) \
 $(if $(call clang_min_ver,4.0),-frounding-math) \
@@ -946,6 +952,7 @@ $(call path_shell,$(CC_TRIGGER) $(LD_TRIGGER)):
 $(call path_shell,$(OBJDIR)/%.o: %.c Makefile project.mk $(CC_TRIGGER))
 	$(call println,$(TEXT)[$(YELLOW)CC$(TEXT)] $< $(RESET))
 	@$(foreach out,$(call path_wrap,$@),$(call shell_esc,$(CC) $(CC_STD) $(CPPFLAGS) $(CFLAGS) $(if $(CC_IS_GNU),-MMD -MF $(patsubst %.o,%.d,$(out))) -o $(out) -c $(call path_wrap,$<)))
+	@$(if $(call var_use,USE_ANALYZER),$(if $(call clang_min_ver,9.0),$(call shell_esc,$(CC) $(CPPFLAGS) $(CFLAGS) --analyze $(call path_wrap,$<))))
 
 
 
@@ -953,14 +960,17 @@ $(call path_shell,$(OBJDIR)/%.o: %.c Makefile project.mk $(CC_TRIGGER))
 $(call path_shell,$(OBJDIR)/%.o: %.cpp Makefile project.mk $(CC_TRIGGER))
 	$(call println,$(TEXT)[$(YELLOW)CC$(TEXT)] $< $(RESET))
 	@$(foreach out,$(call path_wrap,$@),$(call shell_esc,$(CXX) $(CXX_STD) $(CPPFLAGS) $(CFLAGS) $(if $(CC_IS_GNU),-MMD -MF $(patsubst %.o,%.d,$(out))) -o $(out) -c $(call path_wrap,$<)))
+	@$(if $(call var_use,USE_ANALYZER),$(if $(call clang_min_ver,9.0),$(call shell_esc,$(CC) $(CPPFLAGS) $(CFLAGS) --analyze $(call path_wrap,$<))))
 
 $(call path_shell,$(OBJDIR)/%.o: %.cxx Makefile project.mk $(CC_TRIGGER))
 	$(call println,$(TEXT)[$(YELLOW)CC$(TEXT)] $< $(RESET))
 	@$(foreach out,$(call path_wrap,$@),$(call shell_esc,$(CXX) $(CXX_STD) $(CPPFLAGS) $(CFLAGS) $(if $(CC_IS_GNU),-MMD -MF $(patsubst %.o,%.d,$(out))) -o $(out) -c $(call path_wrap,$<)))
+	@$(if $(call var_use,USE_ANALYZER),$(if $(call clang_min_ver,9.0),$(call shell_esc,$(CC) $(CPPFLAGS) $(CFLAGS) --analyze $(call path_wrap,$<))))
 
 $(call path_shell,$(OBJDIR)/%.o: %.cc Makefile project.mk $(CC_TRIGGER))
 	$(call println,$(TEXT)[$(YELLOW)CC$(TEXT)] $< $(RESET))
 	@$(foreach out,$(call path_wrap,$@),$(call shell_esc,$(CXX) $(CXX_STD) $(CPPFLAGS) $(CFLAGS) $(if $(CC_IS_GNU),-MMD -MF $(patsubst %.o,%.d,$(out))) -o $(out) -c $(call path_wrap,$<)))
+	@$(if $(call var_use,USE_ANALYZER),$(if $(call clang_min_ver,9.0),$(call shell_esc,$(CC) $(CPPFLAGS) $(CFLAGS) --analyze $(call path_wrap,$<))))
 
 
 
