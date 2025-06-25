@@ -94,6 +94,14 @@ jobs:
             sysroot_url: https://github.com/LekKit/assets/releases/download/openbsd_sysroot_7.7/openbsd_sysroot_7.7_amd64.tar.gz
             sdl2: yes
 
+            # Cosmopolitan ships with an older GCC with a buggy static analyzer
+          - os: cosmo
+            arch: x86_64
+            make: make USE_SDL=2 USE_ANALYZER=0 CC=cosmocc CFLAGS="-Werror -ISDL2/include"
+            runner: ubuntu-latest
+            sdl2: yes
+            test: yes
+
     steps:
     - name: Checkout
       uses: actions/checkout@v4.1.1
@@ -107,34 +115,37 @@ jobs:
     - name: Download LLVM-MinGW Toolchain
       if: matrix.os == 'windows' && matrix.runner == 'ubuntu-latest'
       run: |
-        LLVM_MINGW_VERSION="20250613"
-        LLVM_MINGW_ARCHIVE="llvm-mingw-${LLVM_MINGW_VERSION}-msvcrt-ubuntu-22.04-x86_64.tar.xz "
-        LLVM_MINGW_URL="https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/${LLVM_MINGW_ARCHIVE}"
+        LLVM_MINGW_URL="https://github.com/mstorsjo/llvm-mingw/releases/download/20250613/llvm-mingw-20250613-msvcrt-ubuntu-22.04-x86_64.tar.xz"
 
-        echo "Downloading LLVM-MinGW from: ${LLVM_MINGW_URL}"
-        wget -q ${LLVM_MINGW_URL} -O ${LLVM_MINGW_ARCHIVE}
+        mkdir llvm-mingw
+        wget ${LLVM_MINGW_URL} -qLO - | tar Jxf - --strip-components=1 -C llvm-mingw
 
-        echo "Extracting LLVM-MinGW..."
-        mkdir -p llvm-mingw
-        tar -xf ${LLVM_MINGW_ARCHIVE} -C llvm-mingw --strip-components=1
-
-        echo "LLVM-MinGW extracted to: $(pwd)/llvm-mingw"
         echo "${{ github.workspace }}/llvm-mingw/bin" >> $GITHUB_PATH
+
+    - name: Download Cosmopolitan Toolchain
+      if: matrix.os == 'cosmo'
+      run: |
+        COSMOCC_URL="https://justine.lol/cosmopolitan/cosmocc-4.0.2.zip"
+
+        mkdir cosmocc
+        wget ${COSMOCC_URL} -qLO cosmocc.zip
+        unzip -qq cosmocc.zip -d cosmocc
+
+        echo "${{ github.workspace }}/cosmocc/bin" >> $GITHUB_PATH
 
     - name: Download sysroot
       if: matrix.sysroot_url
       run: |
         mkdir sysroot
-        wget -qLO - ${{ matrix.sysroot_url }} | tar xzf - -C sysroot
+        wget ${{ matrix.sysroot_url }} -qLO - | tar xzf - -C sysroot
 
     - name: Download SDL2 headers
       if: matrix.sdl2
       run: |
-        SDL2_VERSION="2.30.12"
-        SDL2_NAME="SDL2-${SDL2_VERSION}"
-        SDL2_URL="https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/${SDL2_NAME}.tar.gz"
-        wget ${SDL2_URL} -qLO - | tar xzf -
-        mv ${SDL2_NAME} SDL2
+        SDL2_URL="https://github.com/libsdl-org/SDL/releases/download/release-2.30.12/SDL2-2.30.12.tar.gz"
+
+        mkdir SDL2
+        wget ${SDL2_URL} -qLO - | tar xzf - --strip-components=1 -C SDL2
 
     - name: Build
       run: ${{ matrix.make }}
@@ -152,4 +163,6 @@ jobs:
         name: rvvm_${{ matrix.os }}_${{ matrix.arch }}
         path: |
           build/*
+          !build/*.*.*
+          !build/*.zip
           !build/*/
