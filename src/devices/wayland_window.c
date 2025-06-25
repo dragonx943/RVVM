@@ -432,16 +432,21 @@ static void wl_pointer_on_axis(void* data, struct wl_pointer* pointer, uint32_t 
 
 static void wl_pointer_on_frame(void* data, struct wl_pointer* pointer)
 {
+    UNUSED(pointer);
+
     struct pointer_data* pointer_data = data;
     gui_window_t* win = NULL;
     wayland_win_t* wl = NULL;
-    UNUSED(pointer);
+    if (!pointer_data) return;
+
     if (pointer_data && pointer_data->entered_surface) {
         win = wl_surface_get_user_data(pointer_data->entered_surface);
     }
+
     if (win) {
         wl = win->win_data;
     }
+
     if (pointer_data->frame.mask & WL_POINTER_FRAME_SURFACE) {
         if (pointer_data->frame.surface) {
             win = wl_surface_get_user_data(pointer_data->frame.surface);
@@ -458,7 +463,7 @@ static void wl_pointer_on_frame(void* data, struct wl_pointer* pointer)
         }
         pointer_data->entered_surface = pointer_data->frame.surface;
     }
-    if (wl) {
+    if (wl && win) {
         if (pointer_data->frame.mask & WL_POINTER_FRAME_MOTION) {
             pointer_data->x = pointer_data->frame.x;
             pointer_data->y = pointer_data->frame.y;
@@ -1416,6 +1421,11 @@ bool wayland_window_init(gui_window_t *win)
 
     if (atomic_add_uint32(&wl_windows, 1) == 0) {
         wl_thread = thread_create(wl_worker, NULL);
+    }
+
+    if (!framebuffer_size(&win->fb)) {
+        rvvm_error("Framebuffer size cannot be 0, please ensure that dimensions are valid");
+        return false;
     }
 
     int framebuffer_fd = vma_anon_memfd(framebuffer_size(&win->fb));
