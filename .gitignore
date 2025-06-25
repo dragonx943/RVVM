@@ -28,7 +28,7 @@
 !/Doxyfile
 
 # Explicitly track CI infrastructure
-!/,github/
+!/.github
 !/.gitlab-ci.yml
 
 # Explicitly track repository metadata
