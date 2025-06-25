@@ -68,20 +68,31 @@ jobs:
             arch: x86_64
             make: make CFLAGS="-Werror -target x86_64-apple-macos10.12 -ISDL2/include"
             runner: macos-latest
+            sdl2: yes
             test: yes
 
           - os: macos
             arch: arm64
             make: make CFLAGS="-Werror -target arm64-apple-macos11 -ISDL2/include"
             runner: macos-latest
+            sdl2: yes
             test: yes
 
           - os: freebsd
             arch: x86_64
-            make: make USE_GUI=0 CC=clang CFLAGS="-Werror -target x86_64-unknown-freebsd14.3 --sysroot=freebsd-sysroot" LD="lld" LDFLAGS="--sysroot=freebsd-sysroot"
+            make: make USE_X11=0 USE_SDL=2 CC=clang CFLAGS="-Werror -target x86_64-freebsd -ISDL2/include --sysroot=sysroot" LDFLAGS="-fuse-ld=lld"
             runner: ubuntu-latest
             apt-pkgs: clang lld wget xz-utils
-            freebsd_sysroot_url: https://download.freebsd.org/ftp/releases/amd64/amd64/14.3-RELEASE/base.txz
+            sysroot_url: https://github.com/LekKit/assets/releases/download/freebsd_sysroot_14.3/freebsd_sysroot_14.3_amd64.tar.gz
+            sdl2: yes
+
+          - os: openbsd
+            arch: x86_64
+            make: make USE_X11=0 USE_SDL=2 CC=clang CFLAGS="-Werror -target x86_64-openbsd -ISDL2/include --sysroot=sysroot" LDFLAGS="-fuse-ld=lld"
+            runner: ubuntu-latest
+            apt-pkgs: clang lld wget xz-utils
+            sysroot_url: https://github.com/LekKit/assets/releases/download/openbsd_sysroot_7.7/openbsd_sysroot_7.7_amd64.tar.gz
+            sdl2: yes
 
     steps:
     - name: Checkout
@@ -110,20 +121,20 @@ jobs:
         echo "LLVM-MinGW extracted to: $(pwd)/llvm-mingw"
         echo "${{ github.workspace }}/llvm-mingw/bin" >> $GITHUB_PATH
 
+    - name: Download sysroot
+      if: matrix.sysroot_url
+      run: |
+        mkdir sysroot
+        wget -qLO - ${{ matrix.sysroot_url }} | tar xzf - -C sysroot
+
     - name: Download SDL2 headers
-      if: matrix.os == 'macos'
+      if: matrix.sdl2
       run: |
         SDL2_VERSION="2.30.12"
         SDL2_NAME="SDL2-${SDL2_VERSION}"
         SDL2_URL="https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/${SDL2_NAME}.tar.gz"
-        wget ${SDL2_URL} -O - | tar -xzf -
+        wget ${SDL2_URL} -qLO - | tar xzf -
         mv ${SDL2_NAME} SDL2
-
-    - name: Download FreeBSD sysroot
-      if: matrix.os == 'freebsd'
-      run: |
-        mkdir freebsd-sysroot
-        wget -qO- ${{ matrix.freebsd_sysroot_url }} | tar -Jxf - -C freebsd-sysroot
 
     - name: Build
       run: ${{ matrix.make }}
