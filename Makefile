@@ -437,7 +437,17 @@ ifeq ($(OS),darwin)
 override LIB_EXT := .dylib
 endif
 
-# Emscripten: Use .mjs extension
+# SunOS (Solaris, Illumos): LTO is broken, duh
+ifeq ($(OS),sunos)
+USE_LTO ?= 0
+endif
+
+# Cosmopolitan has no shared library support
+ifeq ($(OS),cosmo)
+USE_LIB ?= 0
+endif
+
+# Emscripten: Use .mjs extension, disable shared library support
 # Disable setjmp & implicit traps for optimization, enable pthreads + main thread proxying, allow memory growth, enable full filesystem & fetch API
 ifeq ($(OS),emscripten)
 override BIN_EXT := .mjs
@@ -447,11 +457,6 @@ override LDFLAGS := -s DEFAULT_TO_CXX=0 -s BINARYEN_IGNORE_IMPLICIT_TRAPS=1 -s A
 # Disable shared library & network by default
 USE_LIB ?= 0
 USE_NET ?= 0
-endif
-
-# SunOS (Solaris, Illumos): LTO is broken, duh
-ifeq ($(OS),sunos)
-USE_LTO ?= 0
 endif
 
 # POSIX: Link to libpthread, librt, libdl when available
