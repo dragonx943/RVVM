@@ -27,22 +27,22 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #if defined(__linux__) && defined(USE_VFIO)
 
-#include <string.h>
-#include <errno.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/ioctl.h>
-#include <sys/mman.h>
-#include <sys/types.h>
-#include <sys/eventfd.h>
+#include <errno.h>       // For errno
+#include <fcntl.h>       // For open(), O_RDONLY, O_RDWR
+#include <string.h>      // For strerror()
+#include <sys/eventfd.h> // For eventfd()
+#include <sys/ioctl.h>   // For ioctl()
+#include <sys/mman.h>    // For mmap(), munmap(), MAP_*, PROT_*
+#include <unistd.h>      // For close(), read(), write(), lseek(), pread(), pwrite(), readlink()
 
 #include <linux/vfio.h>
 
-#include "threading.h"
+// Internal headers come after system ones due to safe_free()
 #include "atomics.h"
 #include "mem_ops.h"
-#include "vector.h"
+#include "threading.h"
 #include "utils.h"
+#include "vector.h"
 
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
@@ -60,21 +60,21 @@ SOURCE_OPTIMIZATION_SIZE
 
 static size_t vfio_pci_sysfs_path(char* buffer, size_t size, const char* pci_id, const char* suffix)
 {
-    size_t len = rvvm_strlcpy(buffer, "/sys/bus/pci/devices/", size);
-    len += rvvm_strlcpy(buffer + len, pci_id, size - len);
+    size_t len  = rvvm_strlcpy(buffer, "/sys/bus/pci/devices/", size);
+    len        += rvvm_strlcpy(buffer + len, pci_id, size - len);
     return len + rvvm_strlcpy(buffer + len, suffix, size - len);
 }
 
 static bool vfio_rw_file(const char* path, void* rd, const void* wr, size_t size)
 {
     bool ret = false;
-    int fd = open(path, (wr ? O_WRONLY : O_RDONLY) | O_CLOEXEC);
+    int  fd  = open(path, (wr ? O_WRONLY : O_RDONLY) | O_CLOEXEC);
     if (wr) {
-        ret = (fd > 0) && ((size_t)write(fd, wr, size)) == size;
+        ret = (fd >= 0) && ((size_t)write(fd, wr, size)) == size;
     } else {
-        ret = (fd > 0) && ((size_t)read(fd, rd, size)) == size;
+        ret = (fd >= 0) && ((size_t)read(fd, rd, size)) == size;
     }
-    if (fd > 0) {
+    if (fd >= 0) {
         close(fd);
     }
     return ret;
@@ -89,11 +89,11 @@ static bool vfio_unbind_driver(const char* pci_id)
 
 static bool vfio_bind_vfio(const char* pci_id)
 {
-    char path[256] = {0};
+    char path[256]    = {0};
     char ven_dev[256] = {0};
     vfio_pci_sysfs_path(path, sizeof(path), pci_id, "/vendor");
-    size_t len = vfio_rw_file(path, ven_dev, NULL, sizeof(ven_dev));
-    len += rvvm_strlcpy(ven_dev + len, " ", sizeof(ven_dev) - len);
+    size_t len  = vfio_rw_file(path, ven_dev, NULL, sizeof(ven_dev));
+    len        += rvvm_strlcpy(ven_dev + len, " ", sizeof(ven_dev) - len);
     vfio_pci_sysfs_path(path, sizeof(path), pci_id, "/device");
     len += vfio_rw_file(path, ven_dev + len, NULL, sizeof(ven_dev) - len);
     vfio_rw_file("/sys/bus/pci/drivers/vfio-pci/new_id", NULL, ven_dev, len);
@@ -102,10 +102,12 @@ static bool vfio_bind_vfio(const char* pci_id)
 
 static bool vfio_needs_rebind(const char* pci_id)
 {
-    char path[256] = {0};
+    char path[256]        = {0};
     char driver_path[256] = {0};
     vfio_pci_sysfs_path(path, sizeof(path), pci_id, "/driver");
-    if (readlink(path, driver_path, sizeof(driver_path)) < 0) return true;
+    if (readlink(path, driver_path, sizeof(driver_path)) < 0) {
+        return true;
+    }
     return !rvvm_strfind(driver_path, "vfio-pci");
 }
 
@@ -122,10 +124,12 @@ static bool vfio_bind(const char* pci_id)
 
 static uint32_t vfio_get_iommu_group(const char* pci_id)
 {
-    char path[256] = {0};
+    char path[256]       = {0};
     char group_path[256] = {0};
     vfio_pci_sysfs_path(path, sizeof(path), pci_id, "/iommu_group");
-    if (readlink(path, group_path, sizeof(group_path)) < 0) return -1;
+    if (readlink(path, group_path, sizeof(group_path)) < 0) {
+        return -1;
+    }
     const char* iommu_path = rvvm_strfind(group_path, "/kernel/iommu_groups/");
     if (iommu_path) {
         return str_to_int_dec(iommu_path + rvvm_strlen("/kernel/iommu_groups/"));
@@ -136,9 +140,9 @@ static uint32_t vfio_get_iommu_group(const char* pci_id)
 
 static int vfio_open_group(const char* pci_id)
 {
-    uint32_t group = vfio_get_iommu_group(pci_id);
-    char path[256] = "/dev/vfio/";
-    size_t len = rvvm_strlen(path);
+    uint32_t group     = vfio_get_iommu_group(pci_id);
+    char     path[256] = "/dev/vfio/";
+    size_t   len       = rvvm_strlen(path);
     int_to_str_dec(path + len, sizeof(path) - len, group);
     int fd = open(path, O_RDWR | O_CLOEXEC);
     return fd;
@@ -146,8 +150,8 @@ static int vfio_open_group(const char* pci_id)
 
 static size_t vfio_read_rom(const char* pci_id, void* buffer, size_t size)
 {
-    char path[256] = {0};
-    size_t ret = 0;
+    char   path[256] = {0};
+    size_t ret       = 0;
     vfio_pci_sysfs_path(path, sizeof(path), pci_id, "/rom");
     vfio_rw_file(path, NULL, "1", 1);
     int fd = open(path, O_RDONLY | O_CLOEXEC);
@@ -172,19 +176,19 @@ static size_t vfio_read_rom(const char* pci_id, void* buffer, size_t size)
 typedef struct {
     pci_func_t*   pci_func;
     thread_ctx_t* thread;
-    uint32_t running;
-    int eventfd;
-    int id;
+    uint32_t      running;
+    int           eventfd;
+    int           id;
 } vfio_irq_t;
 
 typedef struct {
     vector_t(vfio_irq_t*) irqs;
-    pci_func_desc_t func_desc;
-    pci_func_t*     pci_func;
-    int container;
-    int group;
-    int device;
-    bool valid;
+    pci_func_desc_t       func_desc;
+    pci_func_t*           pci_func;
+    int                   container;
+    int                   group;
+    int                   device;
+    bool                  valid;
 } vfio_func_t;
 
 static void vfio_bar_unmap(rvvm_mmio_dev_t* dev)
@@ -199,7 +203,7 @@ static void vfio_func_free(vfio_func_t* vfio)
 {
     // Shutdown VFIO IRQ eventfd threads
     uint64_t val = 1;
-    vector_foreach_back(vfio->irqs, i) {
+    vector_foreach_back (vfio->irqs, i) {
         vfio_irq_t* irq = vector_at(vfio->irqs, i);
         atomic_store_uint32(&irq->running, false);
         UNUSED(!write(irq->eventfd, &val, sizeof(val)));
@@ -240,14 +244,14 @@ static void vfio_bar_remove(rvvm_mmio_dev_t* dev)
 }
 
 static const rvvm_mmio_type_t vfio_bar_type = {
-    .name = "vfio_bar",
+    .name   = "vfio_bar",
     .remove = vfio_bar_remove,
 };
 
 static void* vfio_irq_thread(void* data)
 {
     vfio_irq_t* irq = data;
-    uint64_t val = 0;
+    uint64_t    val = 0;
     while (true) {
         UNUSED(!read(irq->eventfd, &val, sizeof(val)));
         if (atomic_load_uint32_relax(&irq->running)) {
@@ -261,11 +265,11 @@ static void* vfio_irq_thread(void* data)
 
 static void vfio_enable_irqs(vfio_func_t* vfio)
 {
-    vector_foreach_back(vfio->irqs, i) {
+    vector_foreach_back (vfio->irqs, i) {
         vfio_irq_t* irq = vector_at(vfio->irqs, i);
-        irq->pci_func = vfio->pci_func;
-        irq->running = true;
-        irq->thread = thread_create(vfio_irq_thread, irq);
+        irq->pci_func   = vfio->pci_func;
+        irq->running    = true;
+        irq->thread     = thread_create(vfio_irq_thread, irq);
     }
 }
 
@@ -274,8 +278,8 @@ static bool vfio_map_dma(vfio_func_t* vfio, rvvm_machine_t* machine, rvvm_addr_t
     struct vfio_iommu_type1_dma_map dma_map = {
         .argsz = sizeof(struct vfio_iommu_type1_dma_map),
         .flags = VFIO_DMA_MAP_FLAG_READ | VFIO_DMA_MAP_FLAG_WRITE,
-        .iova = mem_base,
-        .size = mem_size,
+        .iova  = mem_base,
+        .size  = mem_size,
         .vaddr = (size_t)rvvm_get_dma_ptr(machine, mem_base, mem_size),
     };
     return ioctl(vfio->container, VFIO_IOMMU_MAP_DMA, &dma_map) == 0;
@@ -283,7 +287,10 @@ static bool vfio_map_dma(vfio_func_t* vfio, rvvm_machine_t* machine, rvvm_addr_t
 
 static bool vfio_setup_irqs(vfio_func_t* vfio, int irq_type)
 {
-    struct vfio_irq_info irq_info = { .argsz = sizeof(struct vfio_irq_info), .index = irq_type, };
+    struct vfio_irq_info irq_info = {
+        .argsz = sizeof(struct vfio_irq_info),
+        .index = irq_type,
+    };
     if (ioctl(vfio->device, VFIO_DEVICE_GET_IRQ_INFO, &irq_info)) {
         return false;
     }
@@ -294,19 +301,19 @@ static bool vfio_setup_irqs(vfio_func_t* vfio, int irq_type)
         return true;
     }
 
-    size_t irq_count = irq_info.count;
-    size_t irq_size = sizeof(struct vfio_irq_set) + (irq_count * sizeof(int));
-    struct vfio_irq_set* irq_set = safe_calloc(1, irq_size);
-    irq_set->argsz = irq_size;
-    irq_set->flags = VFIO_IRQ_SET_DATA_EVENTFD | VFIO_IRQ_SET_ACTION_TRIGGER;
-    irq_set->index = irq_type;
-    irq_set->start = 0;
-    irq_set->count = irq_count;
+    size_t               irq_count = irq_info.count;
+    size_t               irq_size  = sizeof(struct vfio_irq_set) + (irq_count * sizeof(int));
+    struct vfio_irq_set* irq_set   = safe_calloc(1, irq_size);
+    irq_set->argsz                 = irq_size;
+    irq_set->flags                 = VFIO_IRQ_SET_DATA_EVENTFD | VFIO_IRQ_SET_ACTION_TRIGGER;
+    irq_set->index                 = irq_type;
+    irq_set->start                 = 0;
+    irq_set->count                 = irq_count;
 
     for (size_t i = 0; i < irq_count; ++i) {
         vfio_irq_t* irq = safe_new_obj(vfio_irq_t);
-        irq->eventfd = eventfd(0, 0);
-        irq->id = i;
+        irq->eventfd    = eventfd(0, 0);
+        irq->id         = i;
 
         // NOTE: vfio_irq_set data buffer is treated as an int array
         memcpy(((uint8_t*)irq_set->data) + (i * sizeof(int)), &irq->eventfd, sizeof(int));
@@ -340,7 +347,9 @@ static bool vfio_try_attach(vfio_func_t* vfio, rvvm_machine_t* machine, const ch
         rvvm_error("Failed to open VFIO group: %s", strerror(errno));
         return false;
     }
-    struct vfio_group_status group_status = { .argsz = sizeof(struct vfio_group_status), };
+    struct vfio_group_status group_status = {
+        .argsz = sizeof(struct vfio_group_status),
+    };
     if (ioctl(vfio->group, VFIO_GROUP_GET_STATUS, &group_status) || !(group_status.flags & VFIO_GROUP_FLAGS_VIABLE)) {
         rvvm_error("VFIO group not viable, are all group devices attached to vfio_pci module?");
         return false;
@@ -389,14 +398,19 @@ static bool vfio_try_attach(vfio_func_t* vfio, rvvm_machine_t* machine, const ch
         rvvm_error("Failed to get VFIO device fd: %s", strerror(errno));
         return false;
     }
-    struct vfio_device_info device_info = { .argsz = sizeof(struct vfio_device_info), };
+    struct vfio_device_info device_info = {
+        .argsz = sizeof(struct vfio_device_info),
+    };
     if (ioctl(vfio->device, VFIO_DEVICE_GET_INFO, &device_info)) {
         rvvm_error("Failed to get VFIO device info: %s", strerror(errno));
         return false;
     }
 
     // Read PCI config space of the device
-    struct vfio_region_info pci_cfg_info = { .argsz = sizeof(struct vfio_region_info), .index = VFIO_PCI_CONFIG_REGION_INDEX, };
+    struct vfio_region_info pci_cfg_info = {
+        .argsz = sizeof(struct vfio_region_info),
+        .index = VFIO_PCI_CONFIG_REGION_INDEX,
+    };
     if (ioctl(vfio->device, VFIO_DEVICE_GET_REGION_INFO, &pci_cfg_info)) {
         rvvm_error("Failed to get VFIO PCI config space info: %s", strerror(errno));
         return false;
@@ -407,11 +421,11 @@ static bool vfio_try_attach(vfio_func_t* vfio, rvvm_machine_t* machine, const ch
         return false;
     }
 
-    vfio->func_desc.vendor_id = read_uint16_le(pci_config);
-    vfio->func_desc.device_id = read_uint16_le(pci_config + 0x2);
+    vfio->func_desc.vendor_id  = read_uint16_le(pci_config);
+    vfio->func_desc.device_id  = read_uint16_le(pci_config + 0x2);
     vfio->func_desc.class_code = read_uint16_le(pci_config + 0xA);
-    vfio->func_desc.prog_if = pci_config[0x9];
-    vfio->func_desc.irq_pin = pci_config[0x3D];
+    vfio->func_desc.prog_if    = pci_config[0x9];
+    vfio->func_desc.irq_pin    = pci_config[0x3D];
 
     // Disable INTx interrupts, Enable Bus Mastering & MMIO BAR access
     write_uint32_le(pci_config + 4, 0x406);
@@ -429,7 +443,10 @@ static bool vfio_try_attach(vfio_func_t* vfio, rvvm_machine_t* machine, const ch
     // Setup device BAR mappings
     void* data = vfio;
     for (uint32_t i = 0; i < device_info.num_regions && i <= VFIO_PCI_BAR5_REGION_INDEX; ++i) {
-        struct vfio_region_info region_info = { .argsz = sizeof(struct vfio_region_info), .index = i, };
+        struct vfio_region_info region_info = {
+            .argsz = sizeof(struct vfio_region_info),
+            .index = i,
+        };
         if (ioctl(vfio->device, VFIO_DEVICE_GET_REGION_INFO, &region_info)) {
             rvvm_error("Failed to get VFIO BAR info: %s", strerror(errno));
             return false;
@@ -440,11 +457,10 @@ static bool vfio_try_attach(vfio_func_t* vfio, rvvm_machine_t* machine, const ch
             region_valid = false;
         }
         if (region_valid) {
-            void* bar = mmap(NULL, region_info.size, PROT_READ | PROT_WRITE, MAP_SHARED, vfio->device, region_info.offset);
-            rvvm_info("VFIO PCI BAR %d: size 0x%lx, offset 0x%lx, flags 0x%x", i,
-                (unsigned long)region_info.size,
-                (unsigned long)region_info.offset,
-                (uint32_t)region_info.flags);
+            void* bar
+                = mmap(NULL, region_info.size, PROT_READ | PROT_WRITE, MAP_SHARED, vfio->device, region_info.offset);
+            rvvm_info("VFIO PCI BAR %d: size 0x%lx, offset 0x%lx, flags 0x%x", i, (unsigned long)region_info.size,
+                      (unsigned long)region_info.offset, (uint32_t)region_info.flags);
             vfio->func_desc.bar[i].type = &vfio_bar_type;
             vfio->func_desc.bar[i].data = data;
 
@@ -453,7 +469,7 @@ static bool vfio_try_attach(vfio_func_t* vfio, rvvm_machine_t* machine, const ch
                 return false;
             }
             vfio->func_desc.bar[i].mapping = bar;
-            vfio->func_desc.bar[i].size = region_info.size;
+            vfio->func_desc.bar[i].size    = region_info.size;
 
             // Only one BAR is responsible for VFIO cleanup
             data = NULL;
@@ -465,10 +481,10 @@ static bool vfio_try_attach(vfio_func_t* vfio, rvvm_machine_t* machine, const ch
     if (rom_size) {
         void* rom = mmap(NULL, rom_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
         if (rom && vfio_read_rom(pci_id, rom, rom_size)) {
-            vfio->func_desc.expansion_rom.data = data;
+            vfio->func_desc.expansion_rom.data    = data;
             vfio->func_desc.expansion_rom.mapping = rom;
-            vfio->func_desc.expansion_rom.size = rom_size;
-            vfio->func_desc.expansion_rom.type = &vfio_bar_type;
+            vfio->func_desc.expansion_rom.size    = rom_size;
+            vfio->func_desc.expansion_rom.type    = &vfio_bar_type;
         } else {
             rvvm_error("Failed to read PCI ROM properly! Check whether CSM is disabled in host BIOS");
         }
@@ -481,8 +497,8 @@ static bool vfio_try_attach(vfio_func_t* vfio, rvvm_machine_t* machine, const ch
 
 PUBLIC bool pci_vfio_init_auto(rvvm_machine_t* machine, const char* pci_id)
 {
-    pci_bus_t* pci_bus = rvvm_get_pci_bus(machine);
-    char long_pci_id[256] = "0000:";
+    pci_bus_t* pci_bus          = rvvm_get_pci_bus(machine);
+    char       long_pci_id[256] = "0000:";
     if (rvvm_strlen(pci_id) < 12) {
         // This is a shorthand pci id, like in lspci (00:01.0) - extend it to sysfs format
         rvvm_strlcpy(long_pci_id + 5, pci_id, sizeof(long_pci_id) - 5);
@@ -521,7 +537,8 @@ PUBLIC bool pci_vfio_init_auto(rvvm_machine_t* machine, const char* pci_id)
 PUBLIC bool pci_vfio_init_auto(rvvm_machine_t* machine, const char* pci_id)
 {
     rvvm_error("VFIO isn't available");
-    UNUSED(machine); UNUSED(pci_id);
+    UNUSED(machine);
+    UNUSED(pci_id);
     return false;
 }
 
