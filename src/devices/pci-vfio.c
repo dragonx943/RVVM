@@ -67,14 +67,14 @@ static size_t vfio_pci_sysfs_path(char* buffer, size_t size, const char* pci_id,
 
 static bool vfio_rw_file(const char* path, void* rd, const void* wr, size_t size)
 {
-    bool ret = false;
     int  fd  = open(path, (wr ? O_WRONLY : O_RDONLY) | O_CLOEXEC);
-    if (wr) {
-        ret = (fd >= 0) && ((size_t)write(fd, wr, size)) == size;
-    } else {
-        ret = (fd >= 0) && ((size_t)read(fd, rd, size)) == size;
-    }
+    bool ret = false;
     if (fd >= 0) {
+        if (wr) {
+            ret = ((size_t)write(fd, wr, size)) == size;
+        } else {
+            ret = ((size_t)read(fd, rd, size)) == size;
+        }
         close(fd);
     }
     return ret;
@@ -155,7 +155,7 @@ static size_t vfio_read_rom(const char* pci_id, void* buffer, size_t size)
     vfio_pci_sysfs_path(path, sizeof(path), pci_id, "/rom");
     vfio_rw_file(path, NULL, "1", 1);
     int fd = open(path, O_RDONLY | O_CLOEXEC);
-    if (fd > 0) {
+    if (fd >= 0) {
         if (buffer) {
             if (((size_t)read(fd, buffer, size)) == size) {
                 ret = size;
