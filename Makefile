@@ -262,11 +262,15 @@ override prettify_os = $(call capitalize,$(patsubst cosmo,Cosmopolitan,$(patsubs
 # Prettify compiler name (Also capitalizes the output)
 # *cc    -> *CC (GCC, TCC)
 # clang  -> LLVM Clang
-# oneapi -> Intel OneAPI
 override prettify_cc = $(call capitalize,$(patsubst clang,LLVM Clang,$(patsubst %cc,%CC,$1)))
 
-# Check LDFLAG availability (I.e. whether a library may be linked). Broken on Emscripten, might be elsewhere too!
-override check_ldflag_avail = $(if $(findstring _start,$(subst main,_start,$(subst wmain,_start,$(subst WinMain,_start,$(if $(filter-out emscripten,$(OS)),$(shell $(CC) $(CFLAGS) $(LDFLAGS) $1 $(ONLY_STDERR))))))),$1)
+# Check whether source $1 compiles with flags $2, cache result as $3
+# NOTE: May only be called after "Project output handling" stage
+override check_compile = $(foreach out,$(call path_wrap,$(OBJDIR)/check-$(subst =,,$(subst $(COMMA),,$(subst $(SPACE),-,$(strip $(subst -,$(SPACE),$3)))))),$(if $(call paths_exist,$(out)$(BIN_EXT)),y,$(if $(call install_string,$1,$(out).c),)$(if $(call shell_ex,$(CC) $2 $(CFLAGS) $(LDFLAGS) $(out).c -o $(out)$(BIN_EXT) $(PIPE_STDERR)),)$(if $(call paths_exist,$(out)$(BIN_EXT)),y)))
+
+# Check CFLAG/LDFLAG availability (I.e. whether a library may be linked)
+override check_cc_flag = $(if $1,$(if $(call check_compile,int main(){return 0;},$1,$1),$1))
+override check_cc_flags = $(if $(call check_cc_flag,$1),$1,$(foreach ldflag,$1,$(call check_cc_flag,$(ldflag))))
 
 ###################################################################################################
 #
@@ -335,7 +339,7 @@ override MAKEFLAGS += -j $(JOBS)
 ###################################################################################################
 
 # Get compiler target triplet in the form of arch-[vendor-]os[-abi]
-override CC_TRIPLET := $(call shell_ex,$(CC) $(CFLAGS) -dumpmachine $(NULL_STDERR))
+override CC_TRIPLET := $(call var_single,$(call shell_ex,$(CC) $(CFLAGS) -dumpmachine $(NULL_STDERR)))
 
 # Manually provide triplet for cosmocc (Note that in fact it's both x86_64 and arm64)
 override TRIPLET := $(firstword $(if $(findstring -,$(CC_TRIPLET)),$(CC_TRIPLET)) $(if $(findstring cosmocc,$(CC)),x86_64-cosmo))
@@ -391,7 +395,7 @@ override CC_VERSION_TRIPLET := $(foreach tmp,$(subst $(SPACE)version$(SPACE),$(M
 override CC_VERSION_TRIPLET := $(strip $(foreach tmp,$(CC_VERSION_TRIPLET),$(if $(call is_numeric,$(word 3,$(subst $(MAGIC),$(SPACE),$(tmp)))),$(subst $(MAGIC),$(SPACE),$(tmp)))))
 
 # If compiler version triplet is empty & CC_BRAND isn't provided, fallback to heuristics
-override CC_BRAND := $(call canonize_cc,$(firstword $(word 1,$(CC_VERSION_TRIPLET)) $(CC_BRAND) $(call find_any_str,oneapi clang gcc cosmocc cproc,$(call tolower,$(CC_VERSION_DUMP))) unknown))
+override CC_BRAND := $(call canonize_cc,$(firstword $(word 1,$(CC_VERSION_TRIPLET)) $(CC_BRAND) $(notdir $(CC))))
 
 # If neither compiler version triplet nor $(cc -dumpfullversion -dumpversion) provide a proper version, fallback to user-supplied CC_VERSION or whatever we've got
 override CC_VERSION := $(firstword $(call is_semver,$(word 3,$(CC_VERSION_TRIPLET))) $(call is_semver,$(call shell_ex,$(CC) -dumpfullversion -dumpversion $(NULL_STDERR))) $(CC_VERSION) $(word 3,$(CC_VERSION_TRIPLET)))
@@ -414,6 +418,24 @@ override gnuc_min_ver  = $(if $(filter gcc clang,$(CC_BRAND)),$(call ver_check,$
 
 # Pretty compiler info for printing
 override CC_PRETTY := $(call prettify_cc,$(CC_BRAND)) $(CC_VERSION)
+
+###################################################################################################
+#
+# Determine project tag, revision, commit id via git
+#
+###################################################################################################
+
+override GIT_DESCRIBE := $(firstword $(call var_single,$(call shell_ex,git describe --tags --always --long --dirty $(PIPE_STDERR))) $(call var_def,GIT_DESCRIBE) $(call var_def,GIT_COMMIT))
+override GIT_DIRTY    := $(if $(filter %-dirty,$(GIT_DESCRIBE)),dirty)
+override TMP          := $(patsubst %-dirty,%,$(GIT_DESCRIBE))
+override GIT_COMMIT   := $(lastword $(subst -g,$(SPACE),$(TMP)))
+override TMP          := $(filter-out $(GIT_COMMIT),$(patsubst %-g$(GIT_COMMIT),%,$(TMP)))
+override GIT_REVISION := $(call is_numeric,$(lastword $(subst -,$(SPACE),$(TMP))))
+override GIT_TAG      := $(patsubst %-$(GIT_REVISION),%,$(TMP))
+
+# Produce a git version in the form of tag-g1234567-dirty for dev builds, tag for releases,
+# and just a commit hash for non-tagged projects. Takes a fallback tag (For shallow clones).
+override git_version = $(firstword $(patsubst %,%$(if $(filter 0,$(GIT_REVISION)$(GIT_DIRTY)),,$(patsubst %,-g%,$(GIT_COMMIT))),$(firstword $(GIT_TAG) $1)) $(GIT_COMMIT))$(patsubst %,-%,$(GIT_DIRTY))
 
 ###################################################################################################
 #
@@ -459,36 +481,8 @@ USE_LIB ?= 0
 USE_NET ?= 0
 endif
 
-# POSIX: Link to libpthread, librt, libdl when available
-override LDFLAGS := $(LDFLAGS) $(if $(filter-out windows,$(OS)),$(call check_ldflag_avail,-lpthread) $(call check_ldflag_avail,-lrt) $(call check_ldflag_avail,-ldl))
-
-# Link to libatomic if available, unless detected a GCC/Clang targetting x86_64/arm64, where linking it should be avoided
-ifneq (,$(if $(filter-out gcc clang,$(CC_BRAND)$(filter-out x86_64 arm64,$(ARCH))),$(call check_ldflag_avail,-latomic)))
-override LDFLAGS := $(LDFLAGS) -latomic
-else
-override USE_NO_LIBATOMIC ?= 1
-endif
-
 # Disable pkg-config if it's a cross-compile target and neither PKG_CONFIG_LIBDIR or PKG_CONFIG_SYSROOT_DIR are set, pass -static if needed
 override PKG_CONFIG := $(if $(if $(TARGET_CROSS),$(call var_def,PKG_CONFIG_LIBDIR)$(call var_def,PKG_CONFIG_SYSROOT_DIR)$(filter-out pkg-config,$(PKG_CONFIG)),1),$(PKG_CONFIG) $(filter -static,$(LDFLAGS)))
-
-###################################################################################################
-#
-# Determine project tag, revision, commit id via git
-#
-###################################################################################################
-
-override GIT_DESCRIBE := $(firstword $(call var_single,$(call shell_ex,git describe --tags --always --long --dirty $(PIPE_STDERR))) $(call var_def,GIT_DESCRIBE) $(call var_def,GIT_COMMIT))
-override GIT_DIRTY    := $(if $(filter %-dirty,$(GIT_DESCRIBE)),dirty)
-override TMP          := $(patsubst %-dirty,%,$(GIT_DESCRIBE))
-override GIT_COMMIT   := $(lastword $(subst -g,$(SPACE),$(TMP)))
-override TMP          := $(filter-out $(GIT_COMMIT),$(patsubst %-g$(GIT_COMMIT),%,$(TMP)))
-override GIT_REVISION := $(call is_numeric,$(lastword $(subst -,$(SPACE),$(TMP))))
-override GIT_TAG      := $(patsubst %-$(GIT_REVISION),%,$(TMP))
-
-# Produce a git version in the form of tag-g1234567-dirty for dev builds, tag for releases,
-# and just a commit hash for non-tagged projects. Takes a fallback tag (For shallow clones).
-override git_version = $(firstword $(patsubst %,%$(if $(filter 0,$(GIT_REVISION)$(GIT_DIRTY)),,-g$(GIT_COMMIT)),$(firstword $(GIT_TAG) $1)) $(GIT_COMMIT))$(patsubst %,-%,$(GIT_DIRTY))
 
 ###################################################################################################
 #
@@ -621,7 +615,7 @@ override IMPLY_USE_ASAN       := USE_DEBUG
 override IMPLY_USE_TSAN       := USE_DEBUG
 
 override CFLAGS_USE_DEBUG := -DDEBUG -g -fno-omit-frame-pointer
-override CFLAGS_USE_LIB   := -fPIC $(if $(call gnuc_min_ver,10.0), -Bsymbolic-functions)
+override CFLAGS_USE_LIB   := -fPIC
 override CFLAGS_USE_ASAN  := -fsanitize=address
 override CFLAGS_USE_TSAN  := -fsanitize=thread
 override CFLAGS_USE_MSAN  := -fsanitize=memory
@@ -633,8 +627,8 @@ override LIBS_USE_SDL := sdl$(filter-out 1,$(USE_SDL))
 ifeq ($(OS),windows)
 # Windows-specific libraries to link to
 # NOTE: Prefer linking to wsock32 on i386 for Win95/NT 3.x compat, this still allows to use WinSock 2.x when available
-override LDFLAGS_USE_WIN32_GUI := $(call check_ldflag_avail,-lgdi32)
-override LDFLAGS_USE_NET       := $(if $(if $(filter i386,$(ARCH)),$(call check_ldflag_avail,-lwsock32)),-lwsock32,$(if $(call check_ldflag_avail,-lws2_32),-lws2_32,$(call check_ldflag_avail,-lws2)))
+override LDFLAGS_USE_WIN32_GUI := $(call check_cc_flags,-lgdi32)
+override LDFLAGS_USE_NET       := $(call check_cc_flags,$(if $(filter i386,$(ARCH)),-lwsock32,-lws2_32) -lws2)
 endif
 
 ifeq ($(OS),haiku)
@@ -645,12 +639,21 @@ endif
 
 ifeq ($(OS),sunos)
 # Solaris-specific libraries to link to
-override LDFLAGS_USE_NET := $(call check_ldflag_avail,-lsocket)
+override LDFLAGS_USE_NET := $(call check_cc_flags,-lsocket)
 endif
 
 ifeq ($(OS),emscripten)
 # Request SDL port to be enabled in Emscripten
 override CFLAGS_USE_SDL := -s USE_SDL=$(USE_SDL)
+endif
+
+# POSIX: Link to libpthread, librt, libdl when available
+# Link to libatomic when available
+override LDFLAGS := $(LDFLAGS) $(call check_cc_flags,$(if $(filter-out windows,$(OS)),-lpthread -lrt -ldl) -latomic)
+
+# Report possibly missing libatomic
+ifeq ($(filter -latomic,$(LDFLAGS)),)
+override USE_NO_LIBATOMIC ?= 1
 endif
 
 ###################################################################################################
@@ -790,18 +793,7 @@ override CXX_STD       :=
 # Check LTO support on GCC/Clang 5.0+ if USE_LTO is enabled
 override LTO_SUPPORTED :=
 ifneq (,$(if $(call var_use,USE_LTO),$(call gnuc_min_ver,5.0)))
-override LTO_CHECK_SRC := $(OBJDIR)/lto_lest.c
-override LTO_CHECK_BIN := $(OBJDIR)/lto_lest$(BIN_EXT)
-override LTO_SUPPORTED := $(if $(call paths_exist,$(LTO_CHECK_BIN)),1)
-ifeq (,$(LTO_SUPPORTED))
-$(if $(call paths_missing,$(LTO_CHECK_SRC)),$(call install_string,int main(){return 0;},$(LTO_CHECK_SRC)))
-override LTO_ERROR := $(call shell_ex,$(CC) $(CFLAGS) $(LDFLAGS) -O2 -flto $(LTO_CHECK_SRC) -o $(LTO_CHECK_BIN) $(ONLY_STDERR))
-ifeq (,$(findstring lto,$(LTO_ERROR))$(findstring LTO,$(LTO_ERROR)))
-override LTO_SUPPORTED := 1
-else
-$(call log_info,LTO is not supported by this toolchain: $(wordlist 2,8,$(LTO_ERROR)))
-endif
-endif
+override LTO_SUPPORTED := $(if $(call check_cc_flags,-flto),1,$(call log_info,LTO is not supported by this toolchain))
 endif
 
 # Enable basic -Wall warnings on GCC/Clang 3.0+ if USE_WARNS >= 1
@@ -854,26 +846,28 @@ $(if $(call var_use,USE_ANALYZER),$(if $(call gcc_min_ver,10.1),-fanalyzer)) \
 $(if $(LTO_SUPPORTED),$(if $(call clang_min_ver,5.0),-flto)) \
 $(if $(call clang_min_ver,3.0),-fvisibility=hidden -fno-math-errno) \
 $(if $(call clang_min_ver,4.0),-frounding-math) \
-$(if $(call gnuc_min_ver,4.0),-Bsymbolic-functions))
+$(if $(call gnuc_min_ver,4.0),-pipe -Bsymbolic-functions))
 
 # Set compiler-specific warning & suppression options
 #
-# Enable -Wno-missing-braces on GCC 3.0+
-# Enable -Wno-missing-field-initializers on GCC 4.0+
+# Enable -Wno-missing-braces on GCC 3.0+ & Clang 3.0+
+# Enable -Wno-missing-field-initializers -Wfatal-errors on GCC 4.0+
 #
 # Enable -Wno-unknown-warning-option -Wno-unsupported-floating-point-opt -Wno-ignored-optimization-argument on Clang 3.0+
 # Enable -Wno-missing-braces -Wno-missing-field-initializers -Wno-ignored-pragmas -Wno-atomic-alignment on Clang 3.0+
 # Enable -Wdocumentation on Clang 4.0+
 override WARN_OPTS := $(strip $(WARN_OPTS) \
-$(if $(call gcc_min_ver,3.0),-Wno-missing-braces) $(if $(call gcc_min_ver,4.0),-Wno-missing-field-initializers) \
+$(if $(call gnuc_min_ver,3.0),-Wno-missing-braces) \
+$(if $(call gcc_min_ver,4.0),-Wno-missing-field-initializers -Wfatal-errors) \
 $(if $(call clang_min_ver,3.0),-Wno-unknown-warning-option -Wno-unsupported-floating-point-opt -Wno-ignored-optimization-argument) \
-$(if $(call clang_min_ver,3.0),-Wno-missing-braces -Wno-missing-field-initializers -Wno-ignored-pragmas -Wno-atomic-alignment) \
+$(if $(call clang_min_ver,3.0),-Wno-missing-field-initializers -Wno-ignored-pragmas -Wno-atomic-alignment) \
 $(if $(call clang_min_ver,4.0),-Wdocumentation))
 
 # Produce final CFLAGS/LDFLAGS, strip excess spaces
-override CPPFLAGS := $(strip -I$(SRCDIR) $(if $(filter-out $(SRCDIR),$(HDRDIR)),-I$(HDRDIR)) -D$(NAME_UPPER)_VERSION="$(VERSION)" $(CPPFLAGS))
-override CFLAGS   := $(strip $(OPTIMIZE_OPTS) $(WARN_OPTS) $(CFLAGS))
-override LDFLAGS  := $(strip $(LDFLAGS))
+override CPPFLAGS    := $(strip -I$(SRCDIR) $(if $(filter-out $(SRCDIR),$(HDRDIR)),-I$(HDRDIR)) -D$(NAME_UPPER)_VERSION="$(VERSION)" $(CPPFLAGS))
+override CFLAGS      := $(strip $(OPTIMIZE_OPTS) $(WARN_OPTS) $(CFLAGS))
+override LDFLAGS     := $(strip $(LDFLAGS))
+override PRE_LDFLAGS := $(if $(call gnuc_min_ver,4.0),$(call check_cc_flags,-Wl$(COMMA)--as-needed))
 
 ###################################################################################################
 #
@@ -982,7 +976,7 @@ $(call path_shell,$(OBJDIR)/%.o: %.cc Makefile project.mk $(CC_TRIGGER))
 # Binaries
 $(call path_shell,$(BIN_TARGETS): $(BIN_OBJ) $(BIN_LIBS) $(CC_TRIGGER) $(LD_TRIGGER))
 	$(call println,$(TEXT)[$(GREEN)LD$(TEXT)] $@ $(RESET))
-	@$(foreach out,$(call path_wrap,$@),$(call shell_esc,$(call bin_target_ld,$(out)) $(CPPFLAGS) $(CFLAGS) $(call bin_target_link,$(out)) $(LDFLAGS) -o $(out)))
+	@$(foreach out,$(call path_wrap,$@),$(call shell_esc,$(call bin_target_ld,$(out)) $(CPPFLAGS) $(CFLAGS) $(PRE_LDFLAGS) $(call bin_target_link,$(out)) $(LDFLAGS) -o $(out)))
 
 
 
@@ -992,7 +986,7 @@ override shared_extra = $(if $(filter windows,$(OS)),-Wl$(COMMA)--subsystem$(COM
 # Shared libraries
 $(call path_shell,$(LIB_TARGETS): $(LIB_OBJ) $(CC_TRIGGER) $(LD_TRIGGER))
 	$(call println,$(TEXT)[$(GREEN)LD$(TEXT)] $@ $(RESET))
-	@$(foreach out,$(call path_wrap,$@),$(call shell_esc,$(call lib_target_ld,$(out)) $(CPPFLAGS) $(CFLAGS) $(call lib_target_link,$(out)) $(LDFLAGS) -shared $(call shared_extra,$(out)) -o $(out)))
+	@$(foreach out,$(call path_wrap,$@),$(call shell_esc,$(call lib_target_ld,$(out)) $(CPPFLAGS) $(CFLAGS) $(PRE_LDFLAGS) $(call lib_target_link,$(out)) $(LDFLAGS) -shared $(call shared_extra,$(out)) -o $(out)))
 
 # Generate internal shared library dependencies, up to 8 levels of nesting is supported
 override libs_dependants = $(filter-out $1,$(strip $(foreach lib,$(LIB_TARGETS),$(if $(filter-out $1,$(call lib_target_own_libs,$(lib))),,$(lib)))))
