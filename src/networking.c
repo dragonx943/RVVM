@@ -8,10 +8,15 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
 // Make POSIX/GNU/BSD features available in strict C standard mode
+// For kqueue(), kevent(), syscall(), etc
+#undef _GNU_SOURCE
 #define _GNU_SOURCE
+#undef _BSD_SOURCE
 #define _BSD_SOURCE
+#undef _DEFAULT_SOURCE
 #define _DEFAULT_SOURCE
-#define _POSIX_C_SOURCE 200809L
+#undef _DARWIN_C_SOURCE
+#define _DARWIN_C_SOURCE
 
 #if defined(_WIN32)
 
