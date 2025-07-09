@@ -110,12 +110,6 @@ static inline DWORD vma_native_view_prot(uint32_t flags)
 #define MAP_NORESERVE 0
 #endif
 
-// Use non-destructive MAP_FIXED semantics, even on Linux
-#ifdef MAP_FIXED_NOREPLACE
-#undef MAP_FIXED
-#define MAP_FIXED MAP_FIXED_NOREPLACE
-#endif
-
 #ifndef MAP_FIXED
 #define MAP_FIXED 0
 #endif
@@ -394,7 +388,16 @@ static void* vma_mmap_aligned_internal(void* addr, size_t size, uint32_t flags, 
         }
     }
     if (flags & VMA_FIXED) {
+        // Use non-destructive MAP_FIXED semantics, even on Linux
+#if defined(MAP_FIXED_NOREPLACE)
+        mmap_flags |= MAP_FIXED_NOREPLACE;
+#elif defined(MAP_TRYFIXED)
+        mmap_flags |= MAP_TRYFIXED;
+#elif defined(MAP_EXCL)
+        mmap_flags |= MAP_FIXED | MAP_EXCL;
+#else
         mmap_flags |= MAP_FIXED;
+#endif
     }
     ret = mmap(addr, size, vma_native_prot(flags), mmap_flags, mmap_fd, offset);
     if (ret == MAP_FAILED) {
