@@ -121,7 +121,7 @@ static bool spin_lock_try_wait_user(spinlock_t* lock, const char* location, bool
     return false;
 }
 
-slow_path static void spin_lock_wait_internal(spinlock_t* lock, const char* location, bool slow, bool writer)
+slow_path static void spin_lock_wait_internal(spinlock_t* lock, const char* location, uint8_t flags, bool writer)
 {
     rvtimer_t deadlock_timer = {0};
     bool      reset_timer    = true;
@@ -147,18 +147,20 @@ slow_path static void spin_lock_wait_internal(spinlock_t* lock, const char* loca
                 rvtimer_init(&deadlock_timer, 1000000000ULL);
             }
 
-            // Indicate that we're waiting on this lock
-            if (!spin_flag_has_waiters(flag)) {
-                if (atomic_cas_uint32(&lock->flag, flag, flag | SPINLOCK_HAS_WAITERS)) {
-                    flag |= SPINLOCK_HAS_WAITERS;
+            if (!(flags & SPINLOCK_WAIT_BUSY_LOOP)) {
+                // Indicate that we're waiting on this lock
+                if (!spin_flag_has_waiters(flag)) {
+                    if (atomic_cas_uint32(&lock->flag, flag, flag | SPINLOCK_HAS_WAITERS)) {
+                        flag |= SPINLOCK_HAS_WAITERS;
+                    }
                 }
-            }
 
-            // Wait on a futex if we succesfully marked ourselves as a waiter
-            if (spin_flag_has_waiters(flag)) {
-                if (thread_futex_wait(&lock->flag, flag, SPINLOCK_DEADLOCK_NS)) {
-                    // Reset deadlock timer upon noticing any forward progress
-                    reset_timer = true;
+                // Wait on a futex if we succesfully marked ourselves as a waiter
+                if (spin_flag_has_waiters(flag)) {
+                    if (thread_futex_wait(&lock->flag, flag, SPINLOCK_DEADLOCK_NS)) {
+                        // Reset deadlock timer upon noticing any forward progress
+                        reset_timer = true;
+                    }
                 }
             }
 
@@ -167,7 +169,7 @@ slow_path static void spin_lock_wait_internal(spinlock_t* lock, const char* loca
                 if (!location) {
                     location = "[unknown]";
                 }
-                if (slow) {
+                if (flags & SPINLOCK_WAIT_FOREVER) {
                     rvvm_debug("Laggy %slocking at %s", writer ? "" : "reader ", location);
                 } else {
                     rvvm_warn("Possible %sdeadlock at %s", writer ? "" : "reader ", location);
@@ -178,14 +180,14 @@ slow_path static void spin_lock_wait_internal(spinlock_t* lock, const char* loca
     }
 }
 
-slow_path void spin_lock_wait(spinlock_t* lock, const char* location, bool slow)
+slow_path void spin_lock_wait(spinlock_t* lock, const char* location, uint8_t flags)
 {
-    spin_lock_wait_internal(lock, location, slow, true);
+    spin_lock_wait_internal(lock, location, flags, true);
 }
 
-slow_path void spin_read_lock_wait(spinlock_t* lock, const char* location, bool slow)
+slow_path void spin_read_lock_wait(spinlock_t* lock, const char* location, uint8_t flags)
 {
-    spin_lock_wait_internal(lock, location, slow, false);
+    spin_lock_wait_internal(lock, location, flags, false);
 }
 
 slow_path void spin_lock_wake(spinlock_t* lock, uint32_t prev)
