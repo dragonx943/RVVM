@@ -15,17 +15,27 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define _BSD_SOURCE
 #undef _DEFAULT_SOURCE
 #define _DEFAULT_SOURCE
-#undef _POSIX_C_SOURCE
-#define _POSIX_C_SOURCE 200809L
 #undef _DARWIN_C_SOURCE
 #define _DARWIN_C_SOURCE
+#undef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+
+// Force 64-bit time_t
+#undef _TIME_BITS
+#define _TIME_BITS 64
+#undef _FILE_OFFSET_BITS
+#define _FILE_OFFSET_BITS 64
 
 #include "threading.h"
+#include "atomics.h"
 #include "compiler.h"
+#include "rvtimer.h"
+#include "spinlock.h"
+#include "vector.h"
 
 #if defined(_WIN32)
 
-// Use Win32 threads, Win32 Events
+// Use Win32 threads & events
 // Use RtlWaitOnAddress() for futexes if present
 #include <windows.h>
 
@@ -33,14 +43,25 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #if !defined(UNDER_CE)
 
-// Win32 futexes (RtlWaitOnAddress(), Win8+)
+// Win32 futexes via RtlWaitOnAddress(), Win8+
 static BOOL (*__stdcall rtl_wait_on_addr)(const void*, const void*, size_t, const LARGE_INTEGER*) = NULL;
 static void (*__stdcall rtl_wake_by_addr_single)(const void*)                                     = NULL;
 static void (*__stdcall rtl_wake_by_addr_all)(const void*)                                        = NULL;
 
-// Precise waitable timers (CreateWaitableTimerExW(CREATE_WAITABLE_TIMER_HIGH_RESOLUTION), Win10 1803+)
+// High-resolution waitable timers via CreateWaitableTimerExW(CREATE_WAITABLE_TIMER_HIGH_RESOLUTION), Win10 1803+
 static HANDLE (*__stdcall create_waitable_timer_ex_w)(void*, LPCWSTR, DWORD, DWORD)                    = NULL;
 static BOOL   (*__stdcall set_waitable_timer)(HANDLE, const LARGE_INTEGER*, LONG, void*, LPVOID, BOOL) = NULL;
+
+// Fiber-local storage, Win Vista+
+static DWORD (*__stdcall fls_alloc)(void* cb)                = NULL;
+static BOOL  (*__stdcall fls_free)(DWORD fls)                = NULL;
+static PVOID (*__stdcall fls_get_val)(DWORD fls)             = NULL;
+static BOOL  (*__stdcall fls_set_val)(DWORD fls, PVOID data) = NULL;
+
+// Scheduler resoluton handling via NtSetTimerResolution(), used when hires timers are missing
+static NTSTATUS(__stdcall* nt_set_timer_resolution)(ULONG, BOOLEAN, PULONG) = NULL;
+
+static DWORD fls_waitable_timer = 0;
 
 #define WIN32_FUTEX_IMPL          1
 #define WIN32_WAITABLE_TIMER_IMPL 1
@@ -50,7 +71,7 @@ static BOOL   (*__stdcall set_waitable_timer)(HANDLE, const LARGE_INTEGER*, LONG
 #else
 
 // Use pthreads, pthread_cond
-// Use futexes if present, even for condvar, except on Windows where futex timeout precision is terrible
+// Use futexes if present, even for condvar, as opposed to Windows where futex timeout precision is terrible
 #include <pthread.h> // For pthread, pthread_cond, pthread_mutex
 #include <time.h>    // For clock_gettime(), if CLOCK_REALTIME/CLOCK_MONOTONIC are defined
 
@@ -71,9 +92,7 @@ static BOOL   (*__stdcall set_waitable_timer)(HANDLE, const LARGE_INTEGER*, LONG
 #define LINUX_FUTEX_IMPL 1
 #endif
 
-#endif
-
-#if defined(__FreeBSD__) && __FreeBSD__ >= 11
+#elif defined(__FreeBSD__) && __FreeBSD__ >= 11
 // FreeBSD futexes (_umtx_op(), FreeBSD 11.0+)
 #define UMTX_OP_WAIT_UINT  11
 #define UMTX_OP_WAKE       3
@@ -81,15 +100,22 @@ int _umtx_op(void* obj, int op, unsigned long val, void* uaddr, void* uaddr2);
 
 #define FREEBSD_FUTEX_IMPL 1
 
+#elif defined(__OpenBSD__) && CHECK_INCLUDE(sys/futex.h, 0)
+#include <sys/futex.h>
+#include <sys/time.h>
+
+#if defined(FUTEX_WAIT) && defined(FUTEX_WAKE)
+#define OPENBSD_FUTEX_IMPL 1
 #endif
 
-#if defined(__APPLE__)
+#elif defined(__APPLE__)
 // Mac OS futexes (__ulock_wait(), OS X 10.12+)
-#include "dlib.h" // For __ulock_wait() probing
+#include "dlib.h" // For __ulock_wait() & __ulock_wake() probing
 
-#define ULOCK_WAIT                           0x0001 // Compare and wait on a 32-bit value
-#define ULOCK_WAKE                           0x0001 // Wake one thread
+#define ULOCK_CMP_WAIT                       0x0001 // Compare and wait on a 32-bit value
+#define ULOCK_WAKE_ONE                       0x0001 // Wake one thread
 #define ULOCK_WAKE_ALL                       0x0101 // Wake all threads
+
 static int (*ulock_wait)(uint32_t op, void* ptr, uint64_t val, uint32_t us) = NULL;
 static int (*ulock_wake)(uint32_t op, void* ptr, uint64_t unused)           = NULL;
 
@@ -100,44 +126,157 @@ static int (*ulock_wake)(uint32_t op, void* ptr, uint64_t unused)           = NU
 
 #endif
 
-#if !defined(PTHREAD_COND_TIMEDWAIT_RELATIVE_IMPL)
 // We need absolute clock timestamps for pthread_cond_timedwait(), preferably monotonic.
 // To set a pthread_cond clock other than CLOCK_REALTIME, POSIX 2008+ is required.
-
-#if defined(CLOCK_MONOTONIC)
+#if !defined(PTHREAD_COND_TIMEDWAIT_RELATIVE_IMPL) && defined(CLOCK_MONOTONIC) && CHECK_INCLUDE(unistd.h, 1)
 #include <unistd.h> // For _POSIX_VERSION
-#if _POSIX_VERSION >= 200809
+#if defined(_POSIX_VERSION) && _POSIX_VERSION >= 200809
 #define PTHREAD_COND_CLOCK_MONOTONIC CLOCK_MONOTONIC
 #endif
 #endif
 
-#if !defined(PTHREAD_COND_CLOCK_MONOTONIC) && !defined(CLOCK_REALTIME)
+#if !defined(PTHREAD_COND_TIMEDWAIT_RELATIVE_IMPL) && !defined(PTHREAD_COND_CLOCK_MONOTONIC)
 #include <sys/time.h> // For gettimeofday()
 #endif
 
-static void condvar_fill_timespec(struct timespec* ts)
-{
-#if defined(PTHREAD_COND_CLOCK_MONOTONIC)
-    clock_gettime(PTHREAD_COND_CLOCK_MONOTONIC, ts);
-#elif defined(CLOCK_REALTIME)
-    clock_gettime(CLOCK_REALTIME, ts);
-#else
-    // Some targets lack clock_gettime(), use gettimeofday()
-    struct timeval tv = {0};
-    gettimeofday(&tv, NULL);
-    ts->tv_sec  = tv.tv_sec;
-    ts->tv_nsec = tv.tv_usec * 1000;
 #endif
+
+// Internal headers come after system headers because of safe_free()
+#include "utils.h"
+
+#if defined(_WIN32)
+
+/*
+ * Precise sub-millisecond delay/timeout using high-resolution WaitableTimer (Win10 1803+)
+ *
+ * For whatever ridiculous reasons, high-resolution timers have observably worse timing characteristics when historical
+ * "low-latency" scheduler mode is enabled via NtSetTimerResolution(5000), seemingly any sleep larger than a scheduler
+ * tick is clamped to the next tick.
+ *
+ * Prefer to use NtSetTimerResolution(156250) for power saving reasons, and use high-resolution waitable timers for
+ * anything that requires actual precise delays.
+ */
+
+#if defined(WIN32_WAITABLE_TIMER_IMPL)
+
+static void thread_local_waitable_timer_free(void* arg)
+{
+    if (arg) {
+        CloseHandle(arg);
+    }
+}
+
+static void thread_local_waitable_timer_cleanup(void)
+{
+    if (fls_waitable_timer) {
+        fls_free(fls_waitable_timer);
+    }
+}
+
+static HANDLE thread_local_waitable_timer_get(uint64_t ns)
+{
+    if (likely(fls_waitable_timer)) {
+        HANDLE timer = fls_get_val(fls_waitable_timer);
+        if (likely(timer)) {
+            LARGE_INTEGER delay = {
+                .QuadPart = -(ns / 100ULL),
+            };
+            if (likely(set_waitable_timer(timer, &delay, 0, NULL, NULL, false))) {
+                return timer;
+            }
+        }
+    }
+    return NULL;
+}
+
+static void thread_local_waitable_timer_init(void)
+{
+    bool hires_timer = false;
+    DO_ONCE_SCOPED {
+        fls_alloc                  = dlib_get_symbol("kernel32.dll", "FlsAlloc");
+        fls_free                   = dlib_get_symbol("kernel32.dll", "FlsFree");
+        fls_get_val                = dlib_get_symbol("kernel32.dll", "FlsGetValue");
+        fls_set_val                = dlib_get_symbol("kernel32.dll", "FlsSetValue");
+        create_waitable_timer_ex_w = dlib_get_symbol("kernel32.dll", "CreateWaitableTimerExW");
+        set_waitable_timer         = dlib_get_symbol("kernel32.dll", "SetWaitableTimer");
+        nt_set_timer_resolution    = dlib_get_symbol("ntdll.dll", "NtSetTimerResolution");
+
+        if (fls_alloc && fls_free && fls_get_val && fls_set_val && create_waitable_timer_ex_w && set_waitable_timer) {
+            fls_waitable_timer = fls_alloc(thread_local_waitable_timer_free);
+            call_at_deinit(thread_local_waitable_timer_cleanup);
+        }
+    }
+    if (fls_waitable_timer) {
+        // Create a high-resolution, manual reset waitable timer (Win10 1803+)
+        HANDLE timer = create_waitable_timer_ex_w(NULL, NULL, 0x3, 0x1F0003);
+        if (timer) {
+            hires_timer = true;
+        } else {
+            // Create a manual reset waitable timer (Win Vista+)
+            timer = create_waitable_timer_ex_w(NULL, NULL, 0x1, 0x1F0003);
+        }
+        if (timer) {
+            fls_set_val(fls_waitable_timer, timer);
+        }
+    }
+    DO_ONCE_SCOPED {
+        // Set scheduler resolution based on high-resolution waitable timer support
+        if (nt_set_timer_resolution) {
+            ULONG cur = 0;
+            nt_set_timer_resolution(hires_timer ? 156250 : 5000, TRUE, &cur);
+        }
+    }
 }
 
 #endif
 
+HANDLE thread_local_waitable_timer(uint64_t ns)
+{
+#if defined(WIN32_WAITABLE_TIMER_IMPL)
+    HANDLE timer = thread_local_waitable_timer_get(ns);
+    if (likely(timer)) {
+        return timer;
+    }
+    thread_local_waitable_timer_init();
+    return thread_local_waitable_timer_get(ns);
+#else
+    UNUSED(ns);
+    return NULL;
 #endif
+}
 
-// RVVM internal headers come after system headers because of safe_free()
-#include "atomics.h"
-#include "rvtimer.h"
-#include "utils.h"
+#else
+
+// Portable pthread_cond_timedwait() with relative monotonic nanosecond timeout
+
+static int pthread_cond_timedwait_ns_internal(pthread_cond_t* cond, pthread_mutex_t* mtx, uint64_t timeout_ns)
+{
+    if (timeout_ns == CONDVAR_INFINITE) {
+        return pthread_cond_wait(cond, mtx);
+    } else {
+        struct timespec ts = {0};
+#if defined(PTHREAD_COND_CLOCK_MONOTONIC)
+        clock_gettime(PTHREAD_COND_CLOCK_MONOTONIC, &ts);
+#elif !defined(PTHREAD_COND_TIMEDWAIT_RELATIVE_IMPL)
+        // Some targets lack clock_gettime(), use gettimeofday()
+        struct timeval tv = {0};
+        gettimeofday(&tv, NULL);
+        ts.tv_sec  = tv.tv_sec;
+        ts.tv_nsec = tv.tv_usec * 1000U;
+#endif
+        // Properly handle timespec addition without an overflow
+        timeout_ns += ts.tv_nsec;
+        ts.tv_sec  += timeout_ns / 1000000000;
+        ts.tv_nsec  = timeout_ns % 1000000000;
+#if defined(PTHREAD_COND_TIMEDWAIT_RELATIVE_IMPL)
+        return pthread_cond_timedwait_relative_np(cond, mtx, &ts);
+#else
+        return pthread_cond_timedwait(cond, mtx, &ts);
+#endif
+    }
+}
+
+#endif
 
 /*
  * Threads
@@ -152,6 +291,7 @@ struct thread_ctx {
 };
 
 #if defined(_WIN32)
+
 // Wrap our thread function call to bridge C/Win32 ABIs
 
 typedef struct {
@@ -159,12 +299,13 @@ typedef struct {
     void*         arg;
 } thread_call_wrap_t;
 
-static DWORD __stdcall thread_call_wrapper(void* ptr)
+static DWORD __stdcall thread_call_wrapper(void* arg)
 {
-    thread_call_wrap_t wrap = *(thread_call_wrap_t*)ptr;
-    free(ptr);
+    thread_call_wrap_t wrap = *(thread_call_wrap_t*)arg;
+    safe_free(arg);
     return (DWORD)(size_t)wrap.func(wrap.arg);
 }
+
 #endif
 
 thread_ctx_t* thread_create_ex(thread_func_t func, void* arg, uint32_t stack_size)
@@ -197,7 +338,7 @@ thread_ctx_t* thread_create_ex(thread_func_t func, void* arg, uint32_t stack_siz
     }
 #endif
     rvvm_warn("Failed to spawn thread!");
-    free(thread);
+    safe_free(thread);
     return NULL;
 }
 
@@ -219,7 +360,7 @@ bool thread_join(thread_ctx_t* thread)
             rvvm_warn("Failed to join thread!");
         }
 #endif
-        free(thread);
+        safe_free(thread);
         return true;
     }
 
@@ -234,35 +375,20 @@ bool thread_detach(thread_ctx_t* thread)
 #else
         pthread_detach(thread->pthread);
 #endif
-        free(thread);
+        safe_free(thread);
         return true;
     }
     return false;
 }
 
 /*
- * Futexes & Futex emulation fallback
+ * Native futexes
  */
-
-#define FUTEX_EMU_TABLE_SIZE 16
-
-static bool         futex_native    = false;
-static cond_var_t** futex_emu_table = NULL;
 
 static bool thread_futex_wait_native(void* ptr, uint32_t val, uint64_t timeout_ns)
 {
-#if defined(WIN32_FUTEX_IMPL)
-    if (likely(rtl_wait_on_addr)) {
-        LARGE_INTEGER  timeout     = {0};
-        LARGE_INTEGER* timeout_ptr = NULL;
-        if (timeout_ns != THREAD_FUTEX_INFINITE) {
-            timeout.QuadPart = -(timeout_ns / 100ULL);
-            timeout_ptr      = &timeout;
-        }
-        sleep_low_latency(timeout_ns < 15000000);
-        return rtl_wait_on_addr(ptr, &val, 4, timeout_ptr);
-    }
-#elif defined(LINUX_FUTEX_IMPL) || defined(FREEBSD_FUTEX_IMPL)
+#if defined(LINUX_FUTEX_IMPL) || defined(FREEBSD_FUTEX_IMPL) || defined(OPENBSD_FUTEX_IMPL)
+    // Prepare timespec structure
     struct timespec  ts     = {0};
     struct timespec* ts_ptr = NULL;
     if (timeout_ns != THREAD_FUTEX_INFINITE) {
@@ -270,94 +396,133 @@ static bool thread_futex_wait_native(void* ptr, uint32_t val, uint64_t timeout_n
         ts.tv_nsec = timeout_ns % 1000000000ULL;
         ts_ptr     = &ts;
     }
+#endif
+
 #if defined(LINUX_FUTEX_IMPL)
-    sleep_low_latency(timeout_ns < 15000000);
-    if (syscall(__NR_futex, ptr, FUTEX_WAIT_PRIVATE, val, ts_ptr, NULL, 0) >= 0) {
-        return true;
-    }
+    sleep_low_latency(true);
+    return syscall(__NR_futex, ptr, FUTEX_WAIT_PRIVATE, val, ts_ptr, NULL, 0) >= 0;
 #elif defined(FREEBSD_FUTEX_IMPL)
     void* ts_size = ts_ptr ? ((void*)(uintptr_t)sizeof(ts)) : NULL;
-    if (_umtx_op(ptr, UMTX_OP_WAIT_UINT, val, ts_size, ts_ptr) >= 0) {
-        return true;
-    }
-#endif
+    return _umtx_op(ptr, UMTX_OP_WAIT_UINT, val, ts_size, ts_ptr) >= 0;
+#elif defined(OPENBSD_FUTEX_IMPL)
+    return futex(ptr, FUTEX_WAIT, val, ts_ptr, NULL) >= 0;
 #elif defined(APPLE_FUTEX_IMPL)
-    if (likely(ulock_wait)) {
-        uint32_t timeout_us = (timeout_ns != THREAD_FUTEX_INFINITE) ? (timeout_ns / 1000ULL) : 0;
-        return ulock_wait(ULOCK_WAIT, ptr, val, timeout_us) >= 0;
+    uint64_t timeout_us = 0;
+    if (timeout_us != THREAD_FUTEX_INFINITE) {
+        timeout_us = timeout_ns / 1000ULL;
+        timeout_us = EVAL_MIN(timeout_us, 0x7FFFFFFFU);
+        timeout_us = EVAL_MAX(timeout_us, 1);
     }
+    return ulock_wait && ulock_wait(ULOCK_CMP_WAIT, ptr, val, timeout_us) >= 0;
+#elif defined(WIN32_FUTEX_IMPL)
+    LARGE_INTEGER  timeout     = {0};
+    LARGE_INTEGER* timeout_ptr = NULL;
+    if (timeout_ns != THREAD_FUTEX_INFINITE) {
+        timeout.QuadPart = -(timeout_ns / 100ULL);
+        timeout_ptr      = &timeout;
+    }
+    return rtl_wait_on_addr && rtl_wait_on_addr(ptr, &val, 4, timeout_ptr);
 #else
     UNUSED(ptr);
     UNUSED(val);
     UNUSED(timeout_ns);
-#endif
     return false;
+#endif
 }
 
 static bool thread_futex_wake_native(void* ptr, uint32_t num)
 {
-#if defined(WIN32_FUTEX_IMPL)
-    if (likely(rtl_wait_on_addr)) {
-        if (num > 1) {
-            rtl_wake_by_addr_all(ptr);
-        } else {
-            rtl_wake_by_addr_single(ptr);
-        }
-        return true;
-    }
-#elif defined(LINUX_FUTEX_IMPL)
-    if (syscall(__NR_futex, ptr, FUTEX_WAKE_PRIVATE, num, NULL, NULL, 0) >= 0) {
-        return true;
-    }
+#if defined(LINUX_FUTEX_IMPL)
+    return syscall(__NR_futex, ptr, FUTEX_WAKE_PRIVATE, num, NULL, NULL, 0) >= 0;
 #elif defined(FREEBSD_FUTEX_IMPL)
-    if (_umtx_op(ptr, UMTX_OP_WAKE, num, NULL, NULL) >= 0) {
-        return true;
-    }
+    return _umtx_op(ptr, UMTX_OP_WAKE, num, NULL, NULL) >= 0;
+#elif defined(OPENBSD_FUTEX_IMPL)
+    return futex(ptr, FUTEX_WAKE, num, NULL, NULL) >= 0;
 #elif defined(APPLE_FUTEX_IMPL)
-    if (likely(ulock_wake)) {
-        ulock_wake((num > 1) ? ULOCK_WAKE_ALL : ULOCK_WAKE, ptr, 0);
-        return true;
+    return ulock_wake && ulock_wake((num > 1) ? ULOCK_WAKE_ALL : ULOCK_WAKE_ONE, ptr, 0) >= 0;
+#elif defined(WIN32_FUTEX_IMPL)
+    if (num > 1) {
+        return rtl_wake_by_addr_all && (rtl_wake_by_addr_all(ptr), true);
+    } else {
+        return rtl_wake_by_addr_single && (rtl_wake_by_addr_single(ptr), true);
     }
 #else
     UNUSED(ptr);
     UNUSED(num);
-#endif
     return false;
+#endif
 }
 
-static cond_var_t* thread_futex_emu_cond(void* ptr)
+/*
+ * Futex emulation fallback
+ */
+
+#define FUTEX_EMU_TABLE_SIZE 16
+
+typedef struct {
+    void*       ptr;
+    cond_var_t* cond;
+} futex_waiter_t;
+
+typedef struct align_cacheline {
+    vector_t(futex_waiter_t) waiters;
+    spinlock_t               lock;
+} futex_queue_t;
+
+static bool futex_native = false;
+
+static futex_queue_t futex_emu_table[FUTEX_EMU_TABLE_SIZE] = {0};
+
+static inline futex_queue_t* thread_futex_emu_queue(void* ptr)
 {
     size_t k  = (size_t)ptr;
     k        ^= k >> 21;
     k        ^= k >> 17;
-    return futex_emu_table[k & (FUTEX_EMU_TABLE_SIZE - 1)];
+    return &futex_emu_table[k & (FUTEX_EMU_TABLE_SIZE - 1)];
 }
 
-static bool thread_futex_emu_wait(void* ptr, uint32_t val, uint64_t timeout_ns)
+static bool thread_futex_wait_emu(void* ptr, uint32_t val, uint64_t ns)
 {
-    cond_var_t* cond  = thread_futex_emu_cond(ptr);
-    rvtimer_t   timer = {0};
-    rvtimecmp_t cmp   = {0};
+    futex_queue_t* queue = thread_futex_emu_queue(ptr);
+    futex_waiter_t self  = {
+         .ptr  = ptr,
+         .cond = condvar_create(),
+    };
+    bool ret = false;
 
-    if (atomic_load_uint32(ptr) != val) {
-        return false;
+    spin_lock_busy_loop(&queue->lock);
+    if (atomic_load_uint32(ptr) == val) {
+        vector_push_back(queue->waiters, self);
+        spin_unlock(&queue->lock);
+
+        ret = condvar_wait_ns(self.cond, ns);
+        spin_lock_busy_loop(&queue->lock);
+        vector_foreach_back (queue->waiters, i) {
+            if (vector_at(queue->waiters, i).cond == self.cond) {
+                vector_erase(queue->waiters, i);
+                break;
+            }
+        }
+        if (!vector_size(queue->waiters)) {
+            vector_free(queue->waiters);
+        }
     }
+    spin_unlock(&queue->lock);
 
-    rvtimer_init(&timer, 1000000000ULL);
-    rvtimecmp_init(&cmp, &timer);
-    rvtimecmp_set(&cmp, timeout_ns);
+    condvar_free(self.cond);
+    return ret;
+}
 
-    do {
-        if (atomic_load_uint32(ptr) != val) {
-            return true;
+static void thread_futex_wake_emu(void* ptr, uint32_t num)
+{
+    futex_queue_t* queue = thread_futex_emu_queue(ptr);
+    spin_lock_busy_loop(&queue->lock);
+    vector_foreach_back (queue->waiters, i) {
+        if (num && vector_at(queue->waiters, i).ptr == ptr && condvar_wake(vector_at(queue->waiters, i).cond)) {
+            num--;
         }
-        // Wait on shared condvar, with max timeout of 10ms in case we somehow miss a wakeup
-        if (condvar_wait_ns(cond, EVAL_MIN(rvtimecmp_delay_ns(&cmp), 10000000ULL))) {
-            return true;
-        }
-    } while (!rvtimecmp_pending(&cmp));
-
-    return false;
+    }
+    spin_unlock(&queue->lock);
 }
 
 static slow_path bool thread_futex_init_once(void)
@@ -382,16 +547,9 @@ static slow_path bool thread_futex_init_once(void)
     }
 #endif
 
-    if (thread_futex_wake_native(&tmp, 1)) {
+    if (!rvvm_has_arg("no_futex") && thread_futex_wake_native(&tmp, 1)) {
         rvvm_info("Native futexes available");
         return true;
-    }
-
-    // Fallback to futex emulation via shared conditional variable
-    // Leaks a condvar handle on library unload, but whatever
-    futex_emu_table = safe_new_arr(cond_var_t*, FUTEX_EMU_TABLE_SIZE);
-    for (size_t i = 0; i < FUTEX_EMU_TABLE_SIZE; ++i) {
-        futex_emu_table[i] = condvar_create();
     }
 
     return false;
@@ -407,11 +565,11 @@ static bool thread_futex_is_native(void)
 
 bool thread_futex_wait(void* ptr, uint32_t val, uint64_t timeout_ns)
 {
-    if (likely(ptr)) {
+    if (likely(ptr && timeout_ns)) {
         if (likely(thread_futex_is_native())) {
             return thread_futex_wait_native(ptr, val, timeout_ns);
         } else {
-            return thread_futex_emu_wait(ptr, val, timeout_ns);
+            return thread_futex_wait_emu(ptr, val, timeout_ns);
         }
     }
     return false;
@@ -423,8 +581,7 @@ void thread_futex_wake(void* ptr, uint32_t num)
         if (likely(thread_futex_is_native())) {
             thread_futex_wake_native(ptr, num);
         } else {
-            cond_var_t* cond = thread_futex_emu_cond(ptr);
-            condvar_wake_all(cond);
+            thread_futex_wake_emu(ptr, num);
         }
     }
 }
@@ -438,7 +595,6 @@ struct cond_var {
     uint32_t waiters;
 #if defined(_WIN32)
     HANDLE event;
-    HANDLE timer;
 #else
     pthread_cond_t  cond;
     pthread_mutex_t lock;
@@ -447,23 +603,13 @@ struct cond_var {
 
 bool condvar_init_internal(cond_var_t* cond)
 {
-#if defined(_WIN32)
-#if defined(WIN32_WAITABLE_TIMER_IMPL)
-    DO_ONCE_SCOPED {
-        create_waitable_timer_ex_w = dlib_get_symbol("kernel32.dll", "CreateWaitableTimerExW");
-        set_waitable_timer         = dlib_get_symbol("kernel32.dll", "SetWaitableTimer");
-    }
-    if (create_waitable_timer_ex_w && set_waitable_timer) {
-        // Create a high resolution, manual reset waitable timer (Win10 1803+)
-        cond->timer = create_waitable_timer_ex_w(NULL, NULL, 0x3, 0x1F0003);
-    }
-#endif
-#if !defined(HOST_64BIT) && !defined(UNDER_CE)
+#if defined(_WIN32) && !defined(HOST_64BIT) && !defined(UNDER_CE)
     // Use ANSI syscall (Win9x compat)
     cond->event = CreateEventA(NULL, FALSE, FALSE, NULL);
-#else
+    return !!cond->event;
+
+#elif defined(_WIN32)
     cond->event = CreateEventW(NULL, FALSE, FALSE, NULL);
-#endif
     return !!cond->event;
 
 #elif defined(PTHREAD_COND_CLOCK_MONOTONIC)
@@ -503,42 +649,24 @@ static inline bool condvar_try_consume_signal(cond_var_t* cond)
     return false;
 }
 
-static bool condvar_wait_native_ns(cond_var_t* cond, uint64_t timeout_ns, uint32_t prev_waiters)
+static bool condvar_wait_native_ns(cond_var_t* cond, uint64_t timeout_ns)
 {
-    UNUSED(prev_waiters);
-
 #if defined(_WIN32)
     if (timeout_ns == CONDVAR_INFINITE) {
+        // Wait infinitely
         return !WaitForSingleObject(cond->event, INFINITE);
-    }
-
-#if defined(WIN32_WAITABLE_TIMER_IMPL)
-    if (timeout_ns < 15000000 && cond->timer && !prev_waiters) {
-        // Nanosecond precision timeout using high-resolution WaitableTimer (Win10 1803+)
-        LARGE_INTEGER delay = {
-            .QuadPart = -(timeout_ns / 100ULL),
-        };
-        HANDLE handles[] = {
-            cond->event,
-            cond->timer,
-        };
-
-        // For whatever ridiculous reasons, high-resolution timers have much
-        // better timing characteristics with NtSetTimerResolution(156250).
-        sleep_low_latency(false);
-
-        if (set_waitable_timer(cond->timer, &delay, 0, NULL, NULL, false)) {
+    } else {
+        HANDLE timer = thread_local_waitable_timer(timeout_ns);
+        if (timer) {
+            // High-resolution timeout via waitable timer
+            HANDLE handles[] = {cond->event, timer};
             return !WaitForMultipleObjects(STATIC_ARRAY_SIZE(handles), handles, FALSE, INFINITE);
+        } else {
+            // Fallback to millisecond-precision timeout
+            return !WaitForSingleObject(cond->event, EVAL_MAX(timeout_ns / 1000000ULL, 1));
         }
     }
-#endif
-
-    // Millisecond-precision timeout
-    sleep_low_latency(timeout_ns < 15000000);
-    return !WaitForSingleObject(cond->event, EVAL_MAX(timeout_ns / 1000000, 1));
-
 #else
-
     if (thread_futex_is_native()) {
         // Wait on a native futex when available
         return thread_futex_wait_native(&cond->flag, 0, timeout_ns);
@@ -547,29 +675,8 @@ static bool condvar_wait_native_ns(cond_var_t* cond, uint64_t timeout_ns, uint32
         bool ret = false;
 
         pthread_mutex_lock(&cond->lock);
-        if (condvar_try_consume_signal(cond)) {
-            ret = true;
-        } else {
-            if (timeout_ns == CONDVAR_INFINITE) {
-                ret = !pthread_cond_wait(&cond->cond, &cond->lock);
-            } else {
-#if defined(PTHREAD_COND_TIMEDWAIT_RELATIVE_IMPL)
-                struct timespec ts = {
-                    .tv_sec  = timeout_ns / 1000000000,
-                    .tv_nsec = timeout_ns % 1000000000,
-                };
-                ret = pthread_cond_timedwait_relative_np(&cond->cond, &cond->lock, &ts) == 0;
-#else
-                struct timespec ts = {0};
-                condvar_fill_timespec(&ts);
-                // Properly handle timespec addition without an overflow
-                timeout_ns += ts.tv_nsec;
-                ts.tv_sec  += timeout_ns / 1000000000;
-                ts.tv_nsec  = timeout_ns % 1000000000;
-                ret         = !pthread_cond_timedwait(&cond->cond, &cond->lock, &ts);
-#endif
-            }
-        }
+        ret = condvar_try_consume_signal(cond)
+           || !pthread_cond_timedwait_ns_internal(&cond->cond, &cond->lock, timeout_ns);
         pthread_mutex_unlock(&cond->lock);
 
         return ret;
@@ -592,7 +699,7 @@ bool condvar_wait_ns(cond_var_t* cond, uint64_t timeout_ns)
 
         // Mark that a thread is about to be waiting here, otherwise wake may set signal
         // too late be consumed, but not see any waiters and so a wakeup event may be lost.
-        uint32_t prev_waiters = atomic_add_uint32(&cond->waiters, 1);
+        atomic_add_uint32(&cond->waiters, 1);
 
         // Try to consume a signal again, since condvar_wake() could have been called
         // in-between the fast-path exit and waiter marking.
@@ -602,7 +709,7 @@ bool condvar_wait_ns(cond_var_t* cond, uint64_t timeout_ns)
         }
 
         // Perform waiting on a kernel primitive
-        bool ret = condvar_wait_native_ns(cond, timeout_ns, prev_waiters);
+        bool ret = condvar_wait_native_ns(cond, timeout_ns);
 
         // Clear possibly danging signal
         if (condvar_try_consume_signal(cond)) {
@@ -695,14 +802,11 @@ void condvar_free(cond_var_t* cond)
         if (cond->event) {
             CloseHandle(cond->event);
         }
-        if (cond->timer) {
-            CloseHandle(cond->timer);
-        }
 #else
         pthread_cond_destroy(&cond->cond);
         pthread_mutex_destroy(&cond->lock);
 #endif
-        free(cond);
+        safe_free(cond);
     }
 }
 
