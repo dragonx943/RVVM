@@ -128,11 +128,8 @@ static int (*ulock_wake)(uint32_t op, void* ptr, uint64_t unused)           = NU
 
 // We need absolute clock timestamps for pthread_cond_timedwait(), preferably monotonic.
 // To set a pthread_cond clock other than CLOCK_REALTIME, POSIX 2008+ is required.
-#if !defined(PTHREAD_COND_TIMEDWAIT_RELATIVE_IMPL) && defined(CLOCK_MONOTONIC) && CHECK_INCLUDE(unistd.h, 1)
-#include <unistd.h> // For _POSIX_VERSION
-#if defined(_POSIX_VERSION) && _POSIX_VERSION >= 200809
+#if !defined(PTHREAD_COND_TIMEDWAIT_RELATIVE_IMPL) && defined(CLOCK_MONOTONIC)
 #define PTHREAD_COND_CLOCK_MONOTONIC CLOCK_MONOTONIC
-#endif
 #endif
 
 #if !defined(PTHREAD_COND_TIMEDWAIT_RELATIVE_IMPL) && !defined(PTHREAD_COND_CLOCK_MONOTONIC)
