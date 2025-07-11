@@ -29,9 +29,11 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 // For PR_SET_TIMERSLACK
 #include <sys/prctl.h>
 
+#if defined(PR_SET_TIMERSLACK)
 static THREAD_LOCAL bool timerslack_lowlatency;
 
 #define TIMERSLACK_IMPL 1
+#endif
 #endif
 
 #if defined(__unix__) || defined(__APPLE__) || defined(__HAIKU__)
