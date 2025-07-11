@@ -7,12 +7,11 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#ifndef RVVM_RVTIMER_H
-#define RVVM_RVTIMER_H
+#ifndef LEKKIT_RVTIMER_H
+#define LEKKIT_RVTIMER_H
 
 #include "compiler.h"
 #include "rvvm_types.h"
-#include <stdint.h>
 
 typedef struct {
     // Those fields are internal use only
@@ -22,21 +21,35 @@ typedef struct {
 
 typedef struct {
     // Those fields are internal use only
-    uint64_t timecmp;
+    uint64_t   timecmp;
     rvtimer_t* timer;
 } rvtimecmp_t;
 
 // Convert between frequencies without overflow
 static inline uint64_t rvtimer_convert_freq(uint64_t clk, uint64_t src_freq, uint64_t dst_freq)
 {
-#ifdef INT128_SUPPORT
-    // Fast path when no overflow (Just mul + div on x86_64 with the overflow check)
-    if (likely(!((uint128_t)clk * (uint128_t)dst_freq >> 64))) {
-        return clk * dst_freq / src_freq;
+#if defined(INT128_SUPPORT)
+    uint128_t mul128 = (uint128_t)clk * (uint128_t)dst_freq;
+    if (likely(!(mul128 >> 64))) {
+        // Fast path for non overflow-case (Just mul + div on x86_64 with the overflow check)
+        return ((uint64_t)mul128) / src_freq;
+    }
+#else
+    if (likely(!(clk >> 32) && !(src_freq >> 32) && !(dst_freq >> 32))) {
+        // Fast path for non overflow-case
+        uint64_t tmp = clk * dst_freq;
+        if (!(tmp >> 32)) {
+            // Prefer 32-bit division
+            return ((uint32_t)tmp) / ((uint32_t)src_freq);
+        } else {
+            return tmp / ((uint32_t)src_freq);
+        }
     }
 #endif
-    uint64_t freq_rem = clk % src_freq;
-    return (clk / src_freq * dst_freq) + (freq_rem * dst_freq / src_freq);
+    // Slow path
+    uint64_t clk_div = clk / src_freq;
+    uint64_t clk_rem = clk - (clk_div * src_freq);
+    return (clk_div * dst_freq) + (clk_rem * dst_freq / src_freq);
 }
 
 // Get monotonic clocksource with the specified frequency
@@ -90,7 +103,10 @@ uint64_t rvtimecmp_delay_ns(const rvtimecmp_t* cmp);
 // Set expected sleep latency (Internal use)
 void sleep_low_latency(bool enable);
 
-// Sleep for N ms
+// Sleep precisely with nanosecond delay
+void sleep_ns(uint64_t ns);
+
+// Sleep with millisecond delay
 void sleep_ms(uint32_t ms);
 
 #endif
