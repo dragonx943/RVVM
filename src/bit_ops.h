@@ -105,119 +105,119 @@ static forceinline uint64_t bit_rotr64(uint64_t val, bitcnt_t bits)
 // Count leading zeroes (from highest bit position) in u32
 static inline bitcnt_t bit_clz32(uint32_t val)
 {
-    if (unlikely(!val)) {
-        return 32;
-    }
+    if (likely(val)) {
 #if GCC_CHECK_VER(3, 4) || GNU_BUILTIN(__builtin_clz)
-    return __builtin_clz(val);
+        return __builtin_clz(val);
 #elif defined(_MSC_VER)
-    unsigned long index;
-    _BitScanReverse(&index, val);
-    return 31 ^ index;
+        unsigned long index;
+        _BitScanReverse(&index, val);
+        return 31 ^ index;
 #else
-    // de Brujin hashmap, see https://en.wikipedia.org/wiki/De_Bruijn_sequence
-    const uint8_t lut[32] = {
-        0, 31, 4,  30, 3,  18, 8,  29, 2, 10, 12, 17, 7,  15, 28, 24,
-        1, 5,  19, 9,  11, 13, 16, 25, 6, 20, 14, 26, 21, 27, 22, 23,
-    };
-    val |= (val >> 1);
-    val |= (val >> 2);
-    val |= (val >> 4);
-    val |= (val >> 8);
-    val |= (val >> 16);
-    return lut[((val + 1) * 0x077CB531U) >> 27];
+        // de Brujin hashmap, see https://en.wikipedia.org/wiki/De_Bruijn_sequence
+        static const uint8_t lut[32] = {
+            0, 31, 4,  30, 3,  18, 8,  29, 2, 10, 12, 17, 7,  15, 28, 24,
+            1, 5,  19, 9,  11, 13, 16, 25, 6, 20, 14, 26, 21, 27, 22, 23,
+        };
+        val |= (val >> 1);
+        val |= (val >> 2);
+        val |= (val >> 4);
+        val |= (val >> 8);
+        val |= (val >> 16);
+        return lut[((val + 1) * 0x077CB531U) >> 27];
 #endif
+    }
+    return 32;
 }
 
 // Count leading zeroes (from highest bit position) in u64
 static inline bitcnt_t bit_clz64(uint64_t val)
 {
-    if (unlikely(!val)) {
-        return 64;
-    }
+    if (likely(val)) {
 #if defined(HOST_64BIT) && (GCC_CHECK_VER(3, 4) || GNU_BUILTIN(__builtin_clzll))
-    return __builtin_clzll(val);
+        return __builtin_clzll(val);
 #elif defined(HOST_64BIT) && defined(_MSC_VER)
-    unsigned long index;
-    _BitScanReverse64(&index, val);
-    return 63 ^ index;
+        unsigned long index;
+        _BitScanReverse64(&index, val);
+        return 63 ^ index;
 #else
-    return (val >> 32) ? bit_clz32(val >> 32) : (32 + bit_clz32(val));
+        return (val >> 32) ? bit_clz32(val >> 32) : (32 + bit_clz32(val));
 #endif
+    }
+    return 64;
 }
 
 // Count trailing zeroes (Least significant set bit position) in u32
 static inline bitcnt_t bit_ctz32(uint32_t val)
 {
-    if (unlikely(!val)) {
-        return 32;
-    }
+    if (likely(val)) {
 #if GCC_CHECK_VER(3, 4) || GNU_BUILTIN(__builtin_ctz)
-    return __builtin_ctz(val);
+        return __builtin_ctz(val);
 #elif defined(_MSC_VER)
-    unsigned long index;
-    _BitScanForward(&index, val);
-    return index;
+        unsigned long index;
+        _BitScanForward(&index, val);
+        return index;
 #else
-    // de Brujin hashmap, see https://en.wikipedia.org/wiki/De_Bruijn_sequence
-    const uint8_t lut[32] = {
-        0,  1,  28, 2,  29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4,  8,
-        31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18, 6,  11, 5,  10, 9,
-    };
-    return lut[((val & -val) * 0x077CB531U) >> 27];
+        // de Brujin hashmap, see https://en.wikipedia.org/wiki/De_Bruijn_sequence
+        static const uint8_t lut[32] = {
+            0,  1,  28, 2,  29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4,  8,
+            31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18, 6,  11, 5,  10, 9,
+        };
+        return lut[((val & -val) * 0x077CB531U) >> 27];
 #endif
+    }
+    return 32;
 }
 
 // Count trailing zeroes (Least significant set bit position) in u64
 static inline bitcnt_t bit_ctz64(uint64_t val)
 {
-    if (unlikely(!val)) {
-        return 64;
-    }
+    if (likely(val)) {
 #if defined(HOST_64BIT) && (GCC_CHECK_VER(3, 4) || GNU_BUILTIN(__builtin_ctzll))
-    return __builtin_ctzll(val);
+        return __builtin_ctzll(val);
 #elif defined(HOST_64BIT) && defined(_MSC_VER)
-    unsigned long index;
-    _BitScanForward64(&index, val);
-    return index;
+        unsigned long index;
+        _BitScanForward64(&index, val);
+        return index;
 #else
-    bitcnt_t tmp = (!((uint32_t)val)) << 5;
-    return bit_ctz32(val >> tmp) + tmp;
+        bitcnt_t tmp = (!((uint32_t)val)) << 5;
+        return bit_ctz32(val >> tmp) + tmp;
 #endif
+    }
+    return 64;
 }
 
 // Get most significant set bit position in u32
 static inline bitcnt_t bit_bsr32(uint32_t val)
 {
-    if (unlikely(!val)) {
-        return 32;
-    }
+    if (likely(val)) {
 #if GCC_CHECK_VER(3, 4) || GNU_BUILTIN(__builtin_clz)
-    return 31 ^ __builtin_clz(val);
+        return 31 ^ __builtin_clz(val);
 #elif defined(_MSC_VER)
-    unsigned long index;
-    _BitScanReverse(&index, val);
-    return index;
+        unsigned long index;
+        _BitScanReverse(&index, val);
+        return index;
 #else
-    return 31 ^ bit_clz32(val);
+        return 31 ^ bit_clz32(val);
 #endif
+    }
+    return 32;
 }
 
 // Get most significant set bit position in u64
 static inline bitcnt_t bit_bsr64(uint64_t val)
 {
-    if (unlikely(!val)) {
-        return 64;
-    }
+    if (likely(val)) {
 #if defined(HOST_64BIT) && (GCC_CHECK_VER(3, 4) || GNU_BUILTIN(__builtin_clzll))
-    return 63 ^ __builtin_clzll(val);
+        return 63 ^ __builtin_clzll(val);
 #elif defined(HOST_64BIT) && defined(_MSC_VER)
-    unsigned long index;
-    _BitScanReverse64(&index, val);
-    return index;
+        unsigned long index;
+        _BitScanReverse64(&index, val);
+        return index;
 #else
-    return 63 ^ bit_clz64(val);
+        return 63 ^ bit_clz64(val);
 #endif
+    }
+    return 64;
 }
 
 // Normalize the value to nearest next power of two
@@ -272,11 +272,10 @@ static inline bitcnt_t bit_popcnt64(uint64_t val)
 static inline uint64_t bit_orc_b(uint64_t val)
 {
 #if defined(GNU_EXTS) && defined(__x86_64__)
-    uint64_t tmp = 0;
     __asm__("pcmpeqb %1, %0\n\t"
             "pcmpeqb %1, %0\n\t"
             : "+x"(val)
-            : "x"(tmp));
+            : "x"(0));
 #elif defined(GNU_EXTS) && defined(__aarch64__)
     __asm__("cmtst %0.8b, %0.8b, %0.8b" : "+w"(val));
 #else
@@ -417,7 +416,7 @@ static inline uint64_t byteswap_uint64(uint64_t val)
 // Get high 64 bits from signed i64 x i64 -> 128 bit multiplication
 static inline uint64_t mulh_uint64(int64_t a, int64_t b)
 {
-#ifdef INT128_SUPPORT
+#if defined(INT128_SUPPORT)
     return ((int128_t)a * (int128_t)b) >> 64;
 #elif defined(HOST_64BIT) && defined(_MSC_VER)
     return __mulh(a, b);
@@ -434,7 +433,7 @@ static inline uint64_t mulh_uint64(int64_t a, int64_t b)
 // Get high 64 bits from unsigned u64 x u64 -> 128 bit multiplication
 static inline uint64_t mulhu_uint64(uint64_t a, uint64_t b)
 {
-#ifdef INT128_SUPPORT
+#if defined(INT128_SUPPORT)
     return ((uint128_t)a * (uint128_t)b) >> 64;
 #elif defined(HOST_64BIT) && defined(_MSC_VER)
     return __umulh(a, b);
