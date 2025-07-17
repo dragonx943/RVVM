@@ -12,8 +12,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #include "compiler.h"
 
-#if !defined(USE_NO_FENV) && CHECK_INCLUDE(fenv.h, 1)
-// Target has <fenv.h>
+#if (!defined(__i386__) || defined(__SSE__)) && CHECK_INCLUDE(fenv.h, 1)
+// Target has a working <fenv.h>
 #include <fenv.h>
 #endif
 
