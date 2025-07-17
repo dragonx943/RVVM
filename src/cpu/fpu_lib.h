@@ -7,21 +7,14 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#ifndef RVVM_FPU_LIB_H
-#define RVVM_FPU_LIB_H
+#ifndef LEKKIT_FPU_LIB_H
+#define LEKKIT_FPU_LIB_H
 
+#include "bit_ops.h"
 #include "compiler.h"
 #include "fpu_ops.h"
 #include "mem_ops.h"
-#include "bit_ops.h"
 
-/* well... */
-#if defined(_WIN32) && defined(__clang__)
-#define _C_COMPLEX_T
-typedef _Complex double _C_double_complex;
-typedef _Complex float _C_float_complex;
-typedef _Complex long double _C_ldouble_complex;
-#endif
 #include <math.h>
 
 #define fpu_isnan(x) isnan(x)
@@ -57,14 +50,18 @@ static forceinline bool fpu_signbitd(double d)
 static forceinline float fpu_sqrtf(float val)
 {
     float ret = sqrtf(val);
-    if (unlikely(val < 0 && !fetestexcept(FE_INVALID))) feraiseexcept(FE_INVALID);
+    if (unlikely(val < 0 && !fetestexcept(FE_INVALID))) {
+        feraiseexcept(FE_INVALID);
+    }
     return ret;
 }
 
 static forceinline double fpu_sqrtd(double val)
 {
     double ret = sqrt(val);
-    if (unlikely(val < 0 && !fetestexcept(FE_INVALID))) feraiseexcept(FE_INVALID);
+    if (unlikely(val < 0 && !fetestexcept(FE_INVALID))) {
+        feraiseexcept(FE_INVALID);
+    }
     return ret;
 }
 
@@ -100,7 +97,7 @@ static forceinline double fpu_copysignxd(double a, double b)
 
 static forceinline float fpu_fmaf(float a, float b, float c)
 {
-#ifdef UNDER_CE // WinCE libc doesn't have fma()
+#if defined(UNDER_CE) || (defined(__i386__) && !defined(__SSE__))
     return a * b + c;
 #else
     return fmaf(a, b, c);
@@ -109,7 +106,7 @@ static forceinline float fpu_fmaf(float a, float b, float c)
 
 static forceinline double fpu_fmad(double a, double b, double c)
 {
-#ifdef UNDER_CE // WinCE libc doesn't have fma()
+#if defined(UNDER_CE) || (defined(__i386__) && !defined(__SSE2__))
     return a * b + c;
 #else
     return fma(a, b, c);
