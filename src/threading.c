@@ -59,7 +59,7 @@ static PVOID (*__stdcall fls_get_val)(DWORD fls)             = NULL;
 static BOOL  (*__stdcall fls_set_val)(DWORD fls, PVOID data) = NULL;
 
 // Scheduler resoluton handling via NtSetTimerResolution(), used when hires timers are missing
-static NTSTATUS(__stdcall* nt_set_timer_resolution)(ULONG, BOOLEAN, PULONG) = NULL;
+static int32_t (*__stdcall nt_set_timer_resolution)(ULONG, BOOLEAN, PULONG) = NULL;
 
 static DWORD fls_waitable_timer = 0;
 
