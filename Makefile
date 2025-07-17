@@ -451,7 +451,7 @@ override LIB_EXT := .so
 ifeq ($(OS),windows)
 override BIN_EXT := .exe
 override LIB_EXT := .dll
-override LDFLAGS := $(LDFLAGS) -static
+override LDFLAGS := $(LDFLAGS) -static -Wl$(COMMA)--subsystem$(COMMA)console:3.10
 endif
 
 # MacOS: Use .dylib lib extension
@@ -980,8 +980,8 @@ $(call path_shell,$(BIN_TARGETS): $(BIN_OBJ) $(BIN_LIBS) $(CC_TRIGGER) $(LD_TRIG
 
 
 
-# Set -Wl,--subsystem,windows,--out-implib,$@.a for Windows libraries
-override shared_extra = $(if $(filter windows,$(OS)),-Wl$(COMMA)--subsystem$(COMMA)windows$(COMMA)--out-implib$(COMMA)$(patsubst %$(LIB_EXT),%.a,$1))
+# Set -Wl,--out-implib,$@.a for Windows libraries
+override shared_extra = $(if $(filter windows,$(OS)),-Wl$(COMMA)--out-implib$(COMMA)$(patsubst %$(LIB_EXT),%.a,$1))
 
 # Shared libraries
 $(call path_shell,$(LIB_TARGETS): $(LIB_OBJ) $(CC_TRIGGER) $(LD_TRIGGER))
