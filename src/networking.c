@@ -1073,6 +1073,10 @@ net_sock_t* net_icmp_bind(net_addr_t* addr)
         goto eperm;
     }
     net_sock_t* sock = net_wrap_handle(fd);
+    if (!sock) {
+        net_close_handle(fd);
+        return NULL;
+    }
     sock->addr.port = id;
     return sock;
 eperm:
