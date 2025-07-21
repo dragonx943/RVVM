@@ -16,7 +16,10 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #undef _TIME_BITS
 #define _TIME_BITS 64
 #undef _FILE_OFFSET_BITS
-#define _FILE_OFFSET_BITS 64
+#define _FILE_OFFSET_BITS   64
+
+// We only need a minimal WinAPI subset
+#define WIN32_LEAN_AND_MEAN 1
 
 #include "rvtimer.h"
 #include "atomics.h"
@@ -25,33 +28,11 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 // For nanosleep(), clock_gettime(), CLOCK_MONOTONIC, etc
 #include <time.h>
 
-#if defined(__linux__) && defined(THREAD_LOCAL) && CHECK_INCLUDE(sys/prctl.h, 1)
-// For PR_SET_TIMERSLACK
-#include <sys/prctl.h>
-
-#if defined(PR_SET_TIMERSLACK)
-static THREAD_LOCAL bool timerslack_lowlatency;
-
-#define TIMERSLACK_IMPL 1
-#endif
-#endif
-
-#if defined(__unix__) || defined(__APPLE__) || defined(__HAIKU__)
-#define NANOSLEEP_IMPL 1
-#else
-#include "threading.h"
-#endif
-
-#if defined(NANOSLEEP_IMPL) && CHECK_INCLUDE(sched.h, 1)
-// For sched_yield()
-#include <sched.h>
-
-#define SCHED_YIELD_IMPL 1
-#endif
-
 #if defined(_WIN32)
+
 // Use QueryPerformanceCounter(), QueryPerformanceFrequency()
 #include <windows.h>
+
 // For QueryUnbiasedInterruptTime() probing, timer locking
 #include "dlib.h"
 #include "spinlock.h"
@@ -67,7 +48,34 @@ HANDLE thread_local_waitable_timer(uint64_t ns);
 
 #define WIN32_CLOCKSOURCE_IMPL 1
 
-#elif defined(__APPLE__)
+#else
+
+#if defined(__linux__) && defined(THREAD_LOCAL) && CHECK_INCLUDE(sys/prctl.h, 1)
+
+// For PR_SET_TIMERSLACK
+#include <sys/prctl.h>
+
+#if defined(PR_SET_TIMERSLACK)
+
+static THREAD_LOCAL bool timerslack_lowlatency = 0;
+
+#define TIMERSLACK_IMPL 1
+
+#endif
+
+#endif
+
+#if CHECK_INCLUDE(sched.h, 1)
+
+// For sched_yield()
+#include <sched.h>
+
+#define SCHED_YIELD_IMPL 1
+
+#endif
+
+#if defined(__APPLE__)
+
 // Use mach_absolute_time()
 #include <mach/mach_time.h>
 
@@ -96,6 +104,8 @@ static uint64_t mach_clk_freq = 0;
 #define C11_TIMESPEC_CLOCKSOURCE TIME_MONOTONIC
 #elif defined(TIME_UTC)
 #define C11_TIMESPEC_CLOCKSOURCE TIME_UTC
+#endif
+
 #endif
 
 uint64_t rvtimer_clocksource(uint64_t freq)
@@ -155,6 +165,7 @@ uint64_t rvtimer_clocksource(uint64_t freq)
     }
 
     return rvtimer_convert_freq(qpc_val, qpc_freq, freq);
+
 #elif defined(MACH_CLOCKSOURCE_IMPL)
     // Use mach_absolute_time()
     DO_ONCE_SCOPED {
@@ -167,30 +178,38 @@ uint64_t rvtimer_clocksource(uint64_t freq)
         mach_clk_freq = (mach_clk_info.denom * 1000000000ULL) / mach_clk_info.numer;
     };
     return rvtimer_convert_freq(mach_absolute_time(), mach_clk_freq, freq);
+
 #elif defined(POSIX_CLOCKSOURCE)
     // Use POSIX 2008 clock_gettime()
     struct timespec ts = {0};
     clock_gettime(POSIX_CLOCKSOURCE, &ts);
     return (ts.tv_sec * freq) + (ts.tv_nsec * freq / 1000000000ULL);
+
 #elif defined(C11_TIMESPEC_CLOCKSOURCE)
     // Use C11 timespec_get()
     struct timespec ts = {0};
     timespec_get(C11_TIMESPEC_CLOCKSOURCE, &ts);
     return (ts.tv_sec * freq) + (ts.tv_nsec * freq / 1000000000ULL);
+
 #else
 #warning Falling back to imprecise generic clocksource
     // Use wall clock with no sub-second precision
     return rvtimer_unixtime() * freq;
+
 #endif
 }
 
 uint64_t rvtimer_unixtime(void)
 {
 #if defined(_WIN32) && !defined(UNDER_CE)
-    FILETIME ft = {0};
-    GetSystemTimeAsFileTime(&ft);
-    uint64_t wintime = ((uint64_t)(uint32_t)ft.dwLowDateTime) | (((uint64_t)(uint32_t)ft.dwHighDateTime) << 32);
-    return (wintime / 10000000ULL) - 11644473600ULL;
+    SYSTEMTIME st = {0};
+    FILETIME   ft = {0};
+    GetSystemTime(&st);
+    if (SystemTimeToFileTime(&st, &ft)) {
+        uint64_t wintime = ((uint64_t)(uint32_t)ft.dwLowDateTime) | (((uint64_t)(uint32_t)ft.dwHighDateTime) << 32);
+        return (wintime / 10000000ULL) - 11644473600ULL;
+    }
+    return 0;
 #else
     return time(NULL);
 #endif
@@ -272,7 +291,7 @@ void sleep_ns(uint64_t ns)
         }
     }
     Sleep(ns ? EVAL_MAX(ns / 1000000ULL, 1) : 0);
-#elif defined(NANOSLEEP_IMPL)
+#else
     if (ns) {
         struct timespec ts = {
             .tv_sec  = ns / 1000000000ULL,
@@ -281,13 +300,6 @@ void sleep_ns(uint64_t ns)
         sleep_low_latency(true);
         while (nanosleep(&ts, &ts) < 0) {
         }
-        return;
-    }
-#else
-    if (ns) {
-        cond_var_t* cond = condvar_create();
-        condvar_wait_ns(cond, ns);
-        condvar_free(cond);
         return;
     }
 #endif
