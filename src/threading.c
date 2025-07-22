@@ -26,6 +26,10 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #undef _FILE_OFFSET_BITS
 #define _FILE_OFFSET_BITS 64
 
+// We only need a minimal WinAPI subset
+#undef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN 1
+
 #include "threading.h"
 #include "atomics.h"
 #include "compiler.h"
@@ -35,11 +39,11 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #if defined(_WIN32)
 
-// Use Win32 threads & events
-// Use RtlWaitOnAddress() for futexes if present
+// Use Win32 threads & events; Use RtlWaitOnAddress() for futexes if present
 #include <windows.h>
 
-#include "dlib.h" // For runtime system features probing
+// For runtime feature probing
+#include "dlib.h"
 
 #if !defined(UNDER_CE)
 
@@ -126,14 +130,12 @@ static int (*ulock_wake)(uint32_t op, void* ptr, uint64_t unused)           = NU
 
 #endif
 
-// We need absolute clock timestamps for pthread_cond_timedwait(), preferably monotonic.
-// To set a pthread_cond clock other than CLOCK_REALTIME, POSIX 2008+ is required.
-#if !defined(PTHREAD_COND_TIMEDWAIT_RELATIVE_IMPL) && defined(CLOCK_MONOTONIC)
-#define PTHREAD_COND_CLOCK_MONOTONIC CLOCK_MONOTONIC
-#endif
-
-#if !defined(PTHREAD_COND_TIMEDWAIT_RELATIVE_IMPL) && !defined(PTHREAD_COND_CLOCK_MONOTONIC)
-#include <sys/time.h> // For gettimeofday()
+#if !defined(PTHREAD_COND_TIMEDWAIT_RELATIVE_IMPL) && defined(CLOCK_REALTIME) && defined(CLOCK_MONOTONIC)
+// Use pthread_condattr_setclock(CLOCK_MONOTONIC), fallback to CLOCK_REALTIME
+#define PTHREAD_COND_ATTR_MONOTONIC_IMPL 1
+#elif !defined(PTHREAD_COND_TIMEDWAIT_RELATIVE_IMPL)
+// Use gettimeofday()
+#include <sys/time.h>
 #endif
 
 #endif
@@ -170,25 +172,9 @@ static void thread_local_waitable_timer_cleanup(void)
     }
 }
 
-static HANDLE thread_local_waitable_timer_get(uint64_t ns)
+static HANDLE thread_local_waitable_timer_init(void)
 {
-    if (likely(fls_waitable_timer)) {
-        HANDLE timer = fls_get_val(fls_waitable_timer);
-        if (likely(timer)) {
-            LARGE_INTEGER delay = {
-                .QuadPart = -(ns / 100ULL),
-            };
-            if (likely(set_waitable_timer(timer, &delay, 0, NULL, NULL, false))) {
-                return timer;
-            }
-        }
-    }
-    return NULL;
-}
-
-static void thread_local_waitable_timer_init(void)
-{
-    bool hires_timer = false;
+    HANDLE timer = NULL;
     DO_ONCE_SCOPED {
         fls_alloc                  = dlib_get_symbol("kernel32.dll", "FlsAlloc");
         fls_free                   = dlib_get_symbol("kernel32.dll", "FlsFree");
@@ -205,24 +191,30 @@ static void thread_local_waitable_timer_init(void)
     }
     if (fls_waitable_timer) {
         // Create a high-resolution, manual reset waitable timer (Win10 1803+)
-        HANDLE timer = create_waitable_timer_ex_w(NULL, NULL, 0x3, 0x1F0003);
+        timer = create_waitable_timer_ex_w(NULL, NULL, 0x3, 0x1F0003);
         if (timer) {
-            hires_timer = true;
-        } else {
-            // Create a manual reset waitable timer (Win Vista+)
-            timer = create_waitable_timer_ex_w(NULL, NULL, 0x1, 0x1F0003);
+            return timer;
         }
-        if (timer) {
-            fls_set_val(fls_waitable_timer, timer);
-        }
+
+        // Create a manual reset waitable timer
+        timer = create_waitable_timer_ex_w(NULL, NULL, 0x1, 0x1F0003);
     }
     DO_ONCE_SCOPED {
-        // Set scheduler resolution based on high-resolution waitable timer support
+        // Boost scheduler resolution when high-resolution timers are missing
         if (nt_set_timer_resolution) {
             ULONG cur = 0;
-            nt_set_timer_resolution(hires_timer ? 156250 : 5000, TRUE, &cur);
+            nt_set_timer_resolution(5000, TRUE, &cur);
         }
     }
+    return timer;
+}
+
+static inline void thread_local_waitable_timer_set(HANDLE timer, uint64_t ns)
+{
+    LARGE_INTEGER delay = {
+        .QuadPart = -(ns / 100ULL),
+    };
+    set_waitable_timer(timer, &delay, 0, NULL, NULL, false);
 }
 
 #endif
@@ -230,31 +222,65 @@ static void thread_local_waitable_timer_init(void)
 HANDLE thread_local_waitable_timer(uint64_t ns)
 {
 #if defined(WIN32_WAITABLE_TIMER_IMPL)
-    HANDLE timer = thread_local_waitable_timer_get(ns);
-    if (likely(timer)) {
+    HANDLE timer = NULL;
+    if (likely(fls_waitable_timer)) {
+        timer = fls_get_val(fls_waitable_timer);
+        if (likely(timer)) {
+            thread_local_waitable_timer_set(timer, ns);
+            return timer;
+        }
+    }
+    timer = thread_local_waitable_timer_init();
+    if (timer) {
+        fls_set_val(fls_waitable_timer, timer);
+        thread_local_waitable_timer_set(timer, ns);
         return timer;
     }
-    thread_local_waitable_timer_init();
-    return thread_local_waitable_timer_get(ns);
 #else
     UNUSED(ns);
-    return NULL;
 #endif
+    return NULL;
 }
 
 #else
 
 // Portable pthread_cond_timedwait() with relative monotonic nanosecond timeout
 
+static void* pthread_cond_attr_monotonic(void)
+{
+    static void* attr_ptr = NULL;
+#if defined(PTHREAD_COND_ATTR_MONOTONIC_IMPL)
+    static pthread_condattr_t attr = {0};
+    DO_ONCE_SCOPED {
+        if (!pthread_condattr_init(&attr) && !pthread_condattr_setclock(&attr, CLOCK_MONOTONIC)) {
+            attr_ptr = &attr;
+        }
+    }
+#endif
+    return attr_ptr;
+}
+
 static int pthread_cond_timedwait_ns_internal(pthread_cond_t* cond, pthread_mutex_t* mtx, uint64_t timeout_ns)
 {
     if (timeout_ns == CONDVAR_INFINITE) {
         return pthread_cond_wait(cond, mtx);
     } else {
+#if defined(PTHREAD_COND_TIMEDWAIT_RELATIVE_IMPL)
+        struct timespec ts = {
+            .tv_sec  = timeout_ns / 1000000000,
+            .tv_nsec = timeout_ns % 1000000000,
+        };
+        return pthread_cond_timedwait_relative_np(cond, mtx, &ts);
+#else
         struct timespec ts = {0};
-#if defined(PTHREAD_COND_CLOCK_MONOTONIC)
-        clock_gettime(PTHREAD_COND_CLOCK_MONOTONIC, &ts);
-#elif !defined(PTHREAD_COND_TIMEDWAIT_RELATIVE_IMPL)
+#if defined(PTHREAD_COND_ATTR_MONOTONIC_IMPL)
+        if (pthread_cond_attr_monotonic()) {
+            clock_gettime(CLOCK_MONOTONIC, &ts);
+        } else {
+            // Fallback to CLOCK_REALTIME (Possibly a very old Linux kernel)
+            clock_gettime(CLOCK_REALTIME, &ts);
+        }
+#else
         // Some targets lack clock_gettime(), use gettimeofday()
         struct timeval tv = {0};
         gettimeofday(&tv, NULL);
@@ -265,9 +291,6 @@ static int pthread_cond_timedwait_ns_internal(pthread_cond_t* cond, pthread_mute
         timeout_ns += ts.tv_nsec;
         ts.tv_sec  += timeout_ns / 1000000000;
         ts.tv_nsec  = timeout_ns % 1000000000;
-#if defined(PTHREAD_COND_TIMEDWAIT_RELATIVE_IMPL)
-        return pthread_cond_timedwait_relative_np(cond, mtx, &ts);
-#else
         return pthread_cond_timedwait(cond, mtx, &ts);
 #endif
     }
@@ -313,7 +336,7 @@ thread_ctx_t* thread_create_ex(thread_func_t func, void* arg, uint32_t stack_siz
     thread_call_wrap_t* wrap     = safe_new_obj(thread_call_wrap_t);
     wrap->func                   = func;
     wrap->arg                    = arg;
-
+    // Win9x: Passing NULL for the 'lpThreadId' parameter causes the function to fail
     thread->handle = CreateThread(NULL, stack_size, thread_call_wrapper, wrap, /**/
                                   STACK_SIZE_PARAM_IS_A_RESERVATION, &threadid);
     if (thread->handle) {
@@ -454,14 +477,14 @@ static bool thread_futex_wake_native(void* ptr, uint32_t num)
  * Futex emulation fallback
  */
 
-#define FUTEX_EMU_TABLE_SIZE 16
+#define FUTEX_EMU_TABLE_SIZE 4
 
 typedef struct {
     void*       ptr;
     cond_var_t* cond;
 } futex_waiter_t;
 
-typedef struct align_cacheline {
+typedef struct {
     vector_t(futex_waiter_t) waiters;
     spinlock_t               lock;
 } futex_queue_t;
@@ -598,7 +621,7 @@ struct cond_var {
 #endif
 };
 
-bool condvar_init_internal(cond_var_t* cond)
+static bool condvar_init_internal(cond_var_t* cond)
 {
 #if defined(_WIN32) && !defined(HOST_64BIT) && !defined(UNDER_CE)
     // Use ANSI syscall (Win9x compat)
@@ -609,20 +632,8 @@ bool condvar_init_internal(cond_var_t* cond)
     cond->event = CreateEventW(NULL, FALSE, FALSE, NULL);
     return !!cond->event;
 
-#elif defined(PTHREAD_COND_CLOCK_MONOTONIC)
-    pthread_condattr_t attr = {0};
-    if (pthread_condattr_init(&attr)) {
-        return false;
-    }
-    if (pthread_condattr_setclock(&attr, PTHREAD_COND_CLOCK_MONOTONIC)) {
-        return false;
-    }
-    bool ok = !pthread_cond_init(&cond->cond, &attr) && !pthread_mutex_init(&cond->lock, NULL);
-    pthread_condattr_destroy(&attr);
-    return ok;
-
 #else
-    return !pthread_cond_init(&cond->cond, NULL) && !pthread_mutex_init(&cond->lock, NULL);
+    return !pthread_cond_init(&cond->cond, pthread_cond_attr_monotonic()) && !pthread_mutex_init(&cond->lock, NULL);
 #endif
 }
 
