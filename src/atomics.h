@@ -10,15 +10,20 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef LEKKIT_ATOMICS_H
 #define LEKKIT_ATOMICS_H
 
+// We only need a minimal WinAPI subset
+#undef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN 1
+
 #include "compiler.h"
 #include <stdbool.h>
 #include <stdint.h>
 
 #if !defined(USE_NO_C11_ATOMICS) && __STDC_VERSION__ >= 201112LL && !defined(__STDC_NO_ATOMICS__)                      \
     && !defined(__chibicc__)
-// Use C11 atomics on modern compilers
-// Those are broken on chibicc compiler, fallback if we detect it
+
 #include <stdatomic.h>
+
+// Use C11 atomics on modern compilers. Those are broken on chibicc compiler, fallback if we detect it.
 #define C11_ATOMICS_IMPL 1
 
 #define ATOMIC_RELAXED   memory_order_relaxed
@@ -29,6 +34,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define ATOMIC_SEQ_CST   memory_order_seq_cst
 
 #elif !defined(USE_NO_GNU_ATOMICS) && (GCC_CHECK_VER(4, 7) && 0 || CLANG_CHECK_VER(3, 1))
+
 // Use libatomic-compatible compiler intrinsics on GCC 4.7+ and Clang 3.1+
 #define GNU_ATOMICS_IMPL            1
 #define GNU_ATOMICS_INTRINS         1
@@ -71,16 +77,20 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define ATOMIC_ACQ_REL 4
 #define ATOMIC_SEQ_CST 5
 
-#if !defined(USE_NO_WIN32_ATOMICS) && defined(_WIN32)
-// Use Interlocked Win32 functions
+#if !defined(USE_NO_WIN32_ATOMICS) && defined(_WIN32) && !defined(UNDER_CE)
+
 #include <windows.h>
+
+// Use Interlocked Win32 functions
 #define WIN32_ATOMICS_IMPL 1
 
 #elif !defined(USE_NO_SYNC_ATOMICS) && GCC_CHECK_VER(4, 1)
+
 // Use legacy GNU __sync atomics
 #define SYNC_ATOMICS_IMPL 1
 
 #elif !defined(USE_NO_LIBATOMIC)
+
 // Directly call libatomic functions
 #define GNU_ATOMICS_IMPL 1
 
@@ -111,10 +121,19 @@ void atomic_thread_fence(int memorder);
 #else
 
 // Slow atomics emulation using a global internal lock (GIL - pun intended)
+#define GIL_ATOMICS_IMPL 1
+
+#if defined(_WIN32)
+#include <windows.h>
+static CRITICAL_SECTION global_internal_lock = {.LockCount = -1};
+#define ATOMIC_GLOBAL_INTERNAL_LOCK()   EnterCriticalSection(&global_internal_lock)
+#define ATOMIC_GLOBAL_INTERNAL_UNLOCK() LeaveCriticalSection(&global_internal_lock)
+#else
 #include <pthread.h>
 static pthread_mutex_t global_internal_lock = PTHREAD_MUTEX_INITIALIZER;
 #define ATOMIC_GLOBAL_INTERNAL_LOCK()   pthread_mutex_lock(&global_internal_lock)
 #define ATOMIC_GLOBAL_INTERNAL_UNLOCK() pthread_mutex_unlock(&global_internal_lock)
+#endif
 
 #endif
 
