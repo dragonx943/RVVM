@@ -131,9 +131,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // Never inline this function
 #undef no_inline
-#if GCC_CHECK_VER(3, 2) || GNU_ATTRIBUTE(__noinline__)
+#if !defined(USE_NO_NOINLINE) && (GCC_CHECK_VER(3, 2) || GNU_ATTRIBUTE(__noinline__))
 #define no_inline __attribute__((__noinline__))
-#elif defined(_MSC_VER)
+#elif !defined(USE_NO_NOINLINE) && defined(_MSC_VER)
 #define no_inline __declspec(noinline)
 #else
 #define no_inline GNU_DUMMY_ATTRIBUTE
@@ -147,10 +147,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  * Hopefully one day __preserve_most__ makes it's way into GCC.
  */
 #undef slow_path
-#if CLANG_CHECK_VER(17, 0) && GNU_ATTRIBUTE(__preserve_most__) && GNU_ATTRIBUTE(__noinline__)                          \
-    && GNU_ATTRIBUTE(__cold__) && (defined(__x86_64__) || defined(__aarch64__))
+#if !defined(USE_NO_SLOW_PATH) && CLANG_CHECK_VER(17, 0) && (defined(__x86_64__) || defined(__aarch64__))
 #define slow_path __attribute__((__preserve_most__, __noinline__, __cold__))
-#elif GCC_CHECK_VER(4, 4) || (GNU_ATTRIBUTE(__noinline__) && GNU_ATTRIBUTE(__cold__))
+#elif !defined(USE_NO_SLOW_PATH) && (GCC_CHECK_VER(4, 4) || (GNU_ATTRIBUTE(__noinline__) && GNU_ATTRIBUTE(__cold__)))
 #define slow_path __attribute__((__noinline__, __cold__))
 #else
 #define slow_path no_inline
@@ -169,7 +168,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #undef SOURCE_OPTIMIZATION_SIZE
 #undef SOURCE_OPTIMIZATION_O2
 #undef SOURCE_OPTIMIZATION_O3
-#if GCC_CHECK_VER(4, 4)
+#if !defined(USE_NO_SOURCE_OPT) && GCC_CHECK_VER(4, 4)
 #define SOURCE_OPTIMIZATION_NONE _Pragma("GCC optimize(\"O0\")")
 #define SOURCE_OPTIMIZATION_O2   _Pragma("GCC optimize(\"O2\")")
 #define SOURCE_OPTIMIZATION_O3   _Pragma("GCC optimize(\"O3\")")
@@ -178,7 +177,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define SOURCE_OPTIMIZATION_O2
 #define SOURCE_OPTIMIZATION_O3
 #endif
-#if GCC_CHECK_VER(12, 1)
+#if !defined(USE_NO_SOURCE_OPT) && GCC_CHECK_VER(12, 1)
 #define SOURCE_OPTIMIZATION_SIZE _Pragma("GCC optimize(\"Oz\")")
 #elif GCC_CHECK_VER(4, 4)
 #define SOURCE_OPTIMIZATION_SIZE _Pragma("GCC optimize(\"Os\")")
@@ -189,10 +188,10 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 // Pushable size optimization attribute, Clang supports this to some degree
 #undef PUSH_OPTIMIZATION_SIZE
 #undef POP_OPTIMIZATION_SIZE
-#if CLANG_CHECK_VER(12, 0) && GNU_ATTRIBUTE(__minsize__)
+#if !defined(USE_NO_SOURCE_OPT) && CLANG_CHECK_VER(12, 0) && GNU_ATTRIBUTE(__minsize__)
 #define PUSH_OPTIMIZATION_SIZE _Pragma("clang attribute push (__attribute__((__minsize__)), apply_to=function)")
 #define POP_OPTIMIZATION_SIZE  _Pragma("clang attribute pop")
-#elif GCC_CHECK_VER(4, 4)
+#elif !defined(USE_NO_SOURCE_OPT) && GCC_CHECK_VER(4, 4)
 #define PUSH_OPTIMIZATION_SIZE _Pragma("GCC push_options") SOURCE_OPTIMIZATION_SIZE
 #define POP_OPTIMIZATION_SIZE  _Pragma("GCC pop_options")
 #else
@@ -215,6 +214,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #endif
 
 // Align type to cacheline to prevent false sharing
+// NOTE: Avoid using this on global data, fails to build on some platforms
 #undef align_cacheline
 #define align_cacheline align_type(64)
 
