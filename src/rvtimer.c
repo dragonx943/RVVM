@@ -16,9 +16,10 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #undef _TIME_BITS
 #define _TIME_BITS 64
 #undef _FILE_OFFSET_BITS
-#define _FILE_OFFSET_BITS   64
+#define _FILE_OFFSET_BITS 64
 
 // We only need a minimal WinAPI subset
+#undef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN 1
 
 #include "rvtimer.h"
