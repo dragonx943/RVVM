@@ -17,6 +17,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define _BSD_SOURCE
 #undef _DEFAULT_SOURCE
 #define _DEFAULT_SOURCE
+#undef _DARWIN_C_SOURCE
+#define _DARWIN_C_SOURCE
 #undef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
 
@@ -621,6 +623,12 @@ bool rvtrim(rvfile_t* file, uint64_t offset, uint64_t size)
 #if defined(POSIX_FILE_IMPL) && defined(__linux__) && defined(FALLOC_FL_PUNCH_HOLE) && defined(FALLOC_FL_KEEP_SIZE)
         // Use fallocate(FALLOC_FL_PUNCH_HOLE) on Linux to punch holes
         return !fallocate(file->fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, offset, size);
+#elif defined(POSIX_FILE_IMPL) && defined(__APPLE__) && defined(F_PUNCHHOLE)
+        // Use fcntl(F_PUNCHHOLE) on MacOS with page aligned offsets to punch holes
+        uint64_t     align_off  = (offset + 0xFFF) & ~(uint64_t)0xFFF;
+        uint64_t     align_size = (size - (align_off - offset)) & ~(uint64_t)0xFFF;
+        fpunchhole_t punch      = {.fp_offset = align_off, .fp_length = align_size};
+        return !fcntl(file->fd, F_PUNCHHOLE, &punch);
 #elif defined(POSIX_FILE_IMPL) && defined(__FreeBSD__) && __FreeBSD__ >= 14 && defined(SPACECTL_DEALLOC)
         // Use fspacectl(SPACECTL_DEALLOC) added in FreeBSD 14 to punch holes
         struct spacectl_range rqsr = {
@@ -675,24 +683,23 @@ uint64_t rvtell(rvfile_t* file)
 
 bool rvfsync(rvfile_t* file)
 {
-    bool ret = true;
+    bool ret = false;
     if (file) {
-#if defined(POSIX_FILE_IMPL) && defined(__linux__)
-        while (fdatasync(file->fd)) {
+#if defined(POSIX_FILE_IMPL)
+#if defined(__APPLE__) && defined(F_BARRIERFSYNC)
+        // Barrier sync on MacOS, will fail on Darling and possibly elsewhere
+        ret = !fcntl(file->fd, F_BARRIERFSYNC);
+#endif
+        // Spin on fdatasync() / fsync() for a few times in case of EINTR
+        for (size_t i = 0; i < 10 && !ret; ++i) {
+#if defined(__linux__) || (defined(__FreeBSD__) && __FreeBSD__ >= 12) || defined(__NetBSD__)
+            ret = !fdatasync(file->fd);
+#else
+            rvvm_warn("fsync()");
+            ret = !fsync(file->fd);
+#endif
             if (errno != EINTR) {
-                ret = false;
-            }
-        }
-#elif defined(POSIX_FILE_IMPL) && defined(__APPLE__) && defined(F_BARRIERFSYNC)
-        while (fcntl(file->fd, F_BARRIERFSYNC)) {
-            if (errno != EINTR) {
-                ret = false;
-            }
-        }
-#elif defined(POSIX_FILE_IMPL)
-        while (fsync(file->fd)) {
-            if (errno != EINTR) {
-                ret = false;
+                break;
             }
         }
 #elif defined(WIN32_FILE_IMPL)
@@ -700,7 +707,7 @@ bool rvfsync(rvfile_t* file)
             // Synchronize any previously issued IO
         }
         // Trying to flush a read-only file results in ERROR_ACCESS_DENIED, ignore
-        ret = FlushFileBuffers(file->handle) || (GetLastError() == ERROR_ACCESS_DENIED);
+        ret = !!FlushFileBuffers(file->handle) || (GetLastError() == ERROR_ACCESS_DENIED);
 #else
         scoped_spin_lock_slow (&file->lock) {
             ret = !fflush(file->fp);
