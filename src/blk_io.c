@@ -9,16 +9,26 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-// Force 64-bit file offsets
-#define _FILE_OFFSET_BITS 64
-#define _LARGEFILE64_SOURCE
-
 // Make POSIX/GNU/BSD features available in strict C standard mode
 // For pread(), pwrite(), fallocate(), fdatasync(), posix_fallocate()
+#undef _GNU_SOURCE
 #define _GNU_SOURCE
+#undef _BSD_SOURCE
 #define _BSD_SOURCE
+#undef _DEFAULT_SOURCE
 #define _DEFAULT_SOURCE
+#undef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
+
+// Force 64-bit file offsets & time_t
+#undef _TIME_BITS
+#define _TIME_BITS 64
+#undef _FILE_OFFSET_BITS
+#define _FILE_OFFSET_BITS 64
+
+// We only need a minimal WinAPI subset
+#undef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN 1
 
 #include "blk_io.h"
 
@@ -256,15 +266,15 @@ rvfile_t* rvopen(const char* filepath, uint8_t filemode)
         return NULL;
     }
 
-    int64_t size = lseek(fd, 0, SEEK_END);
-    if (size == -1) {
-        // Failed to get file size
+    uint64_t size = lseek(fd, 0, SEEK_END);
+    if (size >= ((((uint64_t)1) << 63) - 1)) {
+        // Failed to get file size or is a directory
         close(fd);
         return NULL;
     }
 
     rvfile_t* file = safe_new_obj(rvfile_t);
-    file->size     = (uint64_t)size;
+    file->size     = size;
     file->fd       = fd;
 
 #elif defined(WIN32_FILE_IMPL)
