@@ -9,10 +9,26 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // Make POSIX/GNU/BSD features available in strict C standard mode
 // For getpwnam_r(), prctl(), pledge()
+#undef _GNU_SOURCE
 #define _GNU_SOURCE
+#undef _BSD_SOURCE
 #define _BSD_SOURCE
+#undef _DEFAULT_SOURCE
 #define _DEFAULT_SOURCE
+#undef _DARWIN_C_SOURCE
+#define _DARWIN_C_SOURCE
+#undef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
+
+// Force 64-bit file offsets & time_t
+#undef _TIME_BITS
+#define _TIME_BITS 64
+#undef _FILE_OFFSET_BITS
+#define _FILE_OFFSET_BITS 64
+
+// We only need a minimal WinAPI subset
+#undef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN 1
 
 #include "rvvm_isolation.h"
 #include "compiler.h"
