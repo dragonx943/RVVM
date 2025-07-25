@@ -41,6 +41,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define RVFILE_LEGAL_FLAGS 0x3F
 
 #if !defined(USE_STDIO) && (defined(__unix__) || defined(__APPLE__) || defined(__HAIKU__))
+
 // Threaded POSIX file implementation using pread() / pwrite()
 #include <errno.h>  // For errno
 #include <fcntl.h>  // For struct flock, open(), fcntl(), posix_fallocate(), fallocate(), fspacectl(), fdiscard()
@@ -94,29 +95,51 @@ static bool try_lock_fd(int fd)
 #define POSIX_FILE_IMPL 1
 
 #elif !defined(USE_STDIO) && defined(_WIN32)
+
 // Threaded Win32 file implementation using OVERLAPPED ReadFile() / WriteFile()
+// Fallbacks to locked seeking IO on legacy Windows versions
 // Synchronizes rvtruncate()/rvfallocate() under a writer lock
 #include <windows.h>
+#include <winioctl.h>
 
 #include "spinlock.h"
 
-// Prototypes for older winapi headers
-#define DEVIOCTL_SET_SPARSE    0x000900c4
-#define DEVIOCTL_SET_ZERO_DATA 0x000980c8
+// Seek file with 64-bit offsets
+static int64_t rvfile_win32_lseek(HANDLE handle, int64_t offset, DWORD whence)
+{
+    LONG  off_l = (uint32_t)(uint64_t)offset;
+    LONG  off_h = ((uint64_t)offset) >> 32;
+    DWORD ret_l = SetFilePointer(handle, off_l, &off_h, whence);
+    if (likely(((int32_t)ret_l) != -1 || !GetLastError())) {
+        return ((uint64_t)(uint32_t)ret_l) | (((uint64_t)(uint32_t)off_h) << 32);
+    }
+    return -1;
+}
 
-typedef struct {
-    LARGE_INTEGER FileOffset;
-    LARGE_INTEGER BeyondFinalZero;
-} SET_ZERO_DATA_INFO;
-
-#define WIN32_FILE_IMPL        1
-
-#if defined(UNDER_CE) || !defined(HOST_64BIT)
-// Windows 9x/CE/NT3.x do not support OVERLAPPED and need a seeking file IO fallback
-#define WIN32_LEGACY_FILE_IMPL 1
+// Returns false on Windows CE, Windows 9x, or NT <5.0
+// NT3.x with NewShell lies about being NT4.0... So we can't trust it either way
+static bool rvfile_win32_has_threaded_io(void)
+{
+#if defined(HOST_64BIT)
+    return true;
+#elif defined(UNDER_CE)
+    return false;
+#else
+    static uint32_t flag = 0;
+    uint32_t        tmp  = atomic_load_uint32_relax(&flag);
+    if (!(tmp & 2)) {
+        tmp = GetVersion();
+        tmp = 2 | !!(((uint8_t)tmp) >= 5);
+        atomic_store_uint32_relax(&flag, tmp);
+    }
+    return !!(tmp & 1);
 #endif
+}
+
+#define WIN32_FILE_IMPL 1
 
 #else
+
 // Standard C stdio file implementation using a lock around fseek()+fread() / fseek()+fwrite()
 #include <stdio.h> // For fopen(), setvbuf(), fseek(), ftell(), fread(), fwrite(), fflush(), fileno()
 
@@ -170,39 +193,6 @@ static inline void rvfile_grow_internal(rvfile_t* file, uint64_t length)
 }
 
 #if defined(WIN32_LEGACY_FILE_IMPL)
-
-static bool host_at_least_nt4 = false;
-
-// NOTE: Must be called with file->lock exclusively held!
-static uint32_t rvfile_win32_fallback(rvfile_t* file, void* dst, const void* src, size_t size, uint64_t offset)
-{
-    // Ancient Windows versions do not fill lpNumberOfBytes properly
-    DWORD count = size;
-    LONG  off_l = (uint32_t)offset;
-    LONG  off_h = offset >> 32;
-    DWORD ret_l = SetFilePointer(file->handle, off_l, &off_h, FILE_BEGIN);
-    if ((((uint32_t)ret_l) != ((uint32_t)off_l)) || (((int32_t)ret_l) == -1 && GetLastError())) {
-        return 0;
-    }
-    if (count && dst && ReadFile(file->handle, dst, count, &count, NULL)) {
-        return count;
-    } else if (count && src && WriteFile(file->handle, src, count, &count, NULL)) {
-        return count;
-    }
-    return 0;
-}
-
-// Returns true on Windows CE, Windows 9x, or NT <4.0
-static bool is_legacy_windows(void)
-{
-#if !defined(UNDER_CE)
-    DO_ONCE_SCOPED {
-        uint32_t ver      = GetVersion();
-        host_at_least_nt4 = !(ver & 0x80000000U) && ((uint8_t)ver >= 0x04);
-    }
-#endif
-    return !host_at_least_nt4;
-}
 
 #endif
 
@@ -308,8 +298,8 @@ rvfile_t* rvopen(const char* filepath, uint8_t filemode)
         handle = CreateFileW(filepath_u16, access, share, NULL, disp, attr, NULL);
     }
 
-#if defined(WIN32_LEGACY_FILE_IMPL) && !defined(UNDER_CE)
-    if ((handle == NULL || handle == INVALID_HANDLE_VALUE) && is_legacy_windows()) {
+#if !defined(HOST_64BIT) && !defined(UNDER_CE)
+    if ((handle == NULL || handle == INVALID_HANDLE_VALUE) && !rvfile_win32_has_threaded_io()) {
         // Try to open file via ANSI syscall (Win9x & WinNT 3.51 compat)
         handle = CreateFileA(filepath, access, share, NULL, disp, attr, NULL);
     }
@@ -323,20 +313,36 @@ rvfile_t* rvopen(const char* filepath, uint8_t filemode)
     }
 
     // Get file size
-    LONG size_h = 0;
-    LONG size_l = SetFilePointer(handle, 0, &size_h, FILE_END);
-    if (((int32_t)size_l) == -1 && GetLastError()) {
+    int64_t size = rvfile_win32_lseek(handle, 0, FILE_END);
+
+#if defined(IOCTL_DISK_GET_DRIVE_GEOMETRY)
+    if (size == -1) {
+        // SetFilePointer() failed, try DeviceIoControl(IOCTL_DISK_GET_DRIVE_GEOMETRY) for raw drives
+        DWORD         drive_tmp = 0;
+        DISK_GEOMETRY dg        = {0};
+        if (DeviceIoControl(handle, IOCTL_DISK_GET_DRIVE_GEOMETRY, NULL, 0, &dg, sizeof(dg), &drive_tmp, NULL)) {
+            // Attempt to lock the drive
+            DeviceIoControl(handle, FSCTL_LOCK_VOLUME, NULL, 0, NULL, 0, &drive_tmp, NULL);
+            size = ((uint64_t)dg.Cylinders.QuadPart) * dg.TracksPerCylinder * dg.SectorsPerTrack * dg.BytesPerSector;
+            rvvm_warn("Size: %lld", size);
+        }
+    }
+#endif
+
+    if (size == -1) {
         // Failed to get file size
         CloseHandle(handle);
         return NULL;
     }
 
+#if defined(FSCTL_SET_SPARSE)
     // Enable sparse file support whenever possible
-    DWORD tmp = 0;
-    DeviceIoControl(handle, DEVIOCTL_SET_SPARSE, NULL, 0, NULL, 0, &tmp, NULL);
+    DWORD sparse_tmp = 0;
+    DeviceIoControl(handle, FSCTL_SET_SPARSE, NULL, 0, NULL, 0, &sparse_tmp, NULL);
+#endif
 
     rvfile_t* file = safe_new_obj(rvfile_t);
-    file->size     = ((uint32_t)size_l) | (((uint64_t)(uint32_t)size_h) << 32);
+    file->size     = (uint64_t)size;
     file->handle   = handle;
 
 #else
@@ -437,19 +443,24 @@ static int32_t rvread_chunk(rvfile_t* file, void* dst, size_t size, uint64_t off
         return 0;
     }
 #elif defined(WIN32_FILE_IMPL)
-#if defined(WIN32_LEGACY_FILE_IMPL)
-    if (is_legacy_windows()) {
-        return rvfile_win32_fallback(file, dst, NULL, size, offset);
-    }
-#endif
-    // Ancient Windows NT (NT4, etc) do not fill lpNumberOfBytes properly
-    DWORD      ret        = size;
-    OVERLAPPED overlapped = {
-        .Offset     = (uint32_t)offset,
-        .OffsetHigh = offset >> 32,
-    };
-    if (!ReadFile(file->handle, dst, size, &ret, &overlapped)) {
-        return 0;
+    DWORD ret = size;
+    if (rvfile_win32_has_threaded_io()) {
+        OVERLAPPED overlapped = {
+            .Offset     = (uint32_t)offset,
+            .OffsetHigh = offset >> 32,
+        };
+        if (!ReadFile(file->handle, dst, size, &ret, &overlapped)) {
+            // IO error
+            ret = 0;
+        }
+    } else {
+        if (rvfile_win32_lseek(file->handle, offset, FILE_BEGIN) == -1) {
+            // Seek error
+            ret = 0;
+        } else if (!ReadFile(file->handle, dst, size, &ret, NULL)) {
+            // IO error
+            ret = 0;
+        }
     }
 #else
     if (offset != file->pos_real || file->pos_state != RVFILE_POS_READ) {
@@ -496,19 +507,15 @@ size_t rvread(rvfile_t* file, void* dst, size_t size, uint64_t offset)
 
 #if defined(POSIX_FILE_IMPL)
     ret = rvread_unlocked(file, dst, size, pos);
-#elif defined(WIN32_LEGACY_FILE_IMPL)
-    if (is_legacy_windows()) {
-        scoped_spin_lock_slow (&file->lock) {
-            ret = rvread_unlocked(file, dst, size, pos);
-        }
-    } else {
+#elif defined(WIN32_FILE_IMPL)
+    if (rvfile_win32_has_threaded_io()) {
         scoped_spin_read_lock_slow (&file->lock) {
             ret = rvread_unlocked(file, dst, size, pos);
         }
-    }
-#elif defined(WIN32_FILE_IMPL)
-    scoped_spin_read_lock_slow (&file->lock) {
-        ret = rvread_unlocked(file, dst, size, pos);
+    } else {
+        scoped_spin_lock_slow (&file->lock) {
+            ret = rvread_unlocked(file, dst, size, pos);
+        }
     }
 #else
     scoped_spin_lock_slow (&file->lock) {
@@ -533,19 +540,23 @@ static int32_t rvwrite_chunk(rvfile_t* file, const void* src, size_t size, uint6
         return 0;
     }
 #elif defined(WIN32_FILE_IMPL)
-#if defined(WIN32_LEGACY_FILE_IMPL)
-    if (is_legacy_windows()) {
-        return rvfile_win32_fallback(file, NULL, src, size, offset);
-    }
-#endif
-    // Ancient Windows NT (NT4, etc) do not fill lpNumberOfBytes properly
-    DWORD      ret        = size;
-    OVERLAPPED overlapped = {
-        .Offset     = (uint32_t)offset,
-        .OffsetHigh = offset >> 32,
-    };
-    if (!WriteFile(file->handle, src, size, &ret, &overlapped)) {
-        return 0;
+    DWORD ret = size;
+    if (rvfile_win32_has_threaded_io()) {
+        OVERLAPPED overlapped = {
+            .Offset     = (uint32_t)offset,
+            .OffsetHigh = offset >> 32,
+        };
+        if (!WriteFile(file->handle, src, size, &ret, &overlapped)) {
+            ret = 0;
+        }
+    } else {
+        if (rvfile_win32_lseek(file->handle, offset, FILE_BEGIN) == -1) {
+            // Seek error
+            ret = 0;
+        } else if (!WriteFile(file->handle, src, size, &ret, NULL)) {
+            // IO error
+            ret = 0;
+        }
     }
 #else
     if (offset != file->pos_real || file->pos_state != RVFILE_POS_WRITE) {
@@ -590,19 +601,15 @@ size_t rvwrite(rvfile_t* file, const void* src, size_t size, uint64_t offset)
 
 #if defined(POSIX_FILE_IMPL)
     ret = rvwrite_unlocked(file, src, size, offset);
-#elif defined(WIN32_LEGACY_FILE_IMPL)
-    if (is_legacy_windows()) {
-        scoped_spin_lock_slow (&file->lock) {
-            ret = rvwrite_unlocked(file, src, size, offset);
-        }
-    } else {
+#elif defined(WIN32_FILE_IMPL)
+    if (rvfile_win32_has_threaded_io()) {
         scoped_spin_read_lock_slow (&file->lock) {
             ret = rvwrite_unlocked(file, src, size, offset);
         }
-    }
-#elif defined(WIN32_FILE_IMPL)
-    scoped_spin_read_lock_slow (&file->lock) {
-        ret = rvwrite_unlocked(file, src, size, offset);
+    } else {
+        scoped_spin_lock_slow (&file->lock) {
+            ret = rvwrite_unlocked(file, src, size, offset);
+        }
     }
 #else
     scoped_spin_lock_slow (&file->lock) {
@@ -639,13 +646,13 @@ bool rvtrim(rvfile_t* file, uint64_t offset, uint64_t size)
 #elif defined(POSIX_FILE_IMPL) && defined(__NetBSD_Version__) && __NetBSD_Version__ >= 700000000
         // Use fdiscard() added in NetBSD 7 to punch holes
         return !fdiscard(file->fd, offset, size);
-#elif defined(WIN32_FILE_IMPL)
+#elif defined(WIN32_FILE_IMPL) && defined(FSCTL_SET_ZERO_DATA)
         // Use DeviceIoControl(FSCTL_SET_ZERO_DATA) on Windows to punch holes
-        SET_ZERO_DATA_INFO fz       = {0};
-        DWORD              tmp      = 0;
-        fz.FileOffset.QuadPart      = offset;
-        fz.BeyondFinalZero.QuadPart = offset + size;
-        return !!DeviceIoControl(file->handle, DEVIOCTL_SET_ZERO_DATA, &fz, sizeof(fz), NULL, 0, &tmp, NULL);
+        FILE_ZERO_DATA_INFORMATION fz  = {0};
+        DWORD                      tmp = 0;
+        fz.FileOffset.QuadPart         = offset;
+        fz.BeyondFinalZero.QuadPart    = offset + size;
+        return !!DeviceIoControl(file->handle, FSCTL_SET_ZERO_DATA, &fz, sizeof(fz), NULL, 0, &tmp, NULL);
 #else
         UNUSED(offset);
         UNUSED(size);
@@ -732,10 +739,7 @@ bool rvtruncate(rvfile_t* file, uint64_t length)
     scoped_spin_lock_slow (&file->lock) {
         // Perform SetFilePointer() + SetEndOfFile() under writer lock
         // to prevent ReadFile()/WriteFile() from moving file pointer
-        LONG  len_l = (LONG)(uint32_t)length;
-        LONG  len_h = (LONG)(uint32_t)(length >> 32);
-        DWORD ret_l = SetFilePointer(file->handle, len_l, &len_h, FILE_BEGIN);
-        if ((((uint32_t)ret_l) == ((uint32_t)len_l)) && (((int32_t)ret_l) != -1 || !GetLastError())) {
+        if (rvfile_win32_lseek(file->handle, length, FILE_BEGIN)) {
             // Successfully set file pointer, set end of file here
             resized = !!SetEndOfFile(file->handle);
         }
