@@ -271,7 +271,7 @@ static inline bitcnt_t bit_popcnt64(uint64_t val)
 // Bitwise OR-combine, byte granule for orc.b instruction emulation
 static inline uint64_t bit_orc_b(uint64_t val)
 {
-#if defined(GNU_EXTS) && defined(__x86_64__)
+#if defined(GNU_EXTS) && (defined(__i386__) || defined(__x86_64__)) && defined(__SSE2__)
     __asm__("pcmpeqb %1, %0\n\t"
             "pcmpeqb %1, %0\n\t"
             : "+x"(val)
