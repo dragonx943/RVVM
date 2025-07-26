@@ -925,6 +925,9 @@ bool sdl_window_init(gui_window_t* win)
     sdl->renderer = SDL_CreateRenderer(sdl->window, NULL);
 #elif USE_SDL == 2
     sdl->renderer = SDL_CreateRenderer(sdl->window, -1, SDL_RENDERER_SOFTWARE);
+    if (!sdl->renderer) {
+        sdl->renderer = SDL_CreateRenderer(sdl->window, -1, 0);
+    }
 #endif
 #if USE_SDL >= 2
     if (!sdl->renderer) {
