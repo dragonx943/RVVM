@@ -1188,7 +1188,7 @@ size_t net_poll_wait(net_poll_t* poll, net_event_t* events, size_t size, uint32_
         struct epoll_event ev[64];
         // Fetch events into temporary buffer
         int num_ev = epoll_wait(poll->fd, ev, EVAL_MIN(size, STATIC_ARRAY_SIZE(ev)), wait_ms);
-        for (int i = 0; i < num_ev; ++i) {
+        for (int i = 0; i < num_ev && ret < size; ++i) {
             uint32_t flags = 0;
             if (ev[i].events & EPOLLOUT) {
                 flags |= NET_POLL_SEND;
@@ -1196,11 +1196,9 @@ size_t net_poll_wait(net_poll_t* poll, net_event_t* events, size_t size, uint32_
             if ((ev[i].events & ~EPOLLOUT) || !flags) {
                 flags |= NET_POLL_RECV;
             }
-            if (ret < size) {
-                events[ret].data  = ev[i].data.ptr;
-                events[ret].flags = flags;
-                ret++;
-            }
+            events[ret].data  = ev[i].data.ptr;
+            events[ret].flags = flags;
+            ret++;
         }
 #elif defined(KQUEUE_NET_IMPL)
         struct kevent    ev[64];
