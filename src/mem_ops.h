@@ -27,6 +27,11 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 static forceinline uint64_t read_uint64_le_m(const void* addr)
 {
+#if defined(HOST_LITTLE_ENDIAN)
+    uint64_t val = 0;
+    memcpy(&val, addr, sizeof(val));
+    return val;
+#else
     const uint8_t* arr = (const uint8_t*)addr;
     return ((uint64_t)arr[0])         //
          | (((uint64_t)arr[1]) << 8)  //
@@ -36,10 +41,14 @@ static forceinline uint64_t read_uint64_le_m(const void* addr)
          | (((uint64_t)arr[5]) << 40) //
          | (((uint64_t)arr[6]) << 48) //
          | (((uint64_t)arr[7]) << 56);
+#endif
 }
 
 static forceinline void write_uint64_le_m(void* addr, uint64_t val)
 {
+#if defined(HOST_LITTLE_ENDIAN)
+    memcpy(addr, &val, sizeof(val));
+#else
     uint8_t* arr = (uint8_t*)addr;
 
     arr[0] = val & 0xFF;
@@ -50,39 +59,60 @@ static forceinline void write_uint64_le_m(void* addr, uint64_t val)
     arr[5] = (val >> 40) & 0xFF;
     arr[6] = (val >> 48) & 0xFF;
     arr[7] = (val >> 56) & 0xFF;
+#endif
 }
 
 static forceinline uint32_t read_uint32_le_m(const void* addr)
 {
+#if defined(HOST_LITTLE_ENDIAN)
+    uint32_t val = 0;
+    memcpy(&val, addr, sizeof(val));
+    return val;
+#else
     const uint8_t* arr = (const uint8_t*)addr;
     return ((uint32_t)arr[0])         //
          | (((uint32_t)arr[1]) << 8)  //
          | (((uint32_t)arr[2]) << 16) //
          | (((uint32_t)arr[3]) << 24);
+#endif
 }
 
 static forceinline void write_uint32_le_m(void* addr, uint32_t val)
 {
+#if defined(HOST_LITTLE_ENDIAN)
+    memcpy(addr, &val, sizeof(val));
+#else
     uint8_t* arr = (uint8_t*)addr;
 
     arr[0] = val & 0xFF;
     arr[1] = (val >> 8) & 0xFF;
     arr[2] = (val >> 16) & 0xFF;
     arr[3] = (val >> 24) & 0xFF;
+#endif
 }
 
 static forceinline uint16_t read_uint16_le_m(const void* addr)
 {
+#if defined(HOST_LITTLE_ENDIAN)
+    uint16_t val = 0;
+    memcpy(&val, addr, sizeof(val));
+    return val;
+#else
     const uint8_t* arr = (const uint8_t*)addr;
     return ((uint16_t)arr[0]) | (((uint16_t)arr[1]) << 8);
+#endif
 }
 
 static forceinline void write_uint16_le_m(void* addr, uint16_t val)
 {
+#if defined(HOST_LITTLE_ENDIAN)
+    memcpy(addr, &val, sizeof(val));
+#else
     uint8_t* arr = (uint8_t*)addr;
 
     arr[0] = val & 0xFF;
     arr[1] = (val >> 8) & 0xFF;
+#endif
 }
 
 /*
@@ -156,7 +186,7 @@ static forceinline void write_uint16_be_m(void* addr, uint16_t val)
 
 TSAN_SUPPRESS static forceinline uint64_t read_uint64_le(const void* addr)
 {
-#ifdef HOST_LITTLE_ENDIAN
+#if defined(HOST_LITTLE_ENDIAN)
     return *(const safe_aliasing uint64_t*)addr;
 #else
     return read_uint64_le_m(addr);
@@ -165,7 +195,7 @@ TSAN_SUPPRESS static forceinline uint64_t read_uint64_le(const void* addr)
 
 TSAN_SUPPRESS static forceinline void write_uint64_le(void* addr, uint64_t val)
 {
-#ifdef HOST_LITTLE_ENDIAN
+#if defined(HOST_LITTLE_ENDIAN)
     *(safe_aliasing uint64_t*)addr = val;
 #else
     write_uint64_le_m(addr, val);
@@ -174,7 +204,7 @@ TSAN_SUPPRESS static forceinline void write_uint64_le(void* addr, uint64_t val)
 
 TSAN_SUPPRESS static forceinline uint32_t read_uint32_le(const void* addr)
 {
-#ifdef HOST_LITTLE_ENDIAN
+#if defined(HOST_LITTLE_ENDIAN)
     return *(const safe_aliasing uint32_t*)addr;
 #else
     return read_uint32_le_m(addr);
@@ -183,7 +213,7 @@ TSAN_SUPPRESS static forceinline uint32_t read_uint32_le(const void* addr)
 
 TSAN_SUPPRESS static forceinline void write_uint32_le(void* addr, uint32_t val)
 {
-#ifdef HOST_LITTLE_ENDIAN
+#if defined(HOST_LITTLE_ENDIAN)
     *(safe_aliasing uint32_t*)addr = val;
 #else
     write_uint32_le_m(addr, val);
@@ -192,7 +222,7 @@ TSAN_SUPPRESS static forceinline void write_uint32_le(void* addr, uint32_t val)
 
 TSAN_SUPPRESS static forceinline uint16_t read_uint16_le(const void* addr)
 {
-#ifdef HOST_LITTLE_ENDIAN
+#if defined(HOST_LITTLE_ENDIAN)
     return *(const safe_aliasing uint16_t*)addr;
 #else
     return read_uint16_le_m(addr);
@@ -201,7 +231,7 @@ TSAN_SUPPRESS static forceinline uint16_t read_uint16_le(const void* addr)
 
 TSAN_SUPPRESS static forceinline void write_uint16_le(void* addr, uint16_t val)
 {
-#ifdef HOST_LITTLE_ENDIAN
+#if defined(HOST_LITTLE_ENDIAN)
     *(safe_aliasing uint16_t*)addr = val;
 #else
     write_uint16_le_m(addr, val);
@@ -258,7 +288,7 @@ static inline void write_float_le_m(void* addr, float val)
 
 TSAN_SUPPRESS static forceinline float read_float_le(const void* addr)
 {
-#ifdef HOST_LITTLE_ENDIAN
+#if defined(HOST_LITTLE_ENDIAN)
     return *(const safe_aliasing float*)addr;
 #else
     return read_float_le_m(addr);
@@ -267,7 +297,7 @@ TSAN_SUPPRESS static forceinline float read_float_le(const void* addr)
 
 TSAN_SUPPRESS static forceinline double read_double_le(const void* addr)
 {
-#ifdef HOST_LITTLE_ENDIAN
+#if defined(HOST_LITTLE_ENDIAN)
     return *(const safe_aliasing double*)addr;
 #else
     return read_double_le_m(addr);
@@ -276,7 +306,7 @@ TSAN_SUPPRESS static forceinline double read_double_le(const void* addr)
 
 TSAN_SUPPRESS static forceinline void write_float_le(void* addr, float val)
 {
-#ifdef HOST_LITTLE_ENDIAN
+#if defined(HOST_LITTLE_ENDIAN)
     *(safe_aliasing float*)addr = val;
 #else
     write_float_le_m(addr, val);
@@ -285,7 +315,7 @@ TSAN_SUPPRESS static forceinline void write_float_le(void* addr, float val)
 
 TSAN_SUPPRESS static forceinline void write_double_le(void* addr, double val)
 {
-#ifdef HOST_LITTLE_ENDIAN
+#if defined(HOST_LITTLE_ENDIAN)
     *(safe_aliasing double*)addr = val;
 #else
     write_double_le_m(addr, val);
@@ -295,7 +325,7 @@ TSAN_SUPPRESS static forceinline void write_double_le(void* addr, double val)
 // Writes a host-endian double consisting of float + nan-boxing as in RISC-V spec
 static forceinline void write_float_nanbox(void* addr, float val)
 {
-#ifdef HOST_LITTLE_ENDIAN
+#if defined(HOST_LITTLE_ENDIAN)
     ((float*)addr)[0]    = val;
     ((uint32_t*)addr)[1] = 0xFFFFFFFF;
 #else
@@ -307,7 +337,7 @@ static forceinline void write_float_nanbox(void* addr, float val)
 // Reads a host-endian double as a nan-boxed float
 static forceinline float read_float_nanbox(const void* addr)
 {
-#ifdef HOST_LITTLE_ENDIAN
+#if defined(HOST_LITTLE_ENDIAN)
     return ((const float*)addr)[0];
 #else
     return ((const float*)addr)[1];
@@ -317,7 +347,7 @@ static forceinline float read_float_nanbox(const void* addr)
 // Reads a host-endian nan-boxed float, normalizes invalid values to NaN
 static inline float read_float_normalize(const void* addr)
 {
-#ifdef HOST_LITTLE_ENDIAN
+#if defined(HOST_LITTLE_ENDIAN)
     if (unlikely(((const uint32_t*)addr)[1] != 0xFFFFFFFF)) {
         float    ret;
         uint32_t val = 0x7fc00000;
