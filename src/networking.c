@@ -9,7 +9,6 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // Make POSIX/GNU/BSD features available in strict C standard mode
 // For kqueue(), kevent(), syscall(), etc
-
 #undef _GNU_SOURCE
 #define _GNU_SOURCE
 #undef _BSD_SOURCE
@@ -20,6 +19,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define _DARWIN_C_SOURCE
 
 #if defined(_WIN32)
+
+// WinSock sockets
 
 // Override maximum amount of sockets for select()
 #define FD_SETSIZE 1024
@@ -34,6 +35,7 @@ typedef int    net_addrlen_t;
 
 #else
 
+// POSIX sockets
 #include <errno.h>       // For errno, EINPROGRESS, EAGAIN, EWOULDBLOCK, EINTR, ECONNRESET
 #include <fcntl.h>       // For fcntl(), F_GETFL, F_SETFL, F_SETFD, O_NONBLOCK, FD_CLOEXEC
 #include <netinet/in.h>  // For struct sockaddr_in, struct sockaddr_in6, IPPROTO_TCP
@@ -228,7 +230,7 @@ static void net_addr_from_sockaddr6(net_addr_t* addr, const struct sockaddr_in6*
 #endif
 
 // Wrappers for generic operations on socket handles
-static void net_close_handle(net_handle_t fd)
+static void net_handle_close(net_handle_t fd)
 {
 #if defined(_WIN32)
     closesocket(fd);
@@ -275,34 +277,41 @@ static void net_handle_set_cloexec(net_handle_t fd)
 
 // Set CLOEXEC flag on created sockets to prevent handle leaking
 // Optimize nonblocking connects on modern Linux and *BSD
-static net_handle_t net_socket_create_ex(int domain, int type, int protocol, bool nonblock)
+// Set TCP_NODELAY for low-latency TCP transmission, inherited in accept()
+static net_handle_t net_handle_create_ex(int domain, int type, int proto, bool block)
 {
     net_handle_t fd = NET_HANDLE_INVALID;
+    if (net_init()) {
 #if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
-    // Create a blocking/non-blocking CLOEXEC socket in a single syscall (Linux, FreeBSD, OpenBSD, NetBSD...)
-    fd = socket(domain, type | SOCK_CLOEXEC | (nonblock ? SOCK_NONBLOCK : 0), protocol);
-    if (fd != NET_HANDLE_INVALID) {
-        return fd;
-    }
+        // Create a blocking/non-blocking CLOEXEC socket in a single syscall (Linux, FreeBSD, OpenBSD, NetBSD...)
+        fd = socket(domain, type | SOCK_CLOEXEC | (block ? 0 : SOCK_NONBLOCK), proto);
 #endif
-    if (fd == NET_HANDLE_INVALID) {
-        // Fallback to separate syscalls for socket & CLOEXEC
-        fd = socket(domain, type, protocol);
-        if (fd != NET_HANDLE_INVALID) {
-            net_handle_set_cloexec(fd);
+        if (fd == NET_HANDLE_INVALID) {
+            // Fallback to separate syscalls for socket & CLOEXEC
+            fd = socket(domain, type, proto);
+            if (fd != NET_HANDLE_INVALID) {
+                // Mark the socket as non-blocking if needed
+                if (!block && !net_handle_set_blocking(fd, false)) {
+                    // Failed to set non-blocking mode
+                    net_handle_close(fd);
+                    return NET_HANDLE_INVALID;
+                }
+                net_handle_set_cloexec(fd);
+            }
         }
-    }
-    // Mark the socket as non-blocking
-    if (fd != NET_HANDLE_INVALID && nonblock && !net_handle_set_blocking(fd, false)) {
-        // Failed to set non-blocking mode
-        net_close_handle(fd);
-        return NET_HANDLE_INVALID;
+#if defined(IPPROTO_TCP) && defined(TCP_NODELAY)
+        // Enable TCP_NODELAY on TCP sockets
+        if (fd != NET_HANDLE_INVALID && type == SOCK_STREAM) {
+            int nodelay = 1;
+            setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (void*)&nodelay, sizeof(nodelay));
+        }
+#endif
     }
     return fd;
 }
 
 // Set CLOEXEC flag on accepted sockets, uniformly propagate blocking mode as on BSD stack
-static net_handle_t net_accept_ex(net_handle_t listener, void* sock_addr, net_addrlen_t* addr_len)
+static net_handle_t net_handle_accept_ex(net_handle_t listener, void* sock_addr, net_addrlen_t* addr_len)
 {
     net_handle_t fd = NET_HANDLE_INVALID;
 #if defined(__linux__)
@@ -322,7 +331,7 @@ static net_handle_t net_accept_ex(net_handle_t listener, void* sock_addr, net_ad
             // Always inherit non-blocking mode properly
             if (nonblock && !net_handle_set_blocking(fd, false)) {
                 // Failed to set non-blocking mode
-                net_close_handle(fd);
+                net_handle_close(fd);
                 return NET_HANDLE_INVALID;
             }
 #endif
@@ -331,37 +340,7 @@ static net_handle_t net_accept_ex(net_handle_t listener, void* sock_addr, net_ad
     return fd;
 }
 
-static net_handle_t net_create_handle(int type, int protocol, const net_addr_t* addr, bool nonblock)
-{
-    net_handle_t fd = NET_HANDLE_INVALID;
-    if (!net_init()) {
-        // Network subsystem initialization failed
-        return fd;
-    }
-
-    if (!addr || addr->type == NET_TYPE_IPV4) {
-        fd = net_socket_create_ex(AF_INET, type, protocol, nonblock);
-#if defined(IPV6_NET_IMPL)
-    } else if (addr->type == NET_TYPE_IPV6) {
-#if defined(IPPROTO_ICMP) && defined(IPPROTO_ICMPV6)
-        int proto = (protocol == IPPROTO_ICMP) ? IPPROTO_ICMPV6 : protocol;
-        fd = net_socket_create_ex(AF_INET6, type, proto, nonblock);
-#else
-        fd = net_socket_create_ex(AF_INET6, type, protocol, nonblock);
-#endif
-#endif
-    }
-#if defined(IPPROTO_TCP) && defined(TCP_NODELAY)
-    if (fd != NET_HANDLE_INVALID && type == SOCK_STREAM) {
-        // Set TCP_NODELAY for low-latency TCP transmission, inherited in accept()
-        int nodelay = 1;
-        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (void*)&nodelay, sizeof(nodelay));
-    }
-#endif
-    return fd;
-}
-
-static bool net_bind_handle(net_handle_t fd, const net_addr_t* addr)
+static bool net_handle_bind(net_handle_t fd, const net_addr_t* addr)
 {
     if (!addr || addr->type == NET_TYPE_IPV4) {
         struct sockaddr_in sock_addr = {0};
@@ -391,7 +370,7 @@ static inline bool net_conn_initiated(void)
 #endif
 }
 
-static bool net_connect_handle(net_handle_t fd, const net_addr_t* addr)
+static bool net_handle_connect(net_handle_t fd, const net_addr_t* addr)
 {
     if (!addr || addr->type == NET_TYPE_IPV4) {
         struct sockaddr_in sock_addr = {0};
@@ -407,8 +386,21 @@ static bool net_connect_handle(net_handle_t fd, const net_addr_t* addr)
     return false;
 }
 
+// For simpler TCP/UDP socket creation
+static inline net_handle_t net_handle_create(const net_addr_t* addr, bool tcp, bool block)
+{
+    if (!addr || addr->type == NET_TYPE_IPV4) {
+        return net_handle_create_ex(AF_INET, tcp ? SOCK_STREAM : SOCK_DGRAM, 0, block);
+#if defined(IPV6_NET_IMPL)
+    } else if (addr->type == NET_TYPE_IPV6) {
+        return net_handle_create_ex(AF_INET6, tcp ? SOCK_STREAM : SOCK_DGRAM, 0, block);
+#endif
+    }
+    return NET_HANDLE_INVALID;
+}
+
 // Wrap native handles in net_sock_t
-static net_sock_t* net_wrap_handle(net_handle_t fd)
+static net_sock_t* net_handle_wrap(net_handle_t fd)
 {
     if (fd != NET_HANDLE_INVALID) {
         net_sock_t* sock = safe_new_obj(net_sock_t);
@@ -418,9 +410,10 @@ static net_sock_t* net_wrap_handle(net_handle_t fd)
     return NULL;
 }
 
-// Wrap assigned local address after net_bind_handle()
-static net_sock_t* net_init_localaddr(net_sock_t* sock, const net_addr_t* addr)
+// Wrap assigned local address after net_handle_bind()
+static net_sock_t* net_handle_wrap_local_addr(net_handle_t fd, const net_addr_t* addr)
 {
+    net_sock_t* sock = net_handle_wrap(fd);
     if (sock) {
         if (!addr || addr->type == NET_TYPE_IPV4) {
             struct sockaddr_in sock_addr = {0};
@@ -438,6 +431,15 @@ static net_sock_t* net_init_localaddr(net_sock_t* sock, const net_addr_t* addr)
             net_addr_from_sockaddr6(&sock->addr, &sock_addr);
 #endif
         }
+    }
+    return sock;
+}
+
+static net_sock_t* net_handle_wrap_remote_addr(net_handle_t fd, const net_addr_t* addr)
+{
+    net_sock_t* sock = net_handle_wrap(fd);
+    if (sock) {
+        sock->addr = *addr;
     }
     return sock;
 }
@@ -835,109 +837,93 @@ size_t net_parse_addr(net_addr_t* addr, const char* str)
 
 net_sock_t* net_tcp_listen(const net_addr_t* addr)
 {
-    net_handle_t fd = net_create_handle(SOCK_STREAM, 0, addr, false);
-    if (fd == NET_HANDLE_INVALID) {
-        return NULL;
-    }
+    net_handle_t fd = net_handle_create(addr, true, true);
+    if (fd != NET_HANDLE_INVALID) {
 #if defined(SOL_SOCKET) && defined(SO_REUSEADDR)
-    // Prevent bind errors due to TIME_WAIT
-    int reuse = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (void*)&reuse, sizeof(reuse));
+        // Prevent bind errors due to TIME_WAIT
+        int reuse = 1;
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (void*)&reuse, sizeof(reuse));
 #endif
-    // Try backlog of 65535, fallback to 255
-    if (!net_bind_handle(fd, addr) || (listen(fd, 65535) && listen(fd, 255))) {
-        net_close_handle(fd);
-        return NULL;
+        // Bind; Try listener backlog of 65535, fallback to 255
+        if (net_handle_bind(fd, addr) && (!listen(fd, 65535) || !listen(fd, 255))) {
+            return net_handle_wrap_local_addr(fd, addr);
+        }
+        net_handle_close(fd);
     }
-
-    return net_init_localaddr(net_wrap_handle(fd), addr);
+    return NULL;
 }
 
 net_sock_t* net_tcp_accept(net_sock_t* listener)
 {
-    net_sock_t* sock = NULL;
-    if (listener == NULL) {
-        return NULL;
-    }
-    if (listener->addr.type == NET_TYPE_IPV4) {
+    if (listener && listener->addr.type == NET_TYPE_IPV4) {
         struct sockaddr_in sock_addr = {0};
         net_addrlen_t      addr_len  = sizeof(struct sockaddr_in);
 
-        sock = net_wrap_handle(net_accept_ex(listener->fd, &sock_addr, &addr_len));
+        net_sock_t* sock = net_handle_wrap(net_handle_accept_ex(listener->fd, &sock_addr, &addr_len));
         if (sock) {
             net_addr_from_sockaddr(&sock->addr, &sock_addr);
+            return sock;
         }
 #if defined(IPV6_NET_IMPL)
-    } else if (listener->addr.type == NET_TYPE_IPV6) {
+    } else if (listener && listener->addr.type == NET_TYPE_IPV6) {
         struct sockaddr_in6 sock_addr = {0};
         net_addrlen_t       addr_len  = sizeof(struct sockaddr_in6);
 
-        sock = net_wrap_handle(net_accept_ex(listener->fd, &sock_addr, &addr_len));
+        net_sock_t* sock = net_handle_wrap(net_handle_accept_ex(listener->fd, &sock_addr, &addr_len));
         if (sock) {
             net_addr_from_sockaddr6(&sock->addr, &sock_addr);
+            return sock;
         }
 #endif
     }
-    return sock;
+    return NULL;
 }
 
 net_sock_t* net_tcp_connect(const net_addr_t* dst, const net_addr_t* src, bool block)
 {
-    if (!dst) {
-        return NULL;
-    }
-    // Create a nonblocking socket if needed
-    net_handle_t fd = net_create_handle(SOCK_STREAM, 0, dst, !block);
-    if (fd == NET_HANDLE_INVALID) {
-        return NULL;
-    }
-    // Bind to local address if needed
-    if (src) {
+    if (dst) {
+        // Create a nonblocking socket if needed
+        net_handle_t fd = net_handle_create(dst, true, block);
+        if (fd != NET_HANDLE_INVALID) {
 #if defined(IPPROTO_IP) && defined(IP_BIND_ADDRESS_NO_PORT)
-        if (!src->port) {
-            // Prevent bind errors due to ephemeral port exhaustion
-            // Kernel now knows we won't listen() and allows local 2-tuple reuse
-            int noport = 1;
-            setsockopt(fd, IPPROTO_IP, IP_BIND_ADDRESS_NO_PORT, (void*)&noport, sizeof(noport));
-        }
+            if (src && !src->port) {
+                // Prevent bind errors due to ephemeral port exhaustion
+                // Kernel now knows we won't listen() and allows local 2-tuple reuse
+                int noport = 1;
+                setsockopt(fd, IPPROTO_IP, IP_BIND_ADDRESS_NO_PORT, (void*)&noport, sizeof(noport));
+            }
 #endif
 #if defined(SOL_SOCKET) && defined(SO_REUSEADDR)
-        if (src->port) {
-            // Allow connecting to different destinations from a single local port
-            int reuse = 1;
-            setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (void*)&reuse, sizeof(reuse));
-        }
+            if (src && src->port) {
+                // Allow connecting to different destinations from a single local port
+                int reuse = 1;
+                setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (void*)&reuse, sizeof(reuse));
+            }
 #endif
-        if (!net_bind_handle(fd, src)) {
-            net_close_handle(fd);
-            return NULL;
+            // Bind to local address if needed, connect
+            if ((!src || net_handle_bind(fd, src)) && net_handle_connect(fd, dst)) {
+                return net_handle_wrap_remote_addr(fd, dst);
+            }
+            net_handle_close(fd);
         }
     }
-
-    if (!net_connect_handle(fd, dst)) {
-        net_close_handle(fd);
-        return NULL;
-    }
-
-    net_sock_t* sock = net_wrap_handle(fd);
-    if (sock) {
-        sock->addr = *dst;
-    }
-
-    return sock;
+    return NULL;
 }
 
 bool net_tcp_sockpair(net_sock_t* pair[2])
 {
     net_sock_t* listener = net_tcp_listen(NET_IPV4_LOCAL);
-    pair[0]              = net_tcp_connect(net_sock_addr(listener), NULL, false);
-    pair[1]              = net_tcp_accept(listener);
-    net_sock_close(listener);
-    if (net_tcp_status(pair[0]) && net_tcp_status(pair[1])) {
-        return true;
+    if (listener) {
+        net_sock_set_blocking(listener, false);
+        pair[0] = net_tcp_connect(net_sock_addr(listener), NULL, false);
+        pair[1] = net_tcp_accept(listener);
+        net_sock_close(listener);
+        if (net_tcp_status(pair[0]) && net_tcp_status(pair[1])) {
+            return true;
+        }
+        net_sock_close(pair[0]);
+        net_sock_close(pair[1]);
     }
-    net_sock_close(pair[0]);
-    net_sock_close(pair[1]);
     pair[0] = NULL;
     pair[1] = NULL;
     return false;
@@ -945,19 +931,18 @@ bool net_tcp_sockpair(net_sock_t* pair[2])
 
 bool net_tcp_status(net_sock_t* sock)
 {
-    if (!sock) {
-        return false;
-    }
-    if (sock->addr.type == NET_TYPE_IPV4) {
-        struct sockaddr_in sock_addr = {0};
-        net_addrlen_t      addr_len  = sizeof(struct sockaddr_in);
-        return !getpeername(sock->fd, (struct sockaddr*)&sock_addr, &addr_len);
+    if (sock) {
+        if (sock->addr.type == NET_TYPE_IPV4) {
+            struct sockaddr_in sock_addr = {0};
+            net_addrlen_t      addr_len  = sizeof(struct sockaddr_in);
+            return !getpeername(sock->fd, (struct sockaddr*)&sock_addr, &addr_len);
 #if defined(IPV6_NET_IMPL)
-    } else if (sock->addr.type == NET_TYPE_IPV6) {
-        struct sockaddr_in6 sock_addr = {0};
-        net_addrlen_t       addr_len  = sizeof(struct sockaddr_in6);
-        return !getpeername(sock->fd, (struct sockaddr*)&sock_addr, &addr_len);
+        } else if (sock->addr.type == NET_TYPE_IPV6) {
+            struct sockaddr_in6 sock_addr = {0};
+            net_addrlen_t       addr_len  = sizeof(struct sockaddr_in6);
+            return !getpeername(sock->fd, (struct sockaddr*)&sock_addr, &addr_len);
 #endif
+        }
     }
     return false;
 }
@@ -996,15 +981,14 @@ int32_t net_tcp_recv(net_sock_t* sock, void* buffer, size_t size)
 
 net_sock_t* net_udp_bind(const net_addr_t* addr)
 {
-    net_handle_t fd = net_create_handle(SOCK_DGRAM, 0, addr, false);
-    if (fd == NET_HANDLE_INVALID) {
-        return NULL;
+    net_handle_t fd = net_handle_create(addr, false, true);
+    if (fd != NET_HANDLE_INVALID) {
+        if (net_handle_bind(fd, addr)) {
+            return net_handle_wrap_local_addr(fd, addr);
+        }
+        net_handle_close(fd);
     }
-    if (!net_bind_handle(fd, addr)) {
-        net_close_handle(fd);
-        return NULL;
-    }
-    return net_init_localaddr(net_wrap_handle(fd), addr);
+    return NULL;
 }
 
 size_t net_udp_send(net_sock_t* sock, const void* buffer, size_t size, const net_addr_t* addr)
@@ -1057,29 +1041,37 @@ int32_t net_udp_recv(net_sock_t* sock, void* buffer, size_t size, net_addr_t* ad
 }
 
 /*
- * DGRAM ICMP sockets, AFAIK only supported on linux now
+ * DGRAM ICMP sockets, AFAIK only supported on Linux now
  */
-net_sock_t* net_icmp_bind(net_addr_t* addr)
+
+net_sock_t* net_icmp_bind(const net_addr_t* addr)
 {
-#ifdef IPPROTO_ICMP
-    net_handle_t fd = net_create_handle(SOCK_DGRAM, IPPROTO_ICMP, addr, false);
-    uint16_t id = addr->port;
-    addr->port = 0;
-    if (unlikely(fd == NET_HANDLE_INVALID)) {
-        goto eperm;
+#if defined(AF_INET) && defined(SOCK_DGRAM) && defined(IPPROTO_ICMP) && defined(IPPROTO_ICMPV6)
+    net_handle_t fd = NET_HANDLE_INVALID;
+    if (!addr || addr->type == NET_TYPE_IPV4) {
+        fd = net_handle_create_ex(AF_INET, SOCK_DGRAM, IPPROTO_ICMP, true);
+#if defined(IPV6_NET_IMPL)
+    } else if (addr->type == NET_TYPE_IPV6) {
+        fd = net_handle_create_ex(AF_INET6, SOCK_DGRAM, IPPROTO_ICMPV6, true);
+#endif
     }
-    if (!net_bind_handle(fd, addr)) {
-        net_close_handle(fd);
-        goto eperm;
+    if (fd != NET_HANDLE_INVALID) {
+        net_addr_t icmp_addr = {0};
+        uint16_t   icmp_id   = 0;
+        if (addr) {
+            icmp_addr      = *addr;
+            icmp_addr.port = 0;
+            icmp_id        = addr->port;
+        }
+        if (net_handle_bind(fd, &icmp_addr)) {
+            net_sock_t* sock = net_handle_wrap_local_addr(fd, &icmp_addr);
+            if (sock) {
+                sock->addr.port = icmp_id;
+                return sock;
+            }
+        }
+        net_handle_close(fd);
     }
-    net_sock_t* sock = net_wrap_handle(fd);
-    if (!sock) {
-        net_close_handle(fd);
-        return NULL;
-    }
-    sock->addr.port = id;
-    return sock;
-eperm:
 #endif
     UNUSED(addr);
     return NULL;
@@ -1095,10 +1087,10 @@ int32_t net_icmp_recv(net_sock_t* sock, void* buffer, size_t size, net_addr_t* a
     return net_udp_recv(sock, buffer, size, addr);
 }
 
-uint16_t net_icmp_id(net_sock_t* sock) {
+uint16_t net_icmp_id(net_sock_t* sock)
+{
     return sock->addr.port;
 }
-
 
 /*
  * Generic socket operations
@@ -1126,7 +1118,7 @@ void net_sock_close(net_sock_t* sock)
         net_poll_select_remove(NULL, sock);
         vector_free(sock->watchers);
 #endif
-        net_close_handle(sock->fd);
+        net_handle_close(sock->fd);
         free(sock);
     }
 }
@@ -1306,7 +1298,7 @@ void net_poll_close(net_poll_t* poll)
 {
     if (likely(poll)) {
 #if defined(EPOLL_NET_IMPL) || defined(KQUEUE_NET_IMPL)
-        net_close_handle(poll->fd);
+        net_handle_close(poll->fd);
 #else
         // Unlink from related sockets
         vector_foreach_back (poll->events, i) {

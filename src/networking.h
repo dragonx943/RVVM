@@ -76,9 +76,9 @@ net_sock_t* net_udp_bind(const net_addr_t* addr);
 size_t  net_udp_send(net_sock_t* sock, const void* buffer, size_t size, const net_addr_t* addr);
 int32_t net_udp_recv(net_sock_t* sock, void* buffer, size_t size, net_addr_t* addr);
 
-// ICMP socket
+// ICMP Datagram Sockets
 
-net_sock_t* net_icmp_bind(net_addr_t* addr);
+net_sock_t* net_icmp_bind(const net_addr_t* addr);
 uint16_t    net_icmp_id(net_sock_t* sock);
 
 size_t  net_icmp_send(net_sock_t* sock, const void* buffer, size_t size, const net_addr_t* addr);
