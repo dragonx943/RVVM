@@ -14,107 +14,235 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include <stddef.h>
 #include <string.h>
 
-#define vector_t(vec_elem_type) struct { vec_elem_type* data; size_t size; size_t count; }
+/*
+ * Internal implementation functions
+ */
 
-// Grow the internal vector buffer to fit element at pos, does not initialize memory
+/*
+ * Grow the internal vector buffer to fit element at pos, does not initialize memory
+ */
 slow_path void vector_grow_internal(void* vec, size_t elem_size, size_t pos);
 
-// Emplace new element at pos, zeroing the new element and every preceeding one
+/*
+ * Emplace new element at pos, zeroing the new element and every preceeding one
+ */
 void vector_emplace_internal(void* vec, size_t elem_size, size_t pos);
 
-// Erase element at pos, moving the trailing elements into it's place
+/*
+ * Erase element at pos, moving the trailing elements into it's place
+ */
 void vector_erase_internal(void* vec, size_t elem_size, size_t pos);
 
-// Initialize vector by zeroing it's fields
-#define vector_init(vec) \
-do { \
-    (vec).data = NULL; \
-    (vec).size = 0; \
-    (vec).count = 0; \
-} while(0)
+/**
+ * vector_t() - Template-like vector type
+ *
+ * vector_t(int) vec_int = ZERO_INIT;
+ */
+#define vector_t(vec_elem_type)                                                                                        \
+    struct {                                                                                                           \
+        vec_elem_type* data;                                                                                           \
+        size_t         size;                                                                                           \
+        size_t         count;                                                                                          \
+    }
 
-// Free vector buffer
-// May be called multiple times, the vector is empty yet reusable afterwards
-// Semantically identical to clear(), but also frees memory
-#define vector_free(vec) \
-do { \
-    free((vec).data); \
-    (vec).data = NULL; \
-    (vec).size = 0; \
-    (vec).count = 0; \
-} while(0)
+/**
+ * vector_init() - Initialize vector (By zeroing it's fields, may be done statically)
+ */
+#define vector_init(vec)                                                                                               \
+    do {                                                                                                               \
+        (vec).data  = NULL;                                                                                            \
+        (vec).size  = 0;                                                                                               \
+        (vec).count = 0;                                                                                               \
+    } while (0)
 
-// Empty the vector
-#define vector_clear(vec) do { (vec).count = 0; } while(0)
+/**
+ * vector_free() - Free vector memory
+ *
+ * May be called multiple times, the vector is empty yet reusable afterwards,
+ * thus it is semantically identical to vector_clear(), but also frees memory
+ */
+#define vector_free(vec)                                                                                               \
+    do {                                                                                                               \
+        free((vec).data);                                                                                              \
+        (vec).data  = NULL;                                                                                            \
+        (vec).size  = 0;                                                                                               \
+        (vec).count = 0;                                                                                               \
+    } while (0)
 
-// Get element count
-#define vector_size(vec) (vec).count
+/**
+ * vector_clear() - Empty the vector
+ */
+#define vector_clear(vec)                                                                                              \
+    do {                                                                                                               \
+        (vec).count = 0;                                                                                               \
+    } while (0)
 
-// Get underlying buffer capacity
+/**
+ * vector_size() - Get vector element count
+ */
+#define vector_size(vec)     (vec).count
+
+/**
+ * vector_capacity() - Get underlying buffer capacity
+ */
 #define vector_capacity(vec) (vec).size
 
-// Dereference element at specific position
-#define vector_at(vec, pos) (vec).data[pos]
+/**
+ * vector_at() - Access vector element at specific position
+ */
+#define vector_at(vec, pos)  (vec).data[pos]
 
-// Get vector elements buffer
-#define vector_buffer(vec) (vec).data
+/**
+ * vector_buffer() - Get vector elements buffer (Pointer to internal array)
+ */
+#define vector_buffer(vec)   (vec).data
 
-// Resize the vector, zeroing any newly alocated elements
-#define vector_resize(vec, size) \
-do { \
-    if (unlikely((size) > (vec).count)) { \
-        vector_emplace_internal(&(vec), sizeof(*(vec).data), (size) - 1); \
-    } \
-    (vec).count = (size); \
-} while(0)
+/**
+ * vector_resize() - Resize the vector, zeroing any newly alocated elements
+ */
+#define vector_resize(vec, size)                                                                                       \
+    do {                                                                                                               \
+        if (unlikely((size) > (vec).count)) {                                                                          \
+            vector_emplace_internal(&(vec), sizeof(*(vec).data), (size) - 1);                                          \
+        }                                                                                                              \
+        (vec).count = (size);                                                                                          \
+    } while (0)
 
-// Put element at specific position, overwriting previous element there if any
-#define vector_put(vec, pos, val) \
-do { \
-    if (unlikely(pos >= (vec).count)) { \
-        vector_emplace_internal(&(vec), sizeof(*(vec).data), pos); \
-    } \
-    (vec).data[pos] = val; \
-} while(0)
+/**
+ * vector_put() - Put element at specific position, overwriting previous element there if any
+ */
+#define vector_put(vec, pos, val)                                                                                      \
+    do {                                                                                                               \
+        if (unlikely(pos >= (vec).count)) {                                                                            \
+            vector_emplace_internal(&(vec), sizeof(*(vec).data), pos);                                                 \
+        }                                                                                                              \
+        (vec).data[pos] = val;                                                                                         \
+    } while (0)
 
-// Insert new element at the end of the vector
-#define vector_push_back(vec, val) \
-do { \
-    if (unlikely((vec).count >= (vec).size)) { \
-        vector_grow_internal(&(vec), sizeof(*(vec).data), (vec).count); \
-    } \
-    (vec).data[(vec).count++] = val; \
-} while(0)
+/**
+ * Insert new element at specific position, move trailing elements forward
+ */
+#define vector_insert(vec, pos, val)                                                                                   \
+    do {                                                                                                               \
+        vector_emplace_internal(&(vec), sizeof(*(vec).data), pos);                                                     \
+        (vec).data[pos] = val;                                                                                         \
+    } while (0)
 
-// Insert element at specific position, move trailing elements forward
-#define vector_insert(vec, pos, val) \
-do { \
-    vector_emplace_internal(&(vec), sizeof(*(vec).data), pos); \
-    (vec).data[pos] = val; \
-} while(0)
+/**
+ * vector_push_back() - Insert new element at the end of the vector
+ */
+#define vector_push_back(vec, val)                                                                                     \
+    do {                                                                                                               \
+        if (unlikely((vec).count >= (vec).size)) {                                                                     \
+            vector_grow_internal(&(vec), sizeof(*(vec).data), (vec).count);                                            \
+        }                                                                                                              \
+        (vec).data[(vec).count++] = val;                                                                               \
+    } while (0)
 
-// Emplace new element at the end of the vector
-#define vector_emplace_back(vec) \
-do { \
-    if (unlikely((vec).count >= (vec).size)) { \
-        vector_grow_internal(&(vec), sizeof(*(vec).data), (vec).count); \
-    } \
-    memset(&(vec).data[(vec).count++], 0, sizeof(*(vec).data)); \
-} while(0)
+/**
+ * vector_push_front() - Insert new element at the beginning of the vector
+ */
+#define vector_push_front(vec, val) vector_insert(vec, 0, val)
 
-// Emplace new element at specific position, move trailing elements forward
-#define vector_emplace(vec, pos) vector_emplace_internal(&(vec), sizeof(*(vec).data), pos)
+/**
+ * vector_emplace_back() - Emplace (Construct in place) new element at the end of the vector
+ */
+#define vector_emplace_back(vec)                                                                                       \
+    do {                                                                                                               \
+        if (unlikely((vec).count >= (vec).size)) {                                                                     \
+            vector_grow_internal(&(vec), sizeof(*(vec).data), (vec).count);                                            \
+        }                                                                                                              \
+        memset(&(vec).data[(vec).count++], 0, sizeof(*(vec).data));                                                    \
+    } while (0)
 
-// Erase element at specific posision, move trailing elements backward
-#define vector_erase(vec, pos) vector_erase_internal(&(vec), sizeof(*(vec).data), pos)
+/**
+ * vector_emplace() - Emplace new element at specific position, move trailing elements forward
+ */
+#define vector_emplace(vec, pos)       vector_emplace_internal(&(vec), sizeof(*(vec).data), pos)
 
-// Iterates the vector in forward order
-// Be sure to break loop after vector_erase(), since it invalidates forward iterators
-#define vector_foreach(vec, iter) \
-    for (size_t iter=0; iter<(vec).count; ++iter)
+/**
+ * vector_emplace_front() - Emplace new element at the beginning of the vector
+ */
+#define vector_emplace_front(vec)      vector_emplace(vec, 0)
 
-// Iterates the vector in reversed order, which is safe for vector_erase()
-#define vector_foreach_back(vec, iter) \
-    for (size_t iter=(vec).count; iter--;)
+/**
+ * vector_erase() - Erase element at specific posision, move trailing elements backward
+ */
+#define vector_erase(vec, pos)         vector_erase_internal(&(vec), sizeof(*(vec).data), pos)
+
+/**
+ * vector_foreach() - Iterates the vector in forward order
+ * WARN: It is prohibited to use vector_erase() inside such loops
+ */
+#define vector_foreach(vec, iter)      for (size_t iter = 0; iter < (vec).count; ++iter)
+
+/**
+ * vector_foreach_back() - Iterates the vector in reversed order, which is safe for vector_erase()
+ */
+#define vector_foreach_back(vec, iter) for (size_t iter = (vec).count; iter--;)
+
+/**
+ * vector_insert_sorted_ex() - Insert a value into a sorted vector (Comparing manually)
+ *
+ * vector_insert_sorted_ex(vec_some, elem, i, vector_at(vec_some, i).cmpval, elem.cmpval);
+ */
+#define vector_insert_sorted_ex(vec, val, iter, cmpval1, cmpval2)                                                      \
+    do {                                                                                                               \
+        size_t MACRO_IDENT(low) = 0, MACRO_IDENT(high) = vector_size(vec) - 1;                                         \
+        for (; (int64_t)MACRO_IDENT(low) <= (int64_t)MACRO_IDENT(high);) {                                             \
+            size_t iter = MACRO_IDENT(low) + ((MACRO_IDENT(high) - MACRO_IDENT(low)) >> 1);                            \
+            if ((cmpval1) < (cmpval2)) {                                                                               \
+                MACRO_IDENT(low) = iter + 1;                                                                           \
+            } else if ((cmpval1) > (cmpval2)) {                                                                        \
+                MACRO_IDENT(high) = iter - 1;                                                                          \
+            } else {                                                                                                   \
+                break;                                                                                                 \
+            }                                                                                                          \
+        }                                                                                                              \
+        vector_insert(vec, MACRO_IDENT(low), val);                                                                     \
+    } while (0)
+
+/**
+ * vector_insert_sorted() - Insert a value into a sorted vector (Comparing via element field)
+ *
+ * vector_insert_sorted(vec_some, elem, .cmpval)
+ */
+#define vector_insert_sorted(vec, val, field)                                                                          \
+    vector_insert_sorted_ex(vec, val, MACRO_IDENT(iter), vector_at(vec, MACRO_IDENT(iter))##field, val##field)
+
+/**
+ * vector_search_sorted() - Searches a sorted vector, runs the scope on each iteration
+ *
+ * vector_search_sorted(vec_some, i, vector_at(i).cmpval, 10) {
+ *     // Will get run on each checked element while searching for value 10
+ *     log("Element at %lu: %d", i, vector_at(i).cmpval);
+ * }
+ */
+#define vector_search_sorted(vec, iter, expr, cmpval)                                                                  \
+    for (size_t MACRO_IDENT(low) = 0, MACRO_IDENT(high) = vector_size(vec) - 1, MACRO_IDENT(flag) = 0, iter = 0; /**/  \
+         ((int64_t)MACRO_IDENT(low) <= (int64_t)MACRO_IDENT(high))                                               /**/  \
+             ? (                                                                                                 /**/  \
+                iter = MACRO_IDENT(low) + ((MACRO_IDENT(high) - MACRO_IDENT(low)) >> 1),                         /**/  \
+                ((expr) != (cmpval))                                                                             /**/  \
+                    ? (                                                                                          /**/  \
+                       (MACRO_IDENT(flag) = 2),                                                                  /**/  \
+                       (((expr) < (cmpval) ? (MACRO_IDENT(low) = iter + 1) : (MACRO_IDENT(high) = iter - 1))))   /**/  \
+                    : 0,                                                                                         /**/  \
+                MACRO_IDENT(flag))                                                                               /**/  \
+             : 0;                                                                                                /**/  \
+         --MACRO_IDENT(flag))
+
+/**
+ * vector_find_sorted() - Searches a sorted vector, runs the scope on found element
+ *
+ * vector_find_sorted(vec_ints, i, vector_at(i).cmpval, 10) {
+ *     // Will get run on element with field cmpval equal to 10
+ *     log("Element at %lu: %d", i, vector_at(i).cmpval);
+ * }
+ */
+#define vector_find_sorted(vec, iter, expr, search)                                                                    \
+    vector_search_sorted (vec, iter, expr, search)                                                                     \
+        if (MACRO_IDENT(flag) == 1)                                                                                    \
+            BREAKABLE_SCOPE (found)
 
 #endif
