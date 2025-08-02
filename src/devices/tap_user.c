@@ -18,7 +18,6 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "vector.h"
 #include "mem_ops.h"
 #include "utils.h"
-#include <stdint.h>
 
 #define GATEWAY_MAC ((const uint8_t*)"\x00\x08\x97\xDE\xC0\xDE")
 #define GATEWAY_IP  ((const uint8_t*)"\xC0\xA8\x00\x01")
