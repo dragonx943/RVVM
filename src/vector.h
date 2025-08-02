@@ -208,17 +208,17 @@ void vector_erase_internal(void* vec, size_t elem_size, size_t pos);
  * vector_insert_sorted(vec_some, elem, .cmpval)
  */
 #define vector_insert_sorted(vec, val, field)                                                                          \
-    vector_insert_sorted_ex(vec, val, MACRO_IDENT(iter), vector_at(vec, MACRO_IDENT(iter))##field, val##field)
+    vector_insert_sorted_ex(vec, val, MACRO_IDENT(iter), vector_at(vec, MACRO_IDENT(iter)) field, val field)
 
 /**
- * vector_search_sorted() - Searches a sorted vector, runs the scope on each iteration
+ * vector_search_sorted_ex() - Searches a sorted vector, runs the scope on each iteration (Accepts expression)
  *
  * vector_search_sorted(vec_some, i, vector_at(i).cmpval, 10) {
  *     // Will get run on each checked element while searching for value 10
  *     log("Element at %lu: %d", i, vector_at(i).cmpval);
  * }
  */
-#define vector_search_sorted(vec, iter, expr, cmpval)                                                                  \
+#define vector_search_sorted_ex(vec, iter, expr, cmpval)                                                               \
     for (size_t MACRO_IDENT(low) = 0, MACRO_IDENT(high) = vector_size(vec) - 1, MACRO_IDENT(flag) = 0, iter = 0; /**/  \
          ((int64_t)MACRO_IDENT(low) <= (int64_t)MACRO_IDENT(high))                                               /**/  \
              ? (                                                                                                 /**/  \
@@ -233,6 +233,12 @@ void vector_erase_internal(void* vec, size_t elem_size, size_t pos);
          --MACRO_IDENT(flag))
 
 /**
+ * vector_search_sorted() - Searches a sorted vector, runs the scope on each iteration
+ */
+#define vector_search_sorted(vec, iter, field, cmpval)                                                                 \
+    vector_search_sorted_ex(vec, iter, vector_at(vec, iter) field, cmpval)
+
+/**
  * vector_find_sorted() - Searches a sorted vector, runs the scope on found element
  *
  * vector_find_sorted(vec_ints, i, vector_at(i).cmpval, 10) {
@@ -240,8 +246,8 @@ void vector_erase_internal(void* vec, size_t elem_size, size_t pos);
  *     log("Element at %lu: %d", i, vector_at(i).cmpval);
  * }
  */
-#define vector_find_sorted(vec, iter, expr, search)                                                                    \
-    vector_search_sorted (vec, iter, expr, search)                                                                     \
+#define vector_find_sorted(vec, iter, field, cmpval)                                                                   \
+    vector_search_sorted (vec, iter, field, cmpval)                                                                    \
         if (MACRO_IDENT(flag) == 1)                                                                                    \
             BREAKABLE_SCOPE (found)
 
