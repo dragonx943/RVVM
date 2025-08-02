@@ -185,12 +185,12 @@ AccessModifierOffset: -4
 #
 
 # Do not break before braces for following foreach-like macros
-ForEachMacros: [vector_foreach, vector_foreach_back, hashmap_foreach, scoped_spin_lock,
-                scoped_spin_try_lock, scoped_spin_read_lock, scoped_spin_try_read_lock,
-                scoped_spin_lock_slow, scoped_spin_read_lock_slow, scoped_rcu_reader,
-                DO_ONCE_SCOPED, BREAKABLE_SCOPE, SCOPED_COND_NAMED. POST_COND_NAMED,
-                SCOPED_STMT_NAMED, POST_STMT_NAMED, SCOPED_COND, POST_COND, SCOPED_STMT,
-                POST_STMT, SCOPED_HELPER]
+ForEachMacros: [vector_foreach, vector_foreach_back, vector_search_sorted, vector_find_sorted,
+                hashmap_foreach, scoped_spin_lock, scoped_spin_try_lock, scoped_spin_read_lock,
+                scoped_spin_try_read_lock, scoped_spin_lock_slow, scoped_spin_read_lock_slow,
+                scoped_rcu_reader, DO_ONCE_SCOPED, BREAKABLE_SCOPE, SCOPED_COND_NAMED,
+                POST_COND_NAMED, SCOPED_STMT_NAMED, POST_STMT_NAMED, SCOPED_COND, POST_COND,
+                SCOPED_STMT, POST_STMT, SCOPED_HELPER]
 
 # Template vector type
 TypenameMacros: [vector_t]
