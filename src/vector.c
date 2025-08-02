@@ -44,18 +44,17 @@ static void vector_move_elem_internal(vector_punned_t* vector, size_t elem_size,
 void vector_emplace_internal(void* vec, size_t elem_size, size_t pos)
 {
     vector_punned_t* vector = vec;
+    size_t new_count = EVAL_MAX(vector->count, pos) + 1;
+    if (unlikely(new_count >= vector->size)) {
+        vector_grow_internal(vec, elem_size, new_count);
+    }
     if (pos < vector->count) {
         vector_move_elem_internal(vector, elem_size, pos, false);
-        vector->count++;
     } else {
-        size_t new_count = pos + 1;
-        if (unlikely(pos >= vector->size)) {
-            vector_grow_internal(vec, elem_size, pos);
-        }
         void* old_end = ((uint8_t*)vector->data) + (vector->count * elem_size);
         memset(old_end, 0, (new_count - vector->count) * elem_size);
-        vector->count = new_count;
     }
+    vector->count = new_count;
 }
 
 void vector_erase_internal(void* vec, size_t elem_size, size_t pos)
