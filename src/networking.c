@@ -1248,41 +1248,45 @@ size_t net_poll_wait(net_poll_t* poll, net_event_t* events, size_t size, uint32_
         struct timespec  ts     = {0};
         struct timespec* ts_ptr = NULL;
         if (wait_ms != NET_POLL_INF) {
-            // Short delay uses fast path without division
-            if (wait_ms < 1000) {
-                ts.tv_nsec = (wait_ms * 1000000);
-            } else {
-                ts.tv_sec  = (wait_ms / 1000);
-                ts.tv_nsec = (wait_ms % 1000) * 1000000;
-            }
-            ts_ptr = &ts;
+            ts.tv_sec  = (wait_ms / 1000);
+            ts.tv_nsec = (wait_ms % 1000) * 1000000;
+            ts_ptr     = &ts;
         }
         int num_ev = kevent(poll->fd, NULL, 0, ev, EVAL_MIN(size, STATIC_ARRAY_SIZE(ev)), ts_ptr);
-        // Write out NET_POLL_RECV events
+
+        // Fill EVFILT_WRITE events, usually a very low amount
         for (int i = 0; i < num_ev; ++i) {
-            if (ev[i].filter == EVFILT_READ && ret < size) {
-                void* data        = (void*)ev[i].udata;
-                events[ret].data  = data;
-                events[ret].flags = NET_POLL_RECV;
+            if (ev[i].filter == EVFILT_WRITE && ret < size) {
+                events[ret].data  = (void*)ev[i].udata;
+                events[ret].flags = NET_POLL_SEND;
                 ret++;
             }
         }
-        // Coalesce NET_POLL_SEND flags onto associated event entry
-        size_t read_events = ret;
+
+        // Fill EVFILT_READ events, merging with EVFILT_WRITE events as we go
+        size_t merge_start = 0;
+        size_t merge_end   = ret;
         for (int i = 0; i < num_ev; ++i) {
-            if (ev[i].filter == EVFILT_WRITE) {
-                void* data     = (void*)ev[i].udata;
-                bool  coalesce = false;
-                for (size_t j = 0; j < read_events; ++j) {
+            if (ev[i].filter != EVFILT_WRITE) {
+                bool  merged = false;
+                void* data   = (void*)ev[i].udata;
+                for (size_t j = merge_start; j < merge_end; ++j) {
                     if (events[j].data == data) {
-                        events[j].flags |= NET_POLL_SEND;
-                        coalesce         = true;
+                        events[j].flags |= NET_POLL_RECV;
+                        if (j != merge_start) {
+                            // Swap events to speed up future merging
+                            net_event_t tmp     = events[j];
+                            events[j]           = events[merge_start];
+                            events[merge_start] = tmp;
+                        }
+                        merge_start++;
+                        merged = true;
                         break;
                     }
                 }
-                if (!coalesce && ret < size) {
+                if (!merged && ret < size) {
                     events[ret].data  = data;
-                    events[ret].flags = NET_POLL_SEND;
+                    events[ret].flags = NET_POLL_RECV;
                     ret++;
                 }
             }
