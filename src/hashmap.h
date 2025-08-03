@@ -55,7 +55,7 @@ static inline size_t hashmap_used_mem(hashmap_t* map)
          k = ((map)->buckets[MACRO_IDENT(hashmap_iter) & (map)->size].key), /**/                                       \
          v = ((map)->buckets[MACRO_IDENT(hashmap_iter) & (map)->size].val), /**/                                       \
          MACRO_IDENT(hashmap_iter) <= (map)->size;                          /**/                                       \
-         ++MACRO_IDENT(hashmap_iter))                                       /**/                                       \
+         ++MACRO_IDENT(hashmap_iter), (void)k)                              /**/                                       \
         if (v)
 
 static forceinline size_t hashmap_hash(size_t k)
