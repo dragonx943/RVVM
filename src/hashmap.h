@@ -75,22 +75,23 @@ static inline void hashmap_put(hashmap_t* map, size_t key, size_t val)
     for (size_t i = 0; i < HASHMAP_MAX_PROBES; ++i) {
         size_t index = (hash + i) & map->size;
 
-        if (likely(map->buckets[index].key == key)) {
+        if (likely(!map->buckets[index].val)) {
+            // Empty bucket found, the key is unused
+            if (likely(val)) {
+                map->buckets[index].key = key;
+                map->buckets[index].val = val;
+                map->entries++;
+            }
+            return;
+        } else if (likely(map->buckets[index].key == key)) {
             // The key is already used, change value
             map->buckets[index].val = val;
-
             if (!val) {
                 // Value = 0 means we should clear a bucket
                 // Rebalance colliding trailing entries
-                hashmap_rebalance_internal(map, index);
                 map->entries--;
+                hashmap_rebalance_internal(map, index);
             }
-            return;
-        } else if (likely(!map->buckets[index].val && val)) {
-            // Empty bucket found, the key is unused
-            map->entries++;
-            map->buckets[index].key = key;
-            map->buckets[index].val = val;
             return;
         }
     }
@@ -120,6 +121,11 @@ static inline void hashmap_remove(hashmap_t* map, size_t key)
     if (unlikely(map->entries < map->entry_balance && map->entries > 256)) {
         hashmap_shrink_internal(map);
     }
+}
+
+static inline size_t hashmap_size(const hashmap_t* map)
+{
+    return map->entries;
 }
 
 #endif
