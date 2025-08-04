@@ -914,9 +914,11 @@ bool net_tcp_sockpair(net_sock_t* pair[2])
 {
     net_sock_t* listener = net_tcp_listen(NET_IPV4_LOCAL);
     if (listener) {
-        net_sock_set_blocking(listener, false);
         pair[0] = net_tcp_connect(net_sock_addr(listener), NULL, false);
-        pair[1] = net_tcp_accept(listener);
+        if (pair[0]) {
+            net_sock_set_blocking(pair[0], true);
+            pair[1] = net_tcp_accept(listener);
+        }
         net_sock_close(listener);
         if (net_tcp_status(pair[0]) && net_tcp_status(pair[1])) {
             return true;
