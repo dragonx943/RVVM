@@ -1266,23 +1266,20 @@ size_t net_poll_wait(net_poll_t* poll, net_event_t* events, size_t size, uint32_
         }
 
         // Fill EVFILT_READ events, merging with EVFILT_WRITE events as we go
-        size_t merge_start = 0;
-        size_t merge_end   = ret;
+        size_t merge_end = ret;
         for (int i = 0; i < num_ev; ++i) {
             if (ev[i].filter != EVFILT_WRITE) {
-                bool  merged = false;
                 void* data   = (void*)ev[i].udata;
-                for (size_t j = merge_start; j < merge_end; ++j) {
+                bool  merged = false;
+                for (size_t j = 0; j < merge_end; ++j) {
                     if (events[j].data == data) {
-                        events[j].flags |= NET_POLL_RECV;
-                        if (j != merge_start) {
-                            // Swap events to speed up future merging
-                            net_event_t tmp     = events[j];
-                            events[j]           = events[merge_start];
-                            events[merge_start] = tmp;
+                        // Swap events to speed up future merging
+                        if (j != --merge_end) {
+                            events[j] = events[merge_end];
                         }
-                        merge_start++;
-                        merged = true;
+                        events[merge_end].data  = data;
+                        events[merge_end].flags = NET_POLL_RECV | NET_POLL_SEND;
+                        merged                  = true;
                         break;
                     }
                 }
