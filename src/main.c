@@ -267,7 +267,7 @@ static int rvvm_cli_main(int argc, char** argv)
         gui_window_init_auto(machine, 640, 480);
     }
 
-    if (!rvvm_has_arg("nosound")) {
+    if (rvvm_has_arg("hda_test")) {
         sound_hda_init_auto(machine);
     }
 
