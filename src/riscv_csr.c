@@ -352,9 +352,8 @@ static bool riscv_csr_satp(rvvm_hart_t* vm, rvvm_uxlen_t* dest, uint8_t op)
             // If satp is written with unsupported MODE, the entire write has no effect
             return true;
         }
-        if ((new_mmu_mode == CSR_SATP_MODE_SV48 && !rvvm_has_arg("sv48"))
-         || (new_mmu_mode == CSR_SATP_MODE_SV57 && !rvvm_has_arg("sv57"))) {
-            // Disallow SV48, SV57 modes unless -sv48/-sv57 is passed
+        if (new_mmu_mode == CSR_SATP_MODE_SV57 && !rvvm_has_arg("sv57")) {
+            // Disallow SV57 mode unless -sv57 is passed
             return true;
         }
         vm->root_page_table = (satp & bit_mask(44)) << RISCV_PAGE_SHIFT;
