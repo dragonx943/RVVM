@@ -25,11 +25,7 @@ slow_path void vector_grow_internal(void* vec, size_t elem_size, size_t pos)
         new_size += (new_size >> 1);
     }
     if (new_size > vector->size) {
-        if (vector->data) {
-            vector->data = safe_realloc(vector->data, new_size * elem_size);
-        } else {
-            vector->data = safe_calloc(elem_size, new_size);
-        }
+        vector->data = safe_realloc(vector->data, new_size * elem_size);
         vector->size = new_size;
     }
 }
