@@ -11,27 +11,20 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define LEKKIT_VECTOR_H
 
 #include "compiler.h"
+
 #include <stddef.h>
-#include <string.h>
 
 /*
  * Internal implementation functions
  */
 
-/*
- * Grow the internal vector buffer to fit element at pos, does not initialize memory
- */
 slow_path void vector_grow_internal(void* vec, size_t elem_size, size_t pos);
 
-/*
- * Emplace new element at pos, zeroing the new element and every preceeding one
- */
 void vector_emplace_internal(void* vec, size_t elem_size, size_t pos);
-
-/*
- * Erase element at pos, moving the trailing elements into it's place
- */
 void vector_erase_internal(void* vec, size_t elem_size, size_t pos);
+void vector_free_internal(void* vec);
+void vector_copy_internal(void* vec_dst, const void* vec_src, size_t elem_size);
+void vector_swap_internal(void* vec_a, void* vec_b);
 
 /**
  * vector_t() - Template-like vector type
@@ -61,13 +54,7 @@ void vector_erase_internal(void* vec, size_t elem_size, size_t pos);
  * May be called multiple times, the vector is empty yet reusable afterwards,
  * thus it is semantically identical to vector_clear(), but also frees memory
  */
-#define vector_free(vec)                                                                                               \
-    do {                                                                                                               \
-        free((vec).data);                                                                                              \
-        (vec).data  = NULL;                                                                                            \
-        (vec).size  = 0;                                                                                               \
-        (vec).count = 0;                                                                                               \
-    } while (0)
+#define vector_free(vec) vector_free_internal(&(vec))
 
 /**
  * vector_clear() - Empty the vector
@@ -80,22 +67,42 @@ void vector_erase_internal(void* vec, size_t elem_size, size_t pos);
 /**
  * vector_size() - Get vector element count
  */
-#define vector_size(vec)     (vec).count
+#define vector_size(vec)     ((vec).count)
 
 /**
  * vector_capacity() - Get underlying buffer capacity
  */
-#define vector_capacity(vec) (vec).size
+#define vector_capacity(vec) ((vec).size)
 
 /**
  * vector_at() - Access vector element at specific position
  */
-#define vector_at(vec, pos)  (vec).data[pos]
+#define vector_at(vec, pos)  ((vec).data[pos])
 
 /**
  * vector_buffer() - Get vector elements buffer (Pointer to internal array)
  */
-#define vector_buffer(vec)   (vec).data
+#define vector_buffer(vec)   ((vec).data)
+
+/**
+ * vector_copy() - Copy vector contents into another one
+ */
+#define vector_copy(dst, src)                                                                                          \
+    do {                                                                                                               \
+        if ((dst).data != (src).data) {                                                                                \
+            vector_copy_internal(&(dst), &(src), sizeof(*((src).data)));                                               \
+        }                                                                                                              \
+    } while (0)
+
+/**
+ * vector_swap() - Swap contents of two vectors
+ */
+#define vector_swap(a, b)                                                                                              \
+    do {                                                                                                               \
+        if ((a).data != (b).data) {                                                                                    \
+            vector_swap_internal(&(a), &(b));                                                                          \
+        }                                                                                                              \
+    } while (0)
 
 /**
  * vector_resize() - Resize the vector, zeroing any newly alocated elements
@@ -103,18 +110,18 @@ void vector_erase_internal(void* vec, size_t elem_size, size_t pos);
 #define vector_resize(vec, size)                                                                                       \
     do {                                                                                                               \
         if (unlikely((size) > (vec).count)) {                                                                          \
-            vector_emplace_internal(&(vec), sizeof(*(vec).data), (size) - 1);                                          \
+            vector_emplace_internal(&(vec), sizeof(*((vec).data)), (size) - 1);                                        \
         }                                                                                                              \
         (vec).count = (size);                                                                                          \
     } while (0)
 
 /**
- * vector_put() - Put element at specific position, overwriting previous element there if any
+ * vector_put() - Put element at specific position, resizing the vector if needed
  */
 #define vector_put(vec, pos, val)                                                                                      \
     do {                                                                                                               \
         if (unlikely(pos >= (vec).count)) {                                                                            \
-            vector_emplace_internal(&(vec), sizeof(*(vec).data), pos);                                                 \
+            vector_emplace_internal(&(vec), sizeof(*((vec).data)), pos);                                               \
         }                                                                                                              \
         (vec).data[pos] = val;                                                                                         \
     } while (0)
@@ -124,7 +131,7 @@ void vector_erase_internal(void* vec, size_t elem_size, size_t pos);
  */
 #define vector_insert(vec, pos, val)                                                                                   \
     do {                                                                                                               \
-        vector_emplace_internal(&(vec), sizeof(*(vec).data), pos);                                                     \
+        vector_emplace_internal(&(vec), sizeof(*((vec).data)), pos);                                                   \
         (vec).data[pos] = val;                                                                                         \
     } while (0)
 
@@ -134,7 +141,7 @@ void vector_erase_internal(void* vec, size_t elem_size, size_t pos);
 #define vector_push_back(vec, val)                                                                                     \
     do {                                                                                                               \
         if (unlikely((vec).count >= (vec).size)) {                                                                     \
-            vector_grow_internal(&(vec), sizeof(*(vec).data), (vec).count);                                            \
+            vector_grow_internal(&(vec), sizeof(*((vec).data)), (vec).count);                                          \
         }                                                                                                              \
         (vec).data[(vec).count++] = val;                                                                               \
     } while (0)
@@ -142,23 +149,17 @@ void vector_erase_internal(void* vec, size_t elem_size, size_t pos);
 /**
  * vector_push_front() - Insert new element at the beginning of the vector
  */
-#define vector_push_front(vec, val) vector_insert(vec, 0, val)
-
-/**
- * vector_emplace_back() - Emplace (Construct in place) new element at the end of the vector
- */
-#define vector_emplace_back(vec)                                                                                       \
-    do {                                                                                                               \
-        if (unlikely((vec).count >= (vec).size)) {                                                                     \
-            vector_grow_internal(&(vec), sizeof(*(vec).data), (vec).count);                                            \
-        }                                                                                                              \
-        memset(&(vec).data[(vec).count++], 0, sizeof(*(vec).data));                                                    \
-    } while (0)
+#define vector_push_front(vec, val)    vector_insert(vec, 0, val)
 
 /**
  * vector_emplace() - Emplace new element at specific position, move trailing elements forward
  */
-#define vector_emplace(vec, pos)       vector_emplace_internal(&(vec), sizeof(*(vec).data), pos)
+#define vector_emplace(vec, pos)       vector_emplace_internal(&(vec), sizeof(*((vec).data)), pos)
+
+/**
+ * vector_emplace_back() - Emplace (Construct in place) new element at the end of the vector
+ */
+#define vector_emplace_back(vec)       vector_emplace(vec, (vec).count)
 
 /**
  * vector_emplace_front() - Emplace new element at the beginning of the vector
@@ -168,7 +169,7 @@ void vector_erase_internal(void* vec, size_t elem_size, size_t pos);
 /**
  * vector_erase() - Erase element at specific posision, move trailing elements backward
  */
-#define vector_erase(vec, pos)         vector_erase_internal(&(vec), sizeof(*(vec).data), pos)
+#define vector_erase(vec, pos)         vector_erase_internal(&(vec), sizeof(*((vec).data)), pos)
 
 /**
  * vector_foreach() - Iterates the vector in forward order

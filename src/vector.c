@@ -8,6 +8,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
 #include "vector.h"
+#include "compiler.h"
+#include "mem_ops.h"
 #include "utils.h"
 
 SOURCE_OPTIMIZATION_SIZE
@@ -36,15 +38,15 @@ slow_path void vector_grow_internal(void* vec, size_t elem_size, size_t pos)
 static void vector_move_elem_internal(vector_punned_t* vector, size_t elem_size, size_t pos, bool erase)
 {
     size_t move_count = (vector->count - pos) * elem_size;
-    void* move_from = ((uint8_t*)vector->data) + ((pos + (erase ? 1 : 0)) * elem_size);
-    void* move_to = ((uint8_t*)vector->data) + ((pos + (erase ? 0 : 1)) * elem_size);
+    void*  move_from  = ((uint8_t*)vector->data) + ((pos + (erase ? 1 : 0)) * elem_size);
+    void*  move_to    = ((uint8_t*)vector->data) + ((pos + (erase ? 0 : 1)) * elem_size);
     memmove(move_to, move_from, move_count);
 }
 
 void vector_emplace_internal(void* vec, size_t elem_size, size_t pos)
 {
-    vector_punned_t* vector = vec;
-    size_t new_count = EVAL_MAX(vector->count, pos) + 1;
+    vector_punned_t* vector    = vec;
+    size_t           new_count = EVAL_MAX(vector->count, pos) + 1;
     if (unlikely(new_count >= vector->size)) {
         vector_grow_internal(vec, elem_size, new_count);
     }
@@ -64,4 +66,34 @@ void vector_erase_internal(void* vec, size_t elem_size, size_t pos)
         vector->count--;
         vector_move_elem_internal(vector, elem_size, pos, true);
     }
+}
+
+void vector_free_internal(void* vec)
+{
+    vector_punned_t* vector = vec;
+    if (vector->data && vector->size) {
+        safe_free(vector->data);
+    }
+    vector->data  = NULL;
+    vector->size  = 0;
+    vector->count = 0;
+}
+
+void vector_copy_internal(void* vec_dst, const void* vec_src, size_t elem_size)
+{
+    vector_punned_t*       vector_dst = vec_dst;
+    const vector_punned_t* vector_src = vec_src;
+    if (vector_dst->size < vector_src->count) {
+        vector_grow_internal(vector_dst, elem_size, vector_src->count);
+    }
+    memcpy(vector_dst->data, vector_src->data, vector_src->count * elem_size);
+    vector_dst->count = vector_src->count;
+}
+
+void vector_swap_internal(void* vec_a, void* vec_b)
+{
+    vector_punned_t tmp = ZERO_INIT;
+    memcpy(&tmp, vec_a, sizeof(tmp));
+    memcpy(vec_a, vec_b, sizeof(tmp));
+    memcpy(vec_b, &tmp, sizeof(tmp));
 }
