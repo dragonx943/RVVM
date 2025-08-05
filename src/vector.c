@@ -19,18 +19,17 @@ typedef vector_t(void) safe_aliasing vector_punned_t;
 // Grow factor: 1.5 (Better memory reusage), initial capacity: 2
 slow_path void vector_grow_internal(void* vec, size_t elem_size, size_t pos)
 {
-    vector_punned_t* vector = vec;
-    if (!vector->size) {
-        // Allocate the vector buffer
-        vector->size = 2;
-        vector->data = safe_calloc(elem_size, vector->size);
+    vector_punned_t* vector   = vec;
+    size_t           new_size = vector->size ? vector->size : 2;
+    while (pos >= new_size) {
+        new_size += (new_size >> 1);
     }
-    if (pos >= vector->size) {
-        size_t new_size = vector->size;
-        while (pos >= new_size) {
-            new_size += (new_size >> 1);
+    if (new_size > vector->size) {
+        if (vector->data) {
+            vector->data = safe_realloc(vector->data, new_size * elem_size);
+        } else {
+            vector->data = safe_calloc(elem_size, new_size);
         }
-        vector->data = safe_realloc(vector->data, new_size * elem_size);
         vector->size = new_size;
     }
 }
