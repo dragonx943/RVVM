@@ -49,20 +49,14 @@ void vector_swap_internal(void* vec_a, void* vec_b);
     } while (0)
 
 /**
- * vector_free() - Free vector memory
- *
- * May be called multiple times, the vector is empty yet reusable afterwards,
- * thus it is semantically identical to vector_clear(), but also frees memory
+ * vector_at() - Access vector element at specific position
  */
-#define vector_free(vec) vector_free_internal(&(vec))
+#define vector_at(vec, pos)  ((vec).data[pos])
 
 /**
- * vector_clear() - Empty the vector
+ * vector_buffer() - Get vector elements buffer (Pointer to internal array)
  */
-#define vector_clear(vec)                                                                                              \
-    do {                                                                                                               \
-        (vec).count = 0;                                                                                               \
-    } while (0)
+#define vector_buffer(vec)   ((vec).data)
 
 /**
  * vector_size() - Get vector element count
@@ -75,45 +69,20 @@ void vector_swap_internal(void* vec_a, void* vec_b);
 #define vector_capacity(vec) ((vec).size)
 
 /**
- * vector_at() - Access vector element at specific position
+ * vector_clear() - Empty the vector
  */
-#define vector_at(vec, pos)  ((vec).data[pos])
-
-/**
- * vector_buffer() - Get vector elements buffer (Pointer to internal array)
- */
-#define vector_buffer(vec)   ((vec).data)
-
-/**
- * vector_copy() - Copy vector contents into another one
- */
-#define vector_copy(dst, src)                                                                                          \
+#define vector_clear(vec)                                                                                              \
     do {                                                                                                               \
-        if ((dst).data != (src).data) {                                                                                \
-            vector_copy_internal(&(dst), &(src), sizeof(*((src).data)));                                               \
-        }                                                                                                              \
+        (vec).count = 0;                                                                                               \
     } while (0)
 
 /**
- * vector_swap() - Swap contents of two vectors
+ * vector_free() - Empty the vector and free it's internal buffer
+ *
+ * May be called multiple times, the vector is empty yet reusable afterwards (Identically to vector_clear())
+ * Redundant after a vector_erase() call which left the vector empty
  */
-#define vector_swap(a, b)                                                                                              \
-    do {                                                                                                               \
-        if ((a).data != (b).data) {                                                                                    \
-            vector_swap_internal(&(a), &(b));                                                                          \
-        }                                                                                                              \
-    } while (0)
-
-/**
- * vector_resize() - Resize the vector, zeroing any newly alocated elements
- */
-#define vector_resize(vec, size)                                                                                       \
-    do {                                                                                                               \
-        if (unlikely((size) > (vec).count)) {                                                                          \
-            vector_emplace_internal(&(vec), sizeof(*((vec).data)), (size) - 1);                                        \
-        }                                                                                                              \
-        (vec).count = (size);                                                                                          \
-    } while (0)
+#define vector_free(vec)     vector_free_internal(&(vec))
 
 /**
  * vector_put() - Put element at specific position, resizing the vector if needed
@@ -168,12 +137,14 @@ void vector_swap_internal(void* vec_a, void* vec_b);
 
 /**
  * vector_erase() - Erase element at specific posision, move trailing elements backward
+ *
+ * Will compact / free the vector buffer if needed
  */
 #define vector_erase(vec, pos)         vector_erase_internal(&(vec), sizeof(*((vec).data)), pos)
 
 /**
  * vector_foreach() - Iterates the vector in forward order
- * WARN: It is prohibited to use vector_erase() inside such loops
+ * NOTE: It is prohibited to use vector_erase() inside such loops
  */
 #define vector_foreach(vec, iter)      for (size_t iter = 0; iter < (vec).count; ++iter)
 
@@ -181,6 +152,37 @@ void vector_swap_internal(void* vec_a, void* vec_b);
  * vector_foreach_back() - Iterates the vector in reversed order, which is safe for vector_erase()
  */
 #define vector_foreach_back(vec, iter) for (size_t iter = (vec).count; iter--;)
+
+/**
+ * vector_copy() - Copy vector contents into another one
+ */
+#define vector_copy(dst, src)                                                                                          \
+    do {                                                                                                               \
+        if ((dst).data != (src).data) {                                                                                \
+            vector_copy_internal(&(dst), &(src), sizeof(*((src).data)));                                               \
+        }                                                                                                              \
+    } while (0)
+
+/**
+ * vector_swap() - Swap contents of two vectors
+ */
+#define vector_swap(a, b)                                                                                              \
+    do {                                                                                                               \
+        if ((a).data != (b).data) {                                                                                    \
+            vector_swap_internal(&(a), &(b));                                                                          \
+        }                                                                                                              \
+    } while (0)
+
+/**
+ * vector_resize() - Resize the vector, zeroing any newly alocated elements
+ */
+#define vector_resize(vec, size)                                                                                       \
+    do {                                                                                                               \
+        if (unlikely((size) > (vec).count)) {                                                                          \
+            vector_emplace_internal(&(vec), sizeof(*((vec).data)), (size) - 1);                                        \
+        }                                                                                                              \
+        (vec).count = (size);                                                                                          \
+    } while (0)
 
 /**
  * vector_insert_sorted_ex() - Insert a value into a sorted vector (Comparing manually)

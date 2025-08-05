@@ -61,6 +61,12 @@ void vector_erase_internal(void* vec, size_t elem_size, size_t pos)
         vector->count--;
         vector_move_elem_internal(vector, elem_size, pos, true);
     }
+    if (!vector->count) {
+        vector_free_internal(vec);
+    } else if (vector->count < (vector->size >> 1)) {
+        vector->size -= (vector->size / 3);
+        vector->data  = safe_realloc(vector->data, vector->size * elem_size);
+    }
 }
 
 void vector_free_internal(void* vec)
