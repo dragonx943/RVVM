@@ -11,6 +11,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define RVJIT_H
 
 #include "hashmap.h"
+#include "mem_ops.h"
 #include "rvvm_types.h"
 #include "utils.h"
 #include "vector.h"
