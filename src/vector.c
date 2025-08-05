@@ -47,7 +47,7 @@ void vector_emplace_internal(void* vec, size_t elem_size, size_t pos)
     vector_punned_t* vector    = vec;
     size_t           new_count = EVAL_MAX(vector->count, pos) + 1;
     if (unlikely(new_count >= vector->size)) {
-        vector_grow_internal(vec, elem_size, new_count);
+        vector_grow_internal(vec, elem_size, new_count - 1);
     }
     if (pos < vector->count) {
         vector_move_elem_internal(vector, elem_size, pos, false);
@@ -83,7 +83,7 @@ void vector_copy_internal(void* vec_dst, const void* vec_src, size_t elem_size)
     vector_punned_t*       vector_dst = vec_dst;
     const vector_punned_t* vector_src = vec_src;
     if (vector_dst->size < vector_src->count) {
-        vector_grow_internal(vector_dst, elem_size, vector_src->count);
+        vector_grow_internal(vector_dst, elem_size, vector_src->count - 1);
     }
     memcpy(vector_dst->data, vector_src->data, vector_src->count * elem_size);
     vector_dst->count = vector_src->count;
