@@ -16,11 +16,14 @@ SOURCE_OPTIMIZATION_SIZE
 
 typedef vector_t(void) safe_aliasing vector_punned_t;
 
-// Grow factor: 1.5 (Better memory reusage), initial capacity: 2
+// Grow factor: 1.5 (Better memory reusage), initial capacity: 1
 slow_path void vector_grow_internal(void* vec, size_t elem_size, size_t pos)
 {
     vector_punned_t* vector   = vec;
-    size_t           new_size = vector->size ? vector->size : 2;
+    size_t           new_size = pos ? 2 : 1;
+    if (new_size < vector->size) {
+        new_size = vector->size;
+    }
     while (pos >= new_size) {
         new_size += (new_size >> 1);
     }
