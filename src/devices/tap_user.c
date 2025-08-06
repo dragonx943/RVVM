@@ -276,12 +276,22 @@ static void tcp_ipv4_checksum(uint8_t* ipv4, size_t size)
     write_uint16_be_m(tcp + 16, csum);
 }
 
-static void handle_icmp(tap_dev_t* tap, const uint8_t* buffer, size_t size, net_addr_t* dst, net_addr_t* src)
+static void emulate_icmp(tap_dev_t* tap, const uint8_t* buffer, size_t size, net_addr_t* dst, net_addr_t* src)
 {
     uint8_t frame[TAP_FRAME_SIZE];
     uint8_t* ipv4 = NULL;
     uint8_t* icmp = NULL;
+    ipv4 = create_eth_frame(tap, frame, ETH2_IPv4);
+    icmp = create_ipv4_frame(ipv4, size, IP_PROTO_ICMP, src->ip, dst->ip);
+    memcpy(icmp, buffer, size);
+    write_uint16_be_m(icmp, ICMP_ECHO_REP);
+    write_uint16_be_m(icmp + 2, 0); // Initial checksum is zero
+    write_uint16_be_m(icmp + 2, ip_checksum(icmp, size, 0));
+    eth_send(tap, frame, size + IPv4_HDR_SIZE + ETH2_HDR_SIZE);
+}
 
+static void handle_icmp(tap_dev_t* tap, const uint8_t* buffer, size_t size, net_addr_t* dst, net_addr_t* src)
+{
     static bool icmp_sock_available = true;
     if (size >= ICMP_HDR_SIZE && size < 1460 && read_uint16_be_m(buffer) == ICMP_ECHO_REQ) {
         uint16_t icmp_id = read_uint16_be_m(buffer+4);
@@ -295,11 +305,7 @@ static void handle_icmp(tap_dev_t* tap, const uint8_t* buffer, size_t size, net_
                 net_sock_set_blocking(sock, false);
 
                 if (sock) {
-
-                    DO_ONCE({
-                        rvvm_info("System supports DGRAM ICMP, continuing without ICMP emulation");
-                    });
-
+                    DO_ONCE(rvvm_info("System supports DGRAM ICMP, continuing without ICMP emulation"););
                     ts = safe_new_obj(tap_sock_t);
                     ts->sock = sock;
                     ts->addr = *src;
@@ -310,7 +316,7 @@ static void handle_icmp(tap_dev_t* tap, const uint8_t* buffer, size_t size, net_
                 } else {
                     icmp_sock_available = false;
                     spin_unlock(&tap->lock);
-                    goto emulate;
+                    return emulate_icmp(tap, buffer, size, dst, src);
                 }
             }
             if (ts->timeout != BOUND_INF) ts->timeout = 0;
@@ -319,15 +325,7 @@ static void handle_icmp(tap_dev_t* tap, const uint8_t* buffer, size_t size, net_
             net_icmp_send(ts->sock, buffer, size, dst);
             return;
         }
-
-    emulate:
-        ipv4 = create_eth_frame(tap, frame, ETH2_IPv4);
-        icmp = create_ipv4_frame(ipv4, size, IP_PROTO_ICMP, src->ip, dst->ip);
-        memcpy(icmp, buffer, size);
-        write_uint16_be_m(icmp, ICMP_ECHO_REP);
-        write_uint16_be_m(icmp + 2, 0); // Initial checksum is zero
-        write_uint16_be_m(icmp + 2, ip_checksum(icmp, size, 0));
-        eth_send(tap, frame, size + IPv4_HDR_SIZE + ETH2_HDR_SIZE);
+        emulate_icmp(tap, buffer, size, dst, src);
     }
 }
 
