@@ -118,9 +118,10 @@ typedef struct {
 
 typedef struct {
     net_sock_t* sock;
-    tcp_ctx_t*  tcp;  // If NULL, this is a UDP socket
+    tcp_ctx_t*  tcp;  // If NULL, this is a UDP or ICMP socket
     net_addr_t  addr; // Guest-side address
     uint32_t    timeout;
+    bool        icmp;
 } tap_sock_t;
 
 typedef vector_t(tap_sock_t*) ts_vec_t;
@@ -130,6 +131,7 @@ struct tap_dev {
     tap_net_dev_t net;
     net_poll_t*   poll;
     hashmap_t     udp_ports;
+    hashmap_t     icmp_ids;
     hashmap_t     tcp_map;
     ts_vec_t      tcp_listeners;
     thread_ctx_t* thread;
@@ -274,17 +276,56 @@ static void tcp_ipv4_checksum(uint8_t* ipv4, size_t size)
     write_uint16_be_m(tcp + 16, csum);
 }
 
+static void emulate_icmp(tap_dev_t* tap, const uint8_t* buffer, size_t size, net_addr_t* dst, net_addr_t* src)
+{
+    uint8_t frame[TAP_FRAME_SIZE];
+    uint8_t* ipv4 = NULL;
+    uint8_t* icmp = NULL;
+    ipv4 = create_eth_frame(tap, frame, ETH2_IPv4);
+    icmp = create_ipv4_frame(ipv4, size, IP_PROTO_ICMP, src->ip, dst->ip);
+    memcpy(icmp, buffer, size);
+    write_uint16_be_m(icmp, ICMP_ECHO_REP);
+    write_uint16_be_m(icmp + 2, 0); // Initial checksum is zero
+    write_uint16_be_m(icmp + 2, ip_checksum(icmp, size, 0));
+    eth_send(tap, frame, size + IPv4_HDR_SIZE + ETH2_HDR_SIZE);
+}
+
 static void handle_icmp(tap_dev_t* tap, const uint8_t* buffer, size_t size, net_addr_t* dst, net_addr_t* src)
 {
+    static bool icmp_sock_available = true;
     if (size >= ICMP_HDR_SIZE && size < 1460 && read_uint16_be_m(buffer) == ICMP_ECHO_REQ) {
-        uint8_t frame[TAP_FRAME_SIZE];
-        uint8_t* ipv4 = create_eth_frame(tap, frame, ETH2_IPv4);
-        uint8_t* icmp = create_ipv4_frame(ipv4, size, IP_PROTO_ICMP, src->ip, dst->ip);
-        memcpy(icmp, buffer, size);
-        write_uint16_be_m(icmp, ICMP_ECHO_REP);
-        write_uint16_be_m(icmp + 2, 0); // Initial checksum is zero
-        write_uint16_be_m(icmp + 2, ip_checksum(icmp, size, 0));
-        eth_send(tap, frame, size + IPv4_HDR_SIZE + ETH2_HDR_SIZE);
+        uint16_t icmp_id = read_uint16_be_m(buffer+4);
+        if (likely(icmp_sock_available)) {
+            spin_lock(&tap->lock);
+            tap_sock_t* ts = (tap_sock_t*)hashmap_get(&tap->icmp_ids, icmp_id);
+            if (ts == NULL) {
+                net_addr_t addr = *NET_IPV4_ANY;
+                addr.port = icmp_id;
+                net_sock_t* sock = net_icmp_bind(&addr);
+                net_sock_set_blocking(sock, false);
+
+                if (sock) {
+                    DO_ONCE(rvvm_info("System supports DGRAM ICMP, continuing without ICMP emulation"););
+                    ts = safe_new_obj(tap_sock_t);
+                    ts->sock = sock;
+                    ts->addr = *src;
+                    ts->icmp = true;
+                    hashmap_put(&tap->icmp_ids, icmp_id, (size_t)ts);
+                    net_event_t event = { .data = ts, .flags = NET_POLL_RECV, };
+                    net_poll_add(tap->poll, ts->sock, &event);
+                } else {
+                    icmp_sock_available = false;
+                    spin_unlock(&tap->lock);
+                    return emulate_icmp(tap, buffer, size, dst, src);
+                }
+            }
+            if (ts->timeout != BOUND_INF) ts->timeout = 0;
+            spin_unlock(&tap->lock);
+
+            net_icmp_send(ts->sock, buffer, size, dst);
+            return;
+        }
+        emulate_icmp(tap, buffer, size, dst, src);
     }
 }
 
@@ -867,6 +908,30 @@ static void tap_udp_recv(tap_dev_t* tap, tap_sock_t* ts)
     }
 }
 
+static void tap_icmp_recv(tap_dev_t* tap, tap_sock_t* ts)
+{
+    uint8_t buffer[TAP_FRAME_SIZE];
+    net_addr_t addr;
+    size_t offset = ETH2_HDR_SIZE + IPv4_HDR_SIZE;
+    size_t size = sizeof(buffer) - offset;
+
+    if (ts->timeout != BOUND_INF) ts->timeout = 0;
+    int32_t  result = net_icmp_recv(ts->sock, buffer + offset, size, &addr);
+    uint16_t icmp_id = net_icmp_id(ts->sock);
+
+    if (result >= 0) {
+        size = result;
+        tap_addr_convert(&addr);
+        uint8_t* ipv4 = create_eth_frame(tap, buffer, ETH2_IPv4);
+        uint8_t* icmp = create_ipv4_frame(ipv4, size, IP_PROTO_ICMP, ts->addr.ip, addr.ip);
+        memcpy(icmp, buffer+offset, size);
+        write_uint16_be_m(icmp + 4, icmp_id);
+        write_uint16_be_m(icmp + 2, 0); // Initial checksum is zero
+        write_uint16_be_m(icmp + 2, ip_checksum(icmp, size, 0));
+        eth_send(tap, buffer, size + IPv4_HDR_SIZE + ETH2_HDR_SIZE);
+    }
+}
+
 static void tap_tcp_recv(tap_dev_t* tap, tap_sock_t* ts)
 {
     if (!tcp_window_avail(ts->tcp)) {
@@ -1008,6 +1073,16 @@ static void tap_net_periodic(tap_dev_t* tap)
             break;
         }
     }
+
+    hashmap_foreach(&tap->icmp_ids, id, ts_val) {
+        tap_sock_t* ts = (tap_sock_t*)ts_val;
+        if (ts->timeout != BOUND_INF && ts->timeout++ >= 300) {
+            hashmap_remove(&tap->icmp_ids, id);
+            net_sock_close(ts->sock);
+            free(ts);
+            break;
+        }
+    }
 }
 
 static void* tap_thread(void* arg)
@@ -1045,6 +1120,8 @@ static void* tap_thread(void* arg)
                 } else {
                     tap_tcp_recv(tap, ts);
                 }
+            } else if (ts->icmp) {
+                tap_icmp_recv(tap, ts);
             } else {
                 // UDP
                 tap_udp_recv(tap, ts);
@@ -1075,6 +1152,7 @@ tap_dev_t* tap_open(void)
     net_poll_add(tap->poll, tap->shut[0], &event);
 
     hashmap_init(&tap->udp_ports, 16);
+    hashmap_init(&tap->icmp_ids, 16);
     hashmap_init(&tap->tcp_map, 16);
 
     return tap;
@@ -1157,11 +1235,18 @@ void tap_close(tap_dev_t* tap)
         net_sock_close(ts->sock);
         free(ts);
     }
+    hashmap_foreach(&tap->icmp_ids, id, ts_val) {
+        UNUSED(id);
+        tap_sock_t* ts = (tap_sock_t*)ts_val;
+        net_sock_close(ts->sock);
+        free(ts);
+    }
     vector_foreach(tap->tcp_listeners, i) {
         tap_tcp_close(NULL, vector_at(tap->tcp_listeners, i));
     }
     vector_free(tap->tcp_listeners);
     hashmap_destroy(&tap->udp_ports);
+    hashmap_destroy(&tap->icmp_ids);
     hashmap_destroy(&tap->tcp_map);
     net_sock_close(tap->shut[0]);
     net_poll_close(tap->poll);
