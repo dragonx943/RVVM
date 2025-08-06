@@ -1086,7 +1086,19 @@ size_t net_icmp_send(net_sock_t* sock, const void* buffer, size_t size, const ne
 
 int32_t net_icmp_recv(net_sock_t* sock, void* buffer, size_t size, net_addr_t* addr)
 {
-    return net_udp_recv(sock, buffer, size, addr);
+    int32_t ret = net_udp_recv(sock, buffer, size, addr);
+#if !defined(__linux__)
+    // Windows and MacOS keep IP header in received data packet
+    int32_t ip_hdr_size = (sock->addr.type == NET_TYPE_IPV6) ? 40 : 20;
+    if (sock->addr.type == NET_TYPE_IPV4 && ret > 0) {
+        ip_hdr_size = (read_uint8(buffer) & 0xF) << 2;
+    }
+    if (ret > ip_hdr_size) {
+        ret -= ip_hdr_size;
+        memmove(buffer, ((uint8_t*)buffer) + ip_hdr_size, ret);
+    }
+#endif
+    return ret;
 }
 
 uint16_t net_icmp_id(net_sock_t* sock)
