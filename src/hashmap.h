@@ -15,48 +15,23 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include <stddef.h>
 #include <stdint.h>
 
-// This is the worst-case scenario lookup complexity, only 1/256 of entries may reach this point at all.
-// Setting the value lower may improve worst-case scenario by a slight margin, but increases memory consumption by
-// orders of magnitude.
-#define HASHMAP_MAX_PROBES 256
-
 typedef struct randomize_layout {
     size_t key;
-    size_t val;
-} hashmap_bucket_t;
+    void*  val;
+} hashmap_cell_t;
 
-// Bucket with val=0 is treated as unused bucket to reduce memory usage (no additional flag), size is actually a bitmask
-// holding lowest 1s to represent size encoding space.
 typedef struct randomize_layout {
-    hashmap_bucket_t* buckets;
-    size_t            size;
-    size_t            entries;
-    size_t            entry_balance;
+    hashmap_cell_t* data;
+    size_t          mask;
+    size_t          count;
 } hashmap_t;
 
-// Internal hashmap implementation paths
-slow_path void hashmap_grow_internal(hashmap_t* map, size_t key, size_t val);
-slow_path void hashmap_shrink_internal(hashmap_t* map);
-slow_path void hashmap_rebalance_internal(hashmap_t* map, size_t index);
+/*
+ * Internal implementation functions
+ */
 
-// Hint the expected amount of entries on map creation
-void hashmap_init(hashmap_t* map, size_t size);
-void hashmap_destroy(hashmap_t* map);
-void hashmap_resize(hashmap_t* map, size_t size);
-void hashmap_clear(hashmap_t* map);
-
-static inline size_t hashmap_used_mem(hashmap_t* map)
-{
-    return (map->size + 1) * sizeof(hashmap_bucket_t);
-}
-
-#define hashmap_foreach(map, k, v)                                                                                     \
-    for (size_t k, v, MACRO_IDENT(hashmap_iter) = 0;                        /**/                                       \
-         k = ((map)->buckets[MACRO_IDENT(hashmap_iter) & (map)->size].key), /**/                                       \
-         v = ((map)->buckets[MACRO_IDENT(hashmap_iter) & (map)->size].val), /**/                                       \
-         MACRO_IDENT(hashmap_iter) <= (map)->size;                          /**/                                       \
-         ++MACRO_IDENT(hashmap_iter), (void)k)                              /**/                                       \
-        if (v)
+void  hashmap_put_internal(hashmap_t* map, size_t hash, size_t key, void* val);
+void* hashmap_get_internal(const hashmap_t* map, size_t hash, size_t key);
 
 static forceinline size_t hashmap_hash(size_t k)
 {
@@ -69,63 +44,110 @@ static forceinline size_t hashmap_hash(size_t k)
     return k;
 }
 
-static inline void hashmap_put(hashmap_t* map, size_t key, size_t val)
-{
-    size_t hash = hashmap_hash(key);
-    for (size_t i = 0; i < HASHMAP_MAX_PROBES; ++i) {
-        size_t index = (hash + i) & map->size;
+/*
+ * Hashmap interfaces
+ */
 
-        if (likely(!map->buckets[index].val)) {
-            // Empty bucket found, the key is unused
+void hashmap_free(hashmap_t* map);
+
+static forceinline void hashmap_put_ptr(hashmap_t* map, size_t key, void* val)
+{
+    size_t mask = map->mask;
+    size_t hash = hashmap_hash(key);
+
+    if (likely(mask)) {
+        size_t index = hash & mask;
+        if (likely(!map->data[index].val)) {
+            // Found empty cell
             if (likely(val)) {
-                map->buckets[index].key = key;
-                map->buckets[index].val = val;
-                map->entries++;
+                map->data[index].key = key;
+                map->data[index].val = val;
+                map->count++;
             }
             return;
-        } else if (likely(map->buckets[index].key == key)) {
-            // The key is already used, change value
-            map->buckets[index].val = val;
-            if (!val) {
-                // Value = 0 means we should clear a bucket
-                // Rebalance colliding trailing entries
-                map->entries--;
-                hashmap_rebalance_internal(map, index);
-            }
+        } else if (likely(map->data[index].key == key && val)) {
+            // Found cell with matching key
+            map->data[index].val = val;
             return;
         }
     }
-    // Near-key space is polluted with colliding entries, reallocate and rehash
-    // Puts the new entry as well to simplify the inlined function
-    if (unlikely(val)) {
-        hashmap_grow_internal(map, key, val);
-    }
+
+    hashmap_put_internal(map, hash, key, val);
 }
 
-static forceinline size_t hashmap_get(const hashmap_t* map, size_t key)
+static forceinline void* hashmap_get_ptr(const hashmap_t* map, size_t key)
 {
+    size_t mask = map->mask;
     size_t hash = hashmap_hash(key);
-    for (size_t i = 0; i < HASHMAP_MAX_PROBES; ++i) {
-        size_t index = (hash + i) & map->size;
-        if (likely(map->buckets[index].key == key || !map->buckets[index].val)) {
-            return map->buckets[index].val;
+
+    if (likely(mask)) {
+        size_t index = hash & mask;
+        if (likely(map->data[index].key == key)) {
+            // Found cell with matching key
+            return map->data[index].val;
+        }
+        if (map->data[index].val) {
+            // There are non-empty trailing cells
+            return hashmap_get_internal(map, hash, key);
         }
     }
+
     return 0;
 }
 
-static inline void hashmap_remove(hashmap_t* map, size_t key)
+static forceinline void hashmap_erase(hashmap_t* map, size_t key)
 {
-    // Treat value zero as removed key
-    hashmap_put(map, key, 0);
-    if (unlikely(map->entries < map->entry_balance && map->entries > 256)) {
-        hashmap_shrink_internal(map);
-    }
+    // Treat NULL as empty cell
+    hashmap_put_ptr(map, key, NULL);
 }
 
-static inline size_t hashmap_size(const hashmap_t* map)
+static forceinline size_t hashmap_size(const hashmap_t* map)
 {
-    return map->entries;
+    return map->count;
 }
+
+static forceinline size_t hashmap_capacity(const hashmap_t* map)
+{
+    return map->mask + 1;
+}
+
+static forceinline size_t hashmap_used_mem(const hashmap_t* map)
+{
+    return hashmap_capacity(map) * sizeof(hashmap_cell_t);
+}
+
+/*
+ * Foreach loop helper
+ */
+
+#define hashmap_foreach(map, k, v)                                                                                     \
+    if ((map)->mask)                                                                                                   \
+        for (size_t k, v, MACRO_IDENT(iter) = 0;                                                                       \
+             (MACRO_IDENT(iter) <= (map)->mask)                                                                        \
+                 ? (k = (map)->data[MACRO_IDENT(iter)].key, v = (size_t)(map)->data[MACRO_IDENT(iter)].val, 1)         \
+                 : 0;                                                                                                  \
+             ++MACRO_IDENT(iter), (void)k)                                                                             \
+            if (v)
+
+/*
+ * Helpers & old interfaces
+ */
+
+#define hashmap_init(map, ...)                                                                                         \
+    do {                                                                                                               \
+        (map)->data  = NULL;                                                                                           \
+        (map)->mask  = 0;                                                                                              \
+        (map)->count = 0;                                                                                              \
+    } while (0)
+
+#define hashmap_clear(map)         hashmap_free(map)
+
+#define hashmap_get(map, key)      ((size_t)hashmap_get_ptr(map, (size_t)(key)))
+
+#define hashmap_put(map, key, val) hashmap_put_ptr(map, (size_t)(key), (void*)(val))
+
+#define hashmap_remove(map, key)   hashmap_erase(map, (size_t)(key))
+
+#define hashmap_destroy(map)       hashmap_free(map)
 
 #endif

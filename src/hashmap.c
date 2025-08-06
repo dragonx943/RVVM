@@ -10,87 +10,106 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "hashmap.h"
 #include "bit_ops.h"
 #include "compiler.h"
-#include "mem_ops.h"
 #include "utils.h"
 
-slow_path void hashmap_grow_internal(hashmap_t* map, size_t key, size_t val)
-{
-    hashmap_resize(map, (map->size + 1) << 1);
-    hashmap_put(map, key, val);
-}
+#define HASHMAP_MAX_PROBES 256
 
-static size_t hashmap_calc_shrink(hashmap_t* map)
+static void hashmap_resize(hashmap_t* map, size_t size)
 {
-    if (unlikely(map->entries && map->entry_balance > map->entries)) {
-        return map->size / (map->entry_balance / map->entries);
-    }
-    return map->size;
-}
+    hashmap_t tmp = ZERO_INIT;
+    size          = bit_next_pow2(EVAL_MAX(size, 16));
+    tmp.data      = safe_calloc(size, sizeof(hashmap_cell_t));
+    tmp.mask      = size - 1;
 
-slow_path void hashmap_shrink_internal(hashmap_t* map)
-{
-    size_t size = hashmap_calc_shrink(map);
-    if (unlikely(size < map->size)) {
-        hashmap_resize(map, size);
-    }
-}
-
-slow_path void hashmap_rebalance_internal(hashmap_t* map, size_t index)
-{
-    size_t j = index, k;
-    while (true) {
-        map->buckets[index].val = 0;
-        do {
-            j = (j + 1) & map->size;
-            if (!map->buckets[j].val) {
-                return;
-            }
-            k = hashmap_hash(map->buckets[j].key) & map->size;
-        } while ((index <= j) ? (index < k && k <= j) : (index < k || k <= j));
-
-        map->buckets[index] = map->buckets[j];
-        index               = j;
-    }
-}
-
-void hashmap_init(hashmap_t* map, size_t size)
-{
-    if (!size) {
-        size = 16;
-    }
-    map->entries       = 0;
-    map->entry_balance = 0;
-    map->size          = bit_next_pow2(size) - 1;
-    map->buckets       = safe_new_arr(hashmap_bucket_t, map->size + 1);
-}
-
-void hashmap_destroy(hashmap_t* map)
-{
-    free(map->buckets);
-    memset(map, 0, sizeof(hashmap_t));
-}
-
-void hashmap_resize(hashmap_t* map, size_t size)
-{
-    hashmap_t tmp;
-    hashmap_init(&tmp, size);
     hashmap_foreach (map, k, v) {
         hashmap_put(&tmp, k, v);
     }
-    free(map->buckets);
-    map->buckets       = tmp.buckets;
-    map->size          = tmp.size;
-    map->entry_balance = map->entries;
+
+    hashmap_free(map);
+
+    map->data  = tmp.data;
+    map->mask  = tmp.mask;
+    map->count = tmp.count;
 }
 
-void hashmap_clear(hashmap_t* map)
+static void hashmap_rebalance_internal(hashmap_t* map, size_t index)
 {
-    size_t size = bit_next_pow2(hashmap_calc_shrink(map)) - 1;
-    if (size < map->size) {
-        map->size          = size;
-        map->buckets       = safe_realloc(map->buckets, (map->size + 1) * sizeof(hashmap_bucket_t));
-        map->entry_balance = map->entries;
+    size_t j = index, k;
+    while (true) {
+        map->data[index].val = 0;
+        do {
+            j = (j + 1) & map->mask;
+            if (!map->data[j].val) {
+                return;
+            }
+            k = hashmap_hash(map->data[j].key) & map->mask;
+        } while ((index <= j) ? (index < k && k <= j) : (index < k || k <= j));
+
+        map->data[index] = map->data[j];
+        index            = j;
     }
-    memset(map->buckets, 0, (map->size + 1) * sizeof(hashmap_bucket_t));
-    map->entries = 0;
+}
+
+void hashmap_put_internal(hashmap_t* map, size_t hash, size_t key, void* val)
+{
+    if (likely(map->data)) {
+        for (size_t i = 0; i < HASHMAP_MAX_PROBES; ++i) {
+            size_t index = (hash + i) & map->mask;
+
+            if (likely(!map->data[index].val)) {
+                // Empty cell found, the key is unused
+                if (likely(val)) {
+                    map->data[index].key = key;
+                    map->data[index].val = val;
+                    map->count++;
+                }
+                return;
+            } else if (likely(map->data[index].key == key)) {
+                // The key is already used, change value
+                map->data[index].val = val;
+                if (!val) {
+                    // Cell was erased
+                    map->count--;
+                    if (!map->count) {
+                        // Free the emptied hashmap
+                        hashmap_free(map);
+                    } else if (map->count < (hashmap_capacity(map) >> 2)) {
+                        // Compact the hashmap
+                        hashmap_resize(map, hashmap_capacity(map) >> 1);
+                    } else {
+                        // Rebalance trailing cells
+                        hashmap_rebalance_internal(map, index);
+                    }
+                }
+                return;
+            }
+        }
+    }
+
+    // Grow the hashmap and retry inserting
+    hashmap_resize(map, hashmap_capacity(map) << 1);
+    hashmap_put_ptr(map, key, val);
+}
+
+void* hashmap_get_internal(const hashmap_t* map, size_t hash, size_t key)
+{
+    if (likely(map->data)) {
+        for (size_t i = 0; i < HASHMAP_MAX_PROBES; ++i) {
+            size_t index = (hash + i) & map->mask;
+            if (likely(map->data[index].key == key || !map->data[index].val)) {
+                return map->data[index].val;
+            }
+        }
+    }
+    return 0;
+}
+
+void hashmap_free(hashmap_t* map)
+{
+    if (map->data && map->mask) {
+        safe_free(map->data);
+    }
+    map->data  = NULL;
+    map->mask  = 0;
+    map->count = 0;
 }
