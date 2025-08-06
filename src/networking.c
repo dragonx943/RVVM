@@ -18,12 +18,26 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #undef _DARWIN_C_SOURCE
 #define _DARWIN_C_SOURCE
 
+// Force 64-bit time_t
+#undef _TIME_BITS
+#define _TIME_BITS 64
+#undef _FILE_OFFSET_BITS
+#define _FILE_OFFSET_BITS 64
+
+// We only need a minimal WinAPI subset
+#undef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN 1
+
+// Allow unlimited nfds in select() on Darwin (MacOS)
+#undef _DARWIN_UNLIMITED_SELECT
+#define _DARWIN_UNLIMITED_SELECT
+
+#include "networking.h"
+#include "mem_ops.h"
+
 #if defined(_WIN32)
 
 // WinSock sockets
-
-// Override maximum amount of sockets for select()
-#define FD_SETSIZE 1024
 
 #include <winsock2.h> // For WSAStartup(), WSAGetLastError(), SetHandleInformation(), closesocket(), ioctlsocket()...
 #include <ws2tcpip.h> // For AF_INET6
@@ -38,27 +52,25 @@ typedef int    net_addrlen_t;
 // POSIX sockets
 #include <errno.h>       // For errno, EINPROGRESS, EAGAIN, EWOULDBLOCK, EINTR, ECONNRESET
 #include <fcntl.h>       // For fcntl(), F_GETFL, F_SETFL, F_SETFD, O_NONBLOCK, FD_CLOEXEC
-#include <netinet/in.h>  // For struct sockaddr_in, struct sockaddr_in6, IPPROTO_TCP
+#include <netinet/in.h>  // For struct sockaddr_in, struct sockaddr_in6, IPPROTO_TCP, IPPROTO_ICMP
 #include <netinet/tcp.h> // For TCP_NODELAY
 #include <signal.h>      // For signal(), SIGPIPE, SIG_DFL, SIG_IGN
 #include <sys/ioctl.h>   // For ioctl()
+#include <sys/select.h>  // For select()
 #include <sys/socket.h>  // For socklen_t, struct sockaddr, socket(), AF_INET, SOCK_DGRAM, SOCK_STREAM, SOL_SOCKET...
-#include <sys/time.h>    // For select()
 #include <unistd.h>      // For close(), syscall(__NR_accept4)
 
-// Abstract away socket type differences between Win32/POSIX
-typedef int       net_handle_t;
-typedef socklen_t net_addrlen_t;
-#define NET_HANDLE_INVALID (-1)
+#if CHECK_INCLUDE(sys/resource.h, 1)
+#include <sys/resource.h> // For struct rlimit, getrlimit(), setrlimit(), RLIMIT_NOFILE
+#endif
 
-#if defined(__linux__)
+#if defined(__linux__) && CHECK_INCLUDE(sys/syscall.h, 1)
 #include <sys/syscall.h> // For __NR_accept4, __NR_epoll_create
 #endif
 
 #if !defined(USE_SELECT) && ((defined(__linux__) && defined(__NR_epoll_create)) || defined(__illumos__))
 // Use epoll() for net_poll on Linux & Illumos
-#include <sys/epoll.h>    // For struct epoll_event, epoll_create(), epoll_ctl(), epoll_wait(), EPOLL_CTL_ADD...
-#include <sys/resource.h> // For struct rlimit, getrlimit(), setrlimit(), RLIMIT_NOFILE
+#include <sys/epoll.h> // For struct epoll_event, epoll_create(), epoll_ctl(), epoll_wait(), EPOLL_CTL_ADD...
 
 #define EPOLL_NET_IMPL 1
 
@@ -66,14 +78,21 @@ typedef socklen_t net_addrlen_t;
     && (defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__DragonFly__)                  \
         || (defined(__APPLE__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060))
 // Use kqueue() for net_poll on FreeBSD, OpenBSD, NetBSD, DragonFlyBSD and Apple
-#include <sys/event.h>    // For struct kevent, kqueue(), kevent(), EV_SET(), EVFILT_READ, EVFILT_WRITE
-#include <sys/resource.h> // For struct rlimit, getrlimit(), setrlimit(), RLIMIT_NOFILE
+#include <sys/event.h> // For struct kevent, kqueue(), kevent(), EV_SET(), EVFILT_READ, EVFILT_WRITE
 
 #define KQUEUE_NET_IMPL 1
 
 #endif
 
+// Abstract away socket type differences between Win32/POSIX
+typedef int       net_handle_t;
+typedef socklen_t net_addrlen_t;
+#define NET_HANDLE_INVALID (-1)
+
 #endif
+
+// Internal headers come after system headers because of safe_free() and winsock
+#include "utils.h"
 
 #if !(defined(EPOLL_NET_IMPL) || defined(KQUEUE_NET_IMPL))
 // Use select() for net_poll when neither epoll/kqueue are supported
@@ -86,11 +105,6 @@ typedef socklen_t net_addrlen_t;
 #define IPV6_NET_IMPL 1
 #endif
 
-// Internal headers come after system headers because of safe_free() and winsock
-#include "mem_ops.h"
-#include "networking.h"
-#include "utils.h"
-
 // Pass to send() to prevent SIGPIPE from being delivered (Linux, *BSD, Apple)
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0
@@ -98,6 +112,7 @@ typedef socklen_t net_addrlen_t;
 
 #if defined(SELECT_NET_IMPL)
 
+#include "hashmap.h"
 #include "rvtimer.h"
 #include "spinlock.h"
 #include "vector.h"
@@ -106,7 +121,13 @@ typedef struct {
     net_sock_t* sock;
     net_poll_t* poll;
     void*       data;
+    uint32_t    flags;
 } net_monitor_t;
+
+typedef vector_t(size_t) vec_fdset_t;
+
+#define VEC_FDSET_BITS (sizeof(size_t) * 8)
+#define VEC_FDSET_MASK (VEC_FDSET_BITS - 1)
 
 #endif
 
@@ -122,14 +143,12 @@ struct net_poll {
 #if defined(EPOLL_NET_IMPL) || defined(KQUEUE_NET_IMPL)
     net_handle_t fd;
 #else
-    vector_t(net_monitor_t*) events;
-    size_t                   consumed;
-    fd_set                   r_set, w_set;
-    fd_set                   r_ready, w_ready;
-    net_sock_t*              wake_sock[2];
-    spinlock_t               lock;
-    uint32_t                 waiters;
-    int                      max_fd;
+    // Maps socket handle to net_monitor_t*
+    hashmap_t   events;
+    vec_fdset_t r_set, w_set;
+    net_sock_t* wake_sock[2];
+    spinlock_t  lock;
+    uint32_t    waiters;
 #endif
 };
 
@@ -168,10 +187,13 @@ static void net_init_once(void)
         signal(SIGPIPE, handler);
     }
 #endif
-#if defined(EPOLL_NET_IMPL) || defined(KQUEUE_NET_IMPL)
+#if !defined(_WIN32) && defined(RLIMIT_NOFILE)
     struct rlimit rlim = {0};
     if (!getrlimit(RLIMIT_NOFILE, &rlim)) {
-        if (rlim.rlim_cur < rlim.rlim_max && rlim.rlim_max > 1024) {
+        if (rlim.rlim_max < 2048) {
+            rlim.rlim_max = 8192;
+        }
+        if (rlim.rlim_cur < rlim.rlim_max) {
             rlim.rlim_cur = rlim.rlim_max;
             if (!setrlimit(RLIMIT_NOFILE, &rlim)) {
                 rvvm_info("Raising RLIMIT_NOFILE to %u", (uint32_t)rlim.rlim_cur);
@@ -476,72 +498,98 @@ static int32_t net_last_error(void)
 // Wake up net_poll_wait() loop to update watched sockets
 static void net_poll_select_wake(net_poll_t* poll)
 {
-    if (atomic_load_uint32(&poll->waiters)) {
-        char tmp = 0;
-        net_tcp_send(poll->wake_sock[1], &tmp, sizeof(tmp));
-    }
+    char tmp = 0;
+    net_tcp_send(poll->wake_sock[1], &tmp, sizeof(tmp));
 }
 
-static void net_poll_select_set_flags(net_poll_t* poll, net_sock_t* sock, uint32_t flags)
+static void vec_fdset_mod(vec_fdset_t* vec, size_t fd, bool add)
 {
-    if (flags & NET_POLL_RECV) {
-        FD_SET(sock->fd, &poll->r_set);
+#if defined(_WIN32)
+    if (add) {
+        vector_push_back(*vec, fd);
     } else {
-        FD_CLR(sock->fd, &poll->r_set);
+        vector_foreach_back (*vec, i) {
+            if (vector_at(*vec, i) == fd) {
+                vector_erase(*vec, i);
+                break;
+            }
+        }
     }
-    if (flags & NET_POLL_SEND) {
-        FD_SET(sock->fd, &poll->w_set);
+    vector_put(*vec, 0, EVAL_MAX(vector_size(*vec), 1) - 1);
+#else
+    size_t index = fd / VEC_FDSET_BITS;
+    if (index >= vector_size(*vec)) {
+        vector_emplace(*vec, index);
+    }
+    if (add) {
+        vector_at(*vec, index) |= (1ULL << (fd & VEC_FDSET_MASK));
     } else {
-        FD_CLR(sock->fd, &poll->w_set);
+        vector_at(*vec, index) &= ~(1ULL << (fd & VEC_FDSET_MASK));
     }
+#endif
+}
+
+#if defined(_WIN32)
+
+#define vec_fdset_foreach(fdset, fd)                                                                                   \
+    if (vector_size(fdset) && vector_at(fdset, 0) < vector_size(fdset))                                                \
+        for (size_t i = 0, fd = 0; fd = vector_at(fdset, i + 1), i < vector_at(fdset, 0); ++i)
+
+#else
+
+#define vec_fdset_foreach(fdset, fd)                                                                                   \
+    vector_foreach (fdset, MACRO_IDENT(iter))                                                                          \
+        if (vector_at(fdset, MACRO_IDENT(iter)))                                                                       \
+            for (size_t MACRO_IDENT(bit) = 0, fd = 0;                                                                  \
+                 fd = (MACRO_IDENT(iter) * VEC_FDSET_BITS) + MACRO_IDENT(bit), MACRO_IDENT(bit) < VEC_FDSET_BITS;      \
+                 ++MACRO_IDENT(bit))                                                                                   \
+                if (vector_at(fdset, MACRO_IDENT(iter)) & (1ULL << MACRO_IDENT(bit)))
+
+#endif
+
+// Set poll flags, returns if wakeup is needed. MUST be called with poll->lock held!
+static bool net_poll_select_update(net_poll_t* poll, net_sock_t* sock, uint32_t old_flags, uint32_t new_flags)
+{
+    if ((old_flags ^ new_flags) & NET_POLL_RECV) {
+        vec_fdset_mod(&poll->r_set, (size_t)sock->fd, !!(new_flags & NET_POLL_RECV));
+    }
+    if ((old_flags ^ new_flags) & NET_POLL_SEND) {
+        vec_fdset_mod(&poll->w_set, (size_t)sock->fd, !!(new_flags & NET_POLL_SEND));
+    }
+    return (new_flags & ~old_flags) && poll->waiters;
 }
 
 // Add socket to net_poll watchlist
 static bool net_poll_select_add(net_poll_t* poll, net_sock_t* sock, const net_event_t* event)
 {
-    bool ret = false;
+    bool ret  = false;
+    bool wake = false;
     scoped_spin_lock (&poll->lock) {
-        if (FD_ISSET(sock->fd, &poll->r_set) || FD_ISSET(sock->fd, &poll->w_set)) {
+        if (hashmap_get_ptr(&poll->events, (size_t)sock->fd)) {
             // Socket already monitored
             break;
         }
-
-#if defined(_WIN32)
-        size_t num_sockets = vector_size(poll->events);
-#else
-        size_t num_sockets = sock->fd;
-#endif
-        if (num_sockets >= FD_SETSIZE) {
-            // Too much sockets on a single net_poll select instance
-            DO_ONCE(rvvm_warn("select(): ignoring sockets above FD_SETSIZE (%d)", (uint32_t)FD_SETSIZE));
-            break;
-        }
-
-#if !defined(_WIN32)
-        // Mark max_fd for select() on POSIX
-        if (poll->max_fd < sock->fd) {
-            poll->max_fd = sock->fd;
-        }
-#endif
 
         if (event) {
             // Add new socket monitor
             net_monitor_t* monitor = safe_new_obj(net_monitor_t);
             monitor->poll          = poll;
             monitor->sock          = sock;
+            monitor->flags         = event->flags | NET_POLL_RECV;
             monitor->data          = event->data;
-            vector_push_back(poll->events, monitor);
+
+            hashmap_put_ptr(&poll->events, (size_t)sock->fd, monitor);
             vector_push_back(sock->watchers, monitor);
 
             // Watch for event flags (NET_POLL_RECV is mandatory)
-            net_poll_select_set_flags(poll, sock, event->flags | NET_POLL_RECV);
+            wake = net_poll_select_update(poll, sock, 0, monitor->flags);
         } else {
             // Add internal wakeup socket
-            net_poll_select_set_flags(poll, sock, NET_POLL_RECV);
+            net_poll_select_update(poll, sock, 0, NET_POLL_RECV);
         }
         ret = true;
     }
-    if (ret) {
+    if (wake) {
         // Wake up waiters in select() to watch for newly added socket
         net_poll_select_wake(poll);
     }
@@ -554,15 +602,12 @@ static bool net_poll_select_mod(net_poll_t* poll, net_sock_t* sock, const net_ev
     bool ret  = false;
     bool wake = false;
     scoped_spin_lock (&poll->lock) {
-        vector_foreach (sock->watchers, i) {
-            net_monitor_t* monitor = vector_at(sock->watchers, i);
-            if (monitor->poll == poll) {
-                wake          = !FD_ISSET(sock->fd, &poll->w_set) && (event->flags & NET_POLL_SEND);
-                monitor->data = event->data;
-                net_poll_select_set_flags(poll, sock, event->flags | NET_POLL_RECV);
-                ret = true;
-                break;
-            }
+        net_monitor_t* monitor = hashmap_get_ptr(&poll->events, (size_t)sock->fd);
+        if (monitor) {
+            uint32_t flags = event->flags | NET_POLL_RECV;
+            wake           = net_poll_select_update(poll, sock, monitor->flags, flags);
+            monitor->flags = flags;
+            monitor->data  = event->data;
         }
     }
     if (wake) {
@@ -572,36 +617,27 @@ static bool net_poll_select_mod(net_poll_t* poll, net_sock_t* sock, const net_ev
     return ret;
 }
 
-// Remove socket from specific net_poll watchlist (Or any net_poll instance if poll == NULL)
-static bool net_poll_select_remove(net_poll_t* poll, net_sock_t* sock)
+// Remove socket from specific net_poll watchlist (Or any net_poll instance if from_poll == NULL)
+static bool net_poll_select_remove(net_poll_t* from_poll, net_sock_t* sock)
 {
     bool ret = false;
     vector_foreach_back (sock->watchers, i) {
         net_monitor_t* monitor = vector_at(sock->watchers, i);
-        if (monitor->poll == poll || !poll) {
-            net_poll_t* curr_poll = monitor->poll;
-            scoped_spin_lock (&curr_poll->lock) {
+        if (monitor->poll == from_poll || !from_poll) {
+            net_poll_t* poll = monitor->poll;
+            scoped_spin_lock (&poll->lock) {
                 // Stop watching events on this socket
-                net_poll_select_set_flags(curr_poll, sock, 0);
+                net_poll_select_update(poll, sock, monitor->flags, 0);
 
                 // Unlink watcher from net_poll
-                vector_foreach_back (curr_poll->events, j) {
-                    if (vector_at(curr_poll->events, j) == monitor) {
-                        // Skip this socket in events buffer
-                        if (curr_poll->consumed > j) {
-                            curr_poll->consumed--;
-                        }
-                        vector_erase(curr_poll->events, j);
-                        break;
-                    }
-                }
+                hashmap_erase(&poll->events, (size_t)sock->fd);
             }
             // Unlink watcher from socket
             vector_erase(sock->watchers, i);
-            free(monitor);
+            safe_free(monitor);
             ret = true;
-            if (poll) {
-                // Break if we only wanted to remove socket from specific net_pol
+            if (from_poll) {
+                // Break if we only wanted to remove socket from specific net_poll
                 break;
             }
         }
@@ -609,95 +645,94 @@ static bool net_poll_select_remove(net_poll_t* poll, net_sock_t* sock)
     return ret;
 }
 
-// Pump new net_poll events
-// NOTE: Must be called with poll->lock held!
-static bool net_poll_select_wait_events(net_poll_t* poll, uint32_t wait_ms)
-{
-    bool has_events = !!poll->consumed;
-    if (has_events) {
-        return true;
-    } else {
-        // No available buffered events to consume, call select()
-        rvtimer_t   timer = {0};
-        rvtimecmp_t cmp   = {0};
-        if (wait_ms != NET_POLL_INF) {
-            // Initizlize timeout timer & comparator
-            rvtimer_init(&timer, 1000);
-            rvtimecmp_init(&cmp, &timer);
-            rvtimecmp_set(&cmp, wait_ms);
-        }
-        do {
-            int             nfds   = poll->max_fd + 1;
-            struct timeval  tv     = {0};
-            struct timeval* tv_ptr = NULL;
-            if (wait_ms != NET_POLL_INF) {
-                // Use remaining timeout delay, short delay uses fast path without division
-                if (wait_ms < 1000) {
-                    tv.tv_usec = (wait_ms * 1000);
-                } else {
-                    tv.tv_sec  = (wait_ms / 1000);
-                    tv.tv_usec = (wait_ms % 1000) * 1000;
-                }
-                tv_ptr = &tv;
-            }
-
-            // Copy over read/write socket watchlist to ready bitsets
-            poll->r_ready = poll->r_set;
-            poll->w_ready = poll->w_set;
-
-            // Unlock data structures during select(), mark this thread as waiting
-            spin_unlock(&poll->lock);
-            atomic_add_uint32(&poll->waiters, 1);
-            has_events = select(nfds, &poll->r_ready, &poll->w_ready, NULL, tv_ptr) > 0;
-            atomic_sub_uint32(&poll->waiters, 1);
-            spin_lock(&poll->lock);
-
-            if (has_events && FD_ISSET(poll->wake_sock[0]->fd, &poll->r_ready)) {
-                // Consume wakeup bytes, retry select()
-                char buffer[256] = {0};
-                net_tcp_recv(poll->wake_sock[0], buffer, sizeof(buffer));
-                has_events = false;
-            }
-            if (!has_events && wait_ms != NET_POLL_INF) {
-                // Update delay
-                wait_ms = rvtimecmp_delay(&cmp);
-            }
-        } while (!has_events && (wait_ms == NET_POLL_INF || wait_ms));
-    }
-    return has_events;
-}
-
 static size_t net_poll_select_wait(net_poll_t* poll, net_event_t* events, size_t size, uint32_t wait_ms)
 {
-    size_t ret = 0;
-    scoped_spin_lock (&poll->lock) {
-        if (net_poll_select_wait_events(poll, wait_ms)) {
-            // Loop over socket monitors, check fd_set flags
-            for (size_t i = poll->consumed; i < vector_size(poll->events); ++i) {
-                net_monitor_t* monitor = vector_at(poll->events, i);
-                uint32_t       flags   = 0;
-                if (FD_ISSET(monitor->sock->fd, &poll->r_ready)) {
-                    flags |= NET_POLL_RECV;
-                }
-                if (FD_ISSET(monitor->sock->fd, &poll->w_ready)) {
-                    flags |= NET_POLL_SEND;
-                }
-                if (flags) {
+    size_t      ret   = 0;
+    rvtimer_t   timer = {0};
+    rvtimecmp_t cmp   = {0};
+
+    if (wait_ms != NET_POLL_INF) {
+        // Initizlize timeout timer & comparator
+        rvtimer_init(&timer, 1000);
+        rvtimecmp_init(&cmp, &timer);
+        rvtimecmp_set(&cmp, wait_ms);
+    }
+
+    do {
+        vec_fdset_t     r_ready = {0};
+        vec_fdset_t     w_ready = {0};
+        struct timeval  tv      = {0};
+        struct timeval* tv_ptr  = NULL;
+
+        if (wait_ms != NET_POLL_INF) {
+            tv.tv_sec  = (wait_ms / 1000);
+            tv.tv_usec = (wait_ms % 1000) * 1000;
+            tv_ptr     = &tv;
+        }
+
+        spin_lock(&poll->lock);
+        vector_copy(r_ready, poll->r_set);
+        vector_copy(w_ready, poll->w_set);
+
+
+        // Unlock data structures during select(), mark this thread as waiting
+        poll->waiters++;
+        spin_unlock(&poll->lock);
+        int  nfds = EVAL_MAX(vector_size(r_ready), vector_size(w_ready)) * VEC_FDSET_BITS;
+        bool wake = select(nfds, (void*)vector_buffer(r_ready), (void*)vector_buffer(w_ready), NULL, tv_ptr) > 0;
+        spin_lock(&poll->lock);
+        poll->waiters--;
+
+        if (wake) {
+            // Received some events
+            vec_fdset_foreach(w_ready, fd)
+            {
+                net_monitor_t* monitor = hashmap_get_ptr(&poll->events, fd);
+                if (monitor && (monitor->flags & NET_POLL_SEND) && ret < size) {
                     events[ret].data  = monitor->data;
-                    events[ret].flags = flags;
-                    if (++ret >= size) {
-                        // We filled caller event buffer, leave trailing buffered events
-                        poll->consumed = i + 1;
-                        break;
-                    }
+                    events[ret].flags = NET_POLL_SEND;
+                    ret++;
                 }
-                if ((i + 1) == vector_size(poll->events)) {
-                    // All events consumed, call select() next time
-                    poll->consumed = 0;
+            }
+            size_t merge_end = ret;
+            vec_fdset_foreach(r_ready, fd)
+            {
+                net_monitor_t* monitor = hashmap_get_ptr(&poll->events, fd);
+                if (monitor && (monitor->flags & NET_POLL_RECV)) {
+                    bool merged = false;
+                    for (size_t j = 0; j < merge_end; ++j) {
+                        if (events[j].data == monitor->data) {
+                            // Swap events to speed up future merging
+                            if (j != --merge_end) {
+                                events[j] = events[merge_end];
+                            }
+                            events[merge_end].data  = monitor->data;
+                            events[merge_end].flags = NET_POLL_RECV | NET_POLL_SEND;
+                            merged                  = true;
+                            break;
+                        }
+                    }
+                    if (!merged && ret < size) {
+                        events[ret].data  = monitor->data;
+                        events[ret].flags = NET_POLL_RECV;
+                        ret++;
+                    }
+                } else if (fd == (size_t)poll->wake_sock[0]->fd) {
+                    char tmp[256] = {0};
+                    net_tcp_recv(poll->wake_sock[0], tmp, sizeof(tmp));
                 }
             }
         }
-    }
+        spin_unlock(&poll->lock);
+
+        vector_free(r_ready);
+        vector_free(w_ready);
+
+        if (!ret && wait_ms != NET_POLL_INF) {
+            wait_ms = rvtimecmp_delay(&cmp);
+        }
+    } while (!ret && (wait_ms == NET_POLL_INF || wait_ms));
+
     return ret;
 }
 
@@ -1043,7 +1078,7 @@ int32_t net_udp_recv(net_sock_t* sock, void* buffer, size_t size, net_addr_t* ad
 }
 
 /*
- * DGRAM ICMP sockets, AFAIK only supported on Linux now
+ * DGRAM ICMP sockets, seem to work on Linux, MacOS, Windows XP+
  */
 
 net_sock_t* net_icmp_bind(const net_addr_t* addr)
@@ -1133,7 +1168,7 @@ void net_sock_close(net_sock_t* sock)
         vector_free(sock->watchers);
 #endif
         net_handle_close(sock->fd);
-        free(sock);
+        safe_free(sock);
     }
 }
 
@@ -1163,8 +1198,7 @@ net_poll_t* net_poll_create(void)
     }
     net_handle_set_cloexec(poll->fd);
 #else
-    FD_ZERO(&poll->r_set);
-    FD_ZERO(&poll->w_set);
+    hashmap_init(&poll->events, 16);
     if (!net_tcp_sockpair(poll->wake_sock) || !net_poll_select_add(poll, poll->wake_sock[0], NULL)) {
         // Failed to register wakeup socket
         net_poll_close(poll);
@@ -1316,8 +1350,8 @@ void net_poll_close(net_poll_t* poll)
         net_handle_close(poll->fd);
 #else
         // Unlink from related sockets
-        vector_foreach_back (poll->events, i) {
-            net_monitor_t* monitor = vector_at(poll->events, i);
+        hashmap_foreach (&poll->events, k, v) {
+            net_monitor_t* monitor = (net_monitor_t*)v;
             net_sock_t*    sock    = monitor->sock;
             vector_foreach_back (sock->watchers, j) {
                 if (vector_at(sock->watchers, j) == monitor) {
@@ -1325,12 +1359,12 @@ void net_poll_close(net_poll_t* poll)
                     break;
                 }
             }
-            free(monitor);
+            safe_free(monitor);
         }
-        vector_free(poll->events);
+        hashmap_free(&poll->events);
         net_sock_close(poll->wake_sock[0]);
         net_sock_close(poll->wake_sock[1]);
 #endif
-        free(poll);
+        safe_free(poll);
     }
 }
