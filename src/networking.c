@@ -124,10 +124,13 @@ typedef struct {
     uint32_t    flags;
 } net_monitor_t;
 
+#if defined(USE_SELECT_GENERIC) && !defined(_WIN32)
+typedef fd_set vec_fdset_t;
+#else
 typedef vector_t(size_t) vec_fdset_t;
-
 #define VEC_FDSET_BITS (sizeof(size_t) * 8)
 #define VEC_FDSET_MASK (VEC_FDSET_BITS - 1)
+#endif
 
 #endif
 
@@ -502,6 +505,10 @@ static void net_poll_select_wake(net_poll_t* poll)
     net_tcp_send(poll->wake_sock[1], &tmp, sizeof(tmp));
 }
 
+/*
+ * Optimized select() fd_set abstractions
+ */
+
 static void vec_fdset_mod(vec_fdset_t* vec, size_t fd, bool add)
 {
 #if defined(_WIN32)
@@ -516,6 +523,12 @@ static void vec_fdset_mod(vec_fdset_t* vec, size_t fd, bool add)
         }
     }
     vector_put(*vec, 0, EVAL_MAX(vector_size(*vec), 1) - 1);
+#elif defined(USE_SELECT_GENERIC)
+    if (add) {
+        FD_SET(fd, vec);
+    } else {
+        FD_CLR(fd, vec);
+    }
 #else
     size_t index = fd / VEC_FDSET_BITS;
     if (index >= vector_size(*vec)) {
@@ -525,27 +538,60 @@ static void vec_fdset_mod(vec_fdset_t* vec, size_t fd, bool add)
         vector_at(*vec, index) |= (1ULL << (fd & VEC_FDSET_MASK));
     } else {
         vector_at(*vec, index) &= ~(1ULL << (fd & VEC_FDSET_MASK));
+        for (size_t i = vector_size(*vec); i-- && !vector_at(*vec, i);) {
+            // Shorten the bit vector when needed
+            vector_erase(*vec, i);
+        }
     }
 #endif
 }
 
-#if defined(_WIN32)
-
-#define vec_fdset_foreach(fdset, fd)                                                                                   \
-    if (vector_size(fdset) && vector_at(fdset, 0) < vector_size(fdset))                                                \
-        for (size_t i = 0, fd = 0; fd = vector_at(fdset, i + 1), i < vector_at(fdset, 0); ++i)
-
+#if defined(USE_SELECT_GENERIC) && !defined(_WIN32)
+#define net_fdset_ptr(fdset)  ((void*)&(fdset))
+#define net_fdset_free(fdset) UNUSED(fdset)
+#define net_fdset_copy(fdset_dst, fdset_src)                                                                           \
+    do {                                                                                                               \
+        fdset_dst = fdset_src;                                                                                         \
+    } while (0)
+#define net_fdset_foreach(fdset, fd)                                                                                   \
+    for (size_t fd = 0; fd < FD_SETSIZE; ++fd)                                                                         \
+        if (FD_ISSET((net_handle_t)fd, &(fdset)))
 #else
-
-#define vec_fdset_foreach(fdset, fd)                                                                                   \
+#define net_fdset_ptr(fdset)                 ((void*)vector_buffer(fdset))
+#define net_fdset_free(fdset)                vector_free(fdset)
+#define net_fdset_copy(fdset_dst, fdset_src) vector_copy(fdset_dst, fdset_src)
+#if defined(_WIN32)
+#define net_fdset_foreach(fdset, fd)                                                                                   \
+    if (vector_size(fdset) > 1 && vector_at(fdset, 0) < vector_size(fdset))                                            \
+        for (size_t MACRO_IDENT(iter) = 0, fd = 0;                                                                     \
+             fd = vector_at(fdset, MACRO_IDENT(iter) + 1), MACRO_IDENT(iter) < vector_at(fdset, 0);                    \
+             ++MACRO_IDENT(iter))
+#else
+#define net_fdset_foreach(fdset, fd)                                                                                   \
     vector_foreach (fdset, MACRO_IDENT(iter))                                                                          \
         if (vector_at(fdset, MACRO_IDENT(iter)))                                                                       \
             for (size_t MACRO_IDENT(bit) = 0, fd = 0;                                                                  \
                  fd = (MACRO_IDENT(iter) * VEC_FDSET_BITS) + MACRO_IDENT(bit), MACRO_IDENT(bit) < VEC_FDSET_BITS;      \
                  ++MACRO_IDENT(bit))                                                                                   \
                 if (vector_at(fdset, MACRO_IDENT(iter)) & (1ULL << MACRO_IDENT(bit)))
-
 #endif
+#endif
+
+static int net_poll_select_prepare_nfds(net_poll_t* poll)
+{
+#if !defined(USE_SELECT_GENERIC) && !defined(_WIN32)
+    size_t max_size = EVAL_MAX(vector_size(poll->r_set), vector_size(poll->w_set));
+    if (vector_buffer(poll->r_set) && vector_buffer(poll->w_set)) {
+        // Match sizes of fd bitsets
+        vector_resize(poll->r_set, max_size);
+        vector_resize(poll->w_set, max_size);
+    }
+    return max_size * VEC_FDSET_BITS;
+#else
+    UNUSED(poll);
+    return FD_SETSIZE;
+#endif
+}
 
 // Set poll flags, returns if wakeup is needed. MUST be called with poll->lock held!
 static bool net_poll_select_update(net_poll_t* poll, net_sock_t* sock, uint32_t old_flags, uint32_t new_flags)
@@ -569,6 +615,13 @@ static bool net_poll_select_add(net_poll_t* poll, net_sock_t* sock, const net_ev
             // Socket already monitored
             break;
         }
+
+#if defined(USE_SELECT_GENERIC) || defined(__COSMOPOLITAN__)
+        if (sock->fd >= FD_SETSIZE) {
+            // FD value too high; Cosmopolitan doesn't support nfds > FD_SETSIZE
+            break;
+        }
+#endif
 
         if (event) {
             // Add new socket monitor
@@ -671,21 +724,21 @@ static size_t net_poll_select_wait(net_poll_t* poll, net_event_t* events, size_t
         }
 
         spin_lock(&poll->lock);
-        vector_copy(r_ready, poll->r_set);
-        vector_copy(w_ready, poll->w_set);
-
-
-        // Unlock data structures during select(), mark this thread as waiting
+        int nfds = net_poll_select_prepare_nfds(poll);
+        net_fdset_copy(r_ready, poll->r_set);
+        net_fdset_copy(w_ready, poll->w_set);
         poll->waiters++;
         spin_unlock(&poll->lock);
-        int  nfds = EVAL_MAX(vector_size(r_ready), vector_size(w_ready)) * VEC_FDSET_BITS;
-        bool wake = select(nfds, (void*)vector_buffer(r_ready), (void*)vector_buffer(w_ready), NULL, tv_ptr) > 0;
+
+        // Marked this thread as waiting; Unlock data structures during select()
+        bool wake = select(nfds, net_fdset_ptr(r_ready), net_fdset_ptr(w_ready), NULL, tv_ptr) > 0;
+
         spin_lock(&poll->lock);
         poll->waiters--;
 
         if (wake) {
             // Received some events
-            vec_fdset_foreach(w_ready, fd)
+            net_fdset_foreach(w_ready, fd)
             {
                 net_monitor_t* monitor = hashmap_get_ptr(&poll->events, fd);
                 if (monitor && (monitor->flags & NET_POLL_SEND) && ret < size) {
@@ -695,7 +748,7 @@ static size_t net_poll_select_wait(net_poll_t* poll, net_event_t* events, size_t
                 }
             }
             size_t merge_end = ret;
-            vec_fdset_foreach(r_ready, fd)
+            net_fdset_foreach(r_ready, fd)
             {
                 net_monitor_t* monitor = hashmap_get_ptr(&poll->events, fd);
                 if (monitor && (monitor->flags & NET_POLL_RECV)) {
@@ -725,8 +778,8 @@ static size_t net_poll_select_wait(net_poll_t* poll, net_event_t* events, size_t
         }
         spin_unlock(&poll->lock);
 
-        vector_free(r_ready);
-        vector_free(w_ready);
+        net_fdset_free(r_ready);
+        net_fdset_free(w_ready);
 
         if (!ret && wait_ms != NET_POLL_INF) {
             wait_ms = rvtimecmp_delay(&cmp);
