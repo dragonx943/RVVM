@@ -7,28 +7,8 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-// Make POSIX 2008, GNU, BSD, Darwin features available in strict C standard mode
-// For clock_gettime(), pthread_condattr_setclock(), pthread_cond_timedwait_relative_np(), syscall()
-#undef _GNU_SOURCE
-#define _GNU_SOURCE
-#undef _BSD_SOURCE
-#define _BSD_SOURCE
-#undef _DEFAULT_SOURCE
-#define _DEFAULT_SOURCE
-#undef _DARWIN_C_SOURCE
-#define _DARWIN_C_SOURCE
-#undef _POSIX_C_SOURCE
-#define _POSIX_C_SOURCE 200809L
-
-// Force 64-bit time_t
-#undef _TIME_BITS
-#define _TIME_BITS 64
-#undef _FILE_OFFSET_BITS
-#define _FILE_OFFSET_BITS 64
-
-// We only need a minimal WinAPI subset
-#undef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN 1
+// Expose clock_gettime(), pthread_condattr_setclock(), pthread_cond_timedwait_relative_np(), syscall()
+#include "feature_test.h"
 
 #include "threading.h"
 #include "atomics.h"
@@ -37,7 +17,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "spinlock.h"
 #include "vector.h"
 
-#if defined(_WIN32)
+#if defined(HOST_TARGET_WIN32)
 
 // Use Win32 threads & events; Use RtlWaitOnAddress() for futexes if present
 #include <windows.h>
@@ -45,7 +25,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 // For runtime feature probing
 #include "dlib.h"
 
-#if !defined(UNDER_CE)
+#if !defined(HOST_TARGET_WINCE)
 
 // Win32 futexes via RtlWaitOnAddress(), Win8+
 static BOOL (*__stdcall rtl_wait_on_addr)(const void*, const void*, size_t, const LARGE_INTEGER*) = NULL;
@@ -143,7 +123,7 @@ static int (*ulock_wake)(uint32_t op, void* ptr, uint64_t unused)           = NU
 // Internal headers come after system headers because of safe_free()
 #include "utils.h"
 
-#if defined(_WIN32)
+#if defined(HOST_TARGET_WIN32)
 
 /*
  * Precise sub-millisecond delay/timeout using high-resolution WaitableTimer (Win10 1803+)
@@ -303,14 +283,14 @@ static int pthread_cond_timedwait_ns_internal(pthread_cond_t* cond, pthread_mute
  */
 
 struct thread_ctx {
-#if defined(_WIN32)
+#if defined(HOST_TARGET_WIN32)
     HANDLE handle;
 #else
     pthread_t pthread;
 #endif
 };
 
-#if defined(_WIN32)
+#if defined(HOST_TARGET_WIN32)
 
 // Wrap our thread function call to bridge C/Win32 ABIs
 
@@ -331,7 +311,7 @@ static DWORD __stdcall thread_call_wrapper(void* arg)
 thread_ctx_t* thread_create_ex(thread_func_t func, void* arg, uint32_t stack_size)
 {
     thread_ctx_t* thread = safe_new_obj(thread_ctx_t);
-#if defined(_WIN32)
+#if defined(HOST_TARGET_WIN32)
     DWORD               threadid = 0;
     thread_call_wrap_t* wrap     = safe_new_obj(thread_call_wrap_t);
     wrap->func                   = func;
@@ -370,7 +350,7 @@ thread_ctx_t* thread_create(thread_func_t func, void* arg)
 bool thread_join(thread_ctx_t* thread)
 {
     if (thread) {
-#if defined(_WIN32)
+#if defined(HOST_TARGET_WIN32)
         if (WaitForSingleObject(thread->handle, INFINITE) || !CloseHandle(thread->handle)) {
             rvvm_warn("Failed to join thread!");
         }
@@ -390,7 +370,7 @@ bool thread_join(thread_ctx_t* thread)
 bool thread_detach(thread_ctx_t* thread)
 {
     if (thread) {
-#if defined(_WIN32)
+#if defined(HOST_TARGET_WIN32)
         CloseHandle(thread->handle);
 #else
         pthread_detach(thread->pthread);
@@ -523,9 +503,6 @@ static bool thread_futex_wait_emu(void* ptr, uint32_t val, uint64_t ns)
                 break;
             }
         }
-        if (!vector_size(queue->waiters)) {
-            vector_free(queue->waiters);
-        }
     }
     spin_unlock(&queue->lock);
 
@@ -613,7 +590,7 @@ void thread_futex_wake(void* ptr, uint32_t num)
 struct cond_var {
     uint32_t flag;
     uint32_t waiters;
-#if defined(_WIN32)
+#if defined(HOST_TARGET_WIN32)
     HANDLE event;
 #else
     pthread_cond_t  cond;
@@ -623,12 +600,12 @@ struct cond_var {
 
 static bool condvar_init_internal(cond_var_t* cond)
 {
-#if defined(_WIN32) && !defined(HOST_64BIT) && !defined(UNDER_CE)
+#if defined(HOST_TARGET_WIN32) && !defined(HOST_64BIT) && !defined(HOST_TARGET_WINCE)
     // Use ANSI syscall (Win9x compat)
     cond->event = CreateEventA(NULL, FALSE, FALSE, NULL);
     return !!cond->event;
 
-#elif defined(_WIN32)
+#elif defined(HOST_TARGET_WIN32)
     cond->event = CreateEventW(NULL, FALSE, FALSE, NULL);
     return !!cond->event;
 
@@ -659,7 +636,7 @@ static inline bool condvar_try_consume_signal(cond_var_t* cond)
 
 static bool condvar_wait_native_ns(cond_var_t* cond, uint64_t timeout_ns)
 {
-#if defined(_WIN32)
+#if defined(HOST_TARGET_WIN32)
     if (timeout_ns == CONDVAR_INFINITE) {
         // Wait infinitely
         return !WaitForSingleObject(cond->event, INFINITE);
@@ -746,7 +723,7 @@ static inline bool condvar_mark_signaled(cond_var_t* cond)
 
 static void condvar_wake_native(cond_var_t* cond, bool wake_all)
 {
-#if defined(_WIN32)
+#if defined(HOST_TARGET_WIN32)
     for (uint32_t i = wake_all ? condvar_waiters(cond) : 1; i--;) {
         SetEvent(cond->event);
     }
@@ -806,7 +783,7 @@ void condvar_free(cond_var_t* cond)
         if (waiters) {
             rvvm_warn("Destroying a condvar with %u waiters!", waiters);
         }
-#if defined(_WIN32)
+#if defined(HOST_TARGET_WIN32)
         if (cond->event) {
             CloseHandle(cond->event);
         }
