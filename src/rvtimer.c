@@ -7,20 +7,8 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-// Make POSIX 2008 features available in strict C standard mode
-// For clock_gettime(), nanosleep(), sched_yield()
-#undef _POSIX_C_SOURCE
-#define _POSIX_C_SOURCE 200809L
-
-// Force 64-bit time_t
-#undef _TIME_BITS
-#define _TIME_BITS 64
-#undef _FILE_OFFSET_BITS
-#define _FILE_OFFSET_BITS 64
-
-// We only need a minimal WinAPI subset
-#undef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN 1
+// Expose clock_gettime(), nanosleep(), sched_yield()
+#include "feature_test.h"
 
 #include "rvtimer.h"
 #include "atomics.h"
@@ -29,7 +17,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 // For nanosleep(), clock_gettime(), CLOCK_MONOTONIC, etc
 #include <time.h>
 
-#if defined(_WIN32)
+#if defined(HOST_TARGET_WIN32)
 
 // Use QueryPerformanceCounter(), QueryPerformanceFrequency()
 #include <windows.h>
@@ -202,7 +190,7 @@ uint64_t rvtimer_clocksource(uint64_t freq)
 
 uint64_t rvtimer_unixtime(void)
 {
-#if defined(_WIN32) && !defined(UNDER_CE)
+#if defined(HOST_TARGET_WIN32) && !defined(HOST_TARGET_WINCE)
     SYSTEMTIME st = {0};
     FILETIME   ft = {0};
     GetSystemTime(&st);
@@ -283,7 +271,7 @@ void sleep_low_latency(bool enable)
 
 void sleep_ns(uint64_t ns)
 {
-#if defined(_WIN32)
+#if defined(HOST_TARGET_WIN32)
     if (ns) {
         HANDLE timer = thread_local_waitable_timer(ns);
         if (timer) {
