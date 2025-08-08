@@ -7,27 +7,15 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-// Make POSIX/GNU/BSD features available in strict C standard mode
-// For pread()/pwrite()/readlink(), O_CLOEXEC
-#undef _GNU_SOURCE
-#define _GNU_SOURCE
-#undef _BSD_SOURCE
-#define _BSD_SOURCE
-#undef _DEFAULT_SOURCE
-#define _DEFAULT_SOURCE
-#undef _DARWIN_C_SOURCE
-#define _DARWIN_C_SOURCE
-#undef _POSIX_C_SOURCE
-#define _POSIX_C_SOURCE 200809L
+// Expose pread()/pwrite()/readlink(), O_CLOEXEC
+#include "feature_test.h"
 
-// Force 64-bit file offsets & time_t
-#undef _TIME_BITS
-#define _TIME_BITS 64
-#undef _FILE_OFFSET_BITS
-#define _FILE_OFFSET_BITS 64
-
-#include "pci-vfio.h"
+#include "atomics.h"
 #include "compiler.h"
+#include "mem_ops.h"
+#include "pci-vfio.h"
+#include "threading.h"
+#include "vector.h"
 
 // Check that <linux/vfio.h> include is available
 #if defined(__linux__) && defined(USE_VFIO) && !CHECK_INCLUDE(linux/vfio.h, 0)
@@ -48,11 +36,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include <linux/vfio.h>
 
 // Internal headers come after system ones due to safe_free()
-#include "atomics.h"
-#include "mem_ops.h"
-#include "threading.h"
 #include "utils.h"
-#include "vector.h"
 
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
