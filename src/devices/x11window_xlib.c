@@ -7,18 +7,16 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-// Must be defined before including <sys/ipc.h>
-#undef _GNU_SOURCE
-#define _GNU_SOURCE
-#undef _BSD_SOURCE
-#define _BSD_SOURCE
-#undef _DEFAULT_SOURCE
-#define _DEFAULT_SOURCE
-#undef _DARWIN_C_SOURCE
-#define _DARWIN_C_SOURCE
+// Must be included before <sys/ipc.h>
+#include "feature_test.h"
 
 #include "compiler.h"
+#include "dlib.h"
 #include "gui_window.h"
+#include "spinlock.h"
+#include "threading.h"
+#include "vector.h"
+#include "vma_ops.h"
 
 SOURCE_OPTIMIZATION_SIZE
 
@@ -170,12 +168,7 @@ X11_DLIB_SYM(XCloseDisplay)
 #endif
 
 // Internal headers come after system headers because of safe_free()
-#include "dlib.h"
-#include "spinlock.h"
-#include "threading.h"
 #include "utils.h"
-#include "vector.h"
-#include "vma_ops.h"
 
 // X11 window state
 typedef struct {
