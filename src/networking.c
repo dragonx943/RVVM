@@ -7,35 +7,10 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-// Make POSIX/GNU/BSD features available in strict C standard mode
-// For kqueue(), kevent(), syscall(), etc
-#undef _GNU_SOURCE
-#define _GNU_SOURCE
-#undef _BSD_SOURCE
-#define _BSD_SOURCE
-#undef _DEFAULT_SOURCE
-#define _DEFAULT_SOURCE
-#undef _DARWIN_C_SOURCE
-#define _DARWIN_C_SOURCE
+// Expose kqueue(), kevent(), syscall(), etc
+#include "feature_test.h"
 
-// Force 64-bit time_t
-#undef _TIME_BITS
-#define _TIME_BITS 64
-#undef _FILE_OFFSET_BITS
-#define _FILE_OFFSET_BITS 64
-
-// We only need a minimal WinAPI subset
-#undef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN 1
-
-// Allow unlimited nfds in select() on Darwin (MacOS)
-#undef _DARWIN_UNLIMITED_SELECT
-#define _DARWIN_UNLIMITED_SELECT
-
-#include "networking.h"
-#include "mem_ops.h"
-
-#if defined(_WIN32)
+#if defined(HOST_TARGET_WIN32)
 
 // WinSock sockets
 
@@ -59,6 +34,8 @@ typedef int    net_addrlen_t;
 #include <sys/select.h>  // For select()
 #include <sys/socket.h>  // For socklen_t, struct sockaddr, socket(), AF_INET, SOCK_DGRAM, SOCK_STREAM, SOL_SOCKET...
 #include <unistd.h>      // For close(), syscall(__NR_accept4)
+
+#include "compiler.h"
 
 #if CHECK_INCLUDE(sys/resource.h, 1)
 #include <sys/resource.h> // For struct rlimit, getrlimit(), setrlimit(), RLIMIT_NOFILE
@@ -92,6 +69,8 @@ typedef socklen_t net_addrlen_t;
 #endif
 
 // Internal headers come after system headers because of safe_free() and winsock
+#include "mem_ops.h"
+#include "networking.h"
 #include "utils.h"
 
 #if !(defined(EPOLL_NET_IMPL) || defined(KQUEUE_NET_IMPL))
@@ -124,7 +103,7 @@ typedef struct {
     uint32_t    flags;
 } net_monitor_t;
 
-#if defined(USE_SELECT_GENERIC) && !defined(_WIN32)
+#if defined(USE_SELECT_GENERIC) && !defined(HOST_TARGET_WIN32)
 typedef fd_set vec_fdset_t;
 #else
 typedef vector_t(size_t) vec_fdset_t;
@@ -175,7 +154,7 @@ const net_addr_t net_ipv6_local_addr = {
 
 static void net_init_once(void)
 {
-#if defined(_WIN32)
+#if defined(HOST_TARGET_WIN32)
     // Try to initialize WinSock 2.2, fallback to 2.1
     WSADATA wsaData = {0};
     if (WSAStartup(0x0202, &wsaData) && WSAStartup(0x0201, &wsaData)) {
@@ -190,7 +169,7 @@ static void net_init_once(void)
         signal(SIGPIPE, handler);
     }
 #endif
-#if !defined(_WIN32) && defined(RLIMIT_NOFILE)
+#if defined(HOST_TARGET_POSIX) && defined(RLIMIT_NOFILE)
     struct rlimit rlim = {0};
     if (!getrlimit(RLIMIT_NOFILE, &rlim)) {
         if (rlim.rlim_max < 2048) {
@@ -257,7 +236,7 @@ static void net_addr_from_sockaddr6(net_addr_t* addr, const struct sockaddr_in6*
 // Wrappers for generic operations on socket handles
 static void net_handle_close(net_handle_t fd)
 {
-#if defined(_WIN32)
+#if defined(HOST_TARGET_WIN32)
     closesocket(fd);
 #else
     close(fd);
@@ -266,7 +245,7 @@ static void net_handle_close(net_handle_t fd)
 
 static bool net_handle_set_blocking(net_handle_t fd, bool block)
 {
-#if defined(_WIN32)
+#if defined(HOST_TARGET_WIN32)
     u_long nb = block ? 0 : 1;
     return !ioctlsocket(fd, FIONBIO, &nb);
 #elif defined(FIONBIO)
@@ -291,7 +270,7 @@ static bool net_handle_set_blocking(net_handle_t fd, bool block)
 
 static void net_handle_set_cloexec(net_handle_t fd)
 {
-#if defined(_WIN32) && !defined(UNDER_CE) && defined(HANDLE_FLAG_INHERIT)
+#if defined(HOST_TARGET_WIN32) && !defined(HOST_TARGET_WINCE) && defined(HANDLE_FLAG_INHERIT)
     SetHandleInformation((HANDLE)fd, HANDLE_FLAG_INHERIT, 0);
 #elif defined(F_SETFD) && defined(FD_CLOEXEC)
     fcntl(fd, F_SETFD, FD_CLOEXEC);
@@ -393,7 +372,7 @@ static bool net_handle_bind(net_handle_t fd, const net_addr_t* addr)
 
 static inline bool net_conn_initiated(void)
 {
-#if defined(_WIN32)
+#if defined(HOST_TARGET_WIN32)
     return WSAGetLastError() == WSAEWOULDBLOCK;
 #else
     return errno == EINPROGRESS;
@@ -476,7 +455,7 @@ static net_sock_t* net_handle_wrap_remote_addr(net_handle_t fd, const net_addr_t
 
 static int32_t net_last_error(void)
 {
-#if defined(_WIN32)
+#if defined(HOST_TARGET_WIN32)
     int err = WSAGetLastError();
     if (err == WSAEWOULDBLOCK || err == WSAEINTR) {
         return NET_ERR_BLOCK;
@@ -516,7 +495,7 @@ static void net_poll_select_wake(net_poll_t* poll)
 
 static void vec_fdset_mod(vec_fdset_t* vec, size_t fd, bool add)
 {
-#if defined(_WIN32)
+#if defined(HOST_TARGET_WIN32)
     if (add) {
         vector_push_back(*vec, fd);
     } else {
@@ -547,7 +526,7 @@ static void vec_fdset_mod(vec_fdset_t* vec, size_t fd, bool add)
 #endif
 }
 
-#if defined(USE_SELECT_GENERIC) && !defined(_WIN32)
+#if defined(USE_SELECT_GENERIC) && !defined(HOST_TARGET_WIN32)
 #define net_fdset_ptr(fdset)  ((void*)&(fdset))
 #define net_fdset_free(fdset) UNUSED(fdset)
 #define net_fdset_copy(fdset_dst, fdset_src)                                                                           \
@@ -561,7 +540,7 @@ static void vec_fdset_mod(vec_fdset_t* vec, size_t fd, bool add)
 #define net_fdset_ptr(fdset)                 ((void*)vector_buffer(fdset))
 #define net_fdset_free(fdset)                vector_free(fdset)
 #define net_fdset_copy(fdset_dst, fdset_src) vector_copy(fdset_dst, fdset_src)
-#if defined(_WIN32)
+#if defined(HOST_TARGET_WIN32)
 #define net_fdset_foreach(fdset, fd)                                                                                   \
     if (vector_size(fdset) > 1 && vector_at(fdset, 0) < vector_size(fdset))                                            \
         for (size_t MACRO_IDENT(iter) = 0, fd = 0;                                                                     \
@@ -581,7 +560,7 @@ static void vec_fdset_mod(vec_fdset_t* vec, size_t fd, bool add)
 // Prepare fd bitsets, return nfds for select()
 static int net_poll_select_prepare_nfds(net_poll_t* poll)
 {
-#if !defined(USE_SELECT_GENERIC) && !defined(_WIN32)
+#if !defined(USE_SELECT_GENERIC) && !defined(HOST_TARGET_WIN32)
     size_t max_size = EVAL_MAX(vector_size(poll->r_set), vector_size(poll->w_set));
     for (size_t i = max_size; i--;) {
         // Shorten the bit vectors when needed
