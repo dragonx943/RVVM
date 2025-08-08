@@ -9,28 +9,8 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-// Make POSIX/GNU/BSD features available in strict C standard mode
-// For pread(), pwrite(), fallocate(), fdatasync(), posix_fallocate()
-#undef _GNU_SOURCE
-#define _GNU_SOURCE
-#undef _BSD_SOURCE
-#define _BSD_SOURCE
-#undef _DEFAULT_SOURCE
-#define _DEFAULT_SOURCE
-#undef _DARWIN_C_SOURCE
-#define _DARWIN_C_SOURCE
-#undef _POSIX_C_SOURCE
-#define _POSIX_C_SOURCE 200809L
-
-// Force 64-bit file offsets & time_t
-#undef _TIME_BITS
-#define _TIME_BITS 64
-#undef _FILE_OFFSET_BITS
-#define _FILE_OFFSET_BITS 64
-
-// We only need a minimal WinAPI subset
-#undef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN 1
+// Expose pread(), pwrite(), fallocate(), fdatasync(), posix_fallocate()
+#include "feature_test.h"
 
 #include "blk_io.h"
 
@@ -40,7 +20,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 // Valid rvopen() flags
 #define RVFILE_LEGAL_FLAGS 0x3F
 
-#if !defined(USE_STDIO) && (defined(__unix__) || defined(__APPLE__) || defined(__HAIKU__))
+#if !defined(USE_STDIO) && defined(HOST_TARGET_POSIX)
 
 // Threaded POSIX file implementation using pread() / pwrite()
 #include <errno.h>  // For errno
@@ -94,7 +74,7 @@ static bool try_lock_fd(int fd)
 
 #define POSIX_FILE_IMPL 1
 
-#elif !defined(USE_STDIO) && defined(_WIN32)
+#elif !defined(USE_STDIO) && defined(HOST_TARGET_WIN32)
 
 // Threaded Win32 file implementation using OVERLAPPED ReadFile() / WriteFile()
 // Fallbacks to locked seeking IO on legacy Windows versions
@@ -122,7 +102,7 @@ static bool rvfile_win32_has_threaded_io(void)
 {
 #if defined(HOST_64BIT)
     return true;
-#elif defined(UNDER_CE)
+#elif defined(HOST_TARGET_WINCE)
     return false;
 #else
     static uint32_t flag = 0;
@@ -143,7 +123,7 @@ static bool rvfile_win32_has_threaded_io(void)
 // Standard C stdio file implementation using a lock around fseek()+fread() / fseek()+fwrite()
 #include <stdio.h> // For fopen(), setvbuf(), fseek(), ftell(), fread(), fwrite(), fflush(), fileno()
 
-#if defined(_WIN32)
+#if defined(HOST_TARGET_WIN32)
 #include <io.h>      // For _get_osfhandle()
 #include <windows.h> // For GetModuleFileNameW(), WideCharToMultiByte() on WinCE
 #endif
@@ -192,17 +172,13 @@ static inline void rvfile_grow_internal(rvfile_t* file, uint64_t length)
     } while (!atomic_cas_uint64(&file->size, file_size, length));
 }
 
-#if defined(WIN32_LEGACY_FILE_IMPL)
-
-#endif
-
 rvfile_t* rvopen(const char* filepath, uint8_t filemode)
 {
     if (filemode & ~RVFILE_LEGAL_FLAGS) {
         return NULL;
     }
 
-#if defined(_WIN32) && defined(UNDER_CE)
+#if defined(HOST_TARGET_WINCE)
     // Windows CE doesn't support relative file paths, nor current working directory
     // Workaround by appending executable directory before each relative path
     char wince_path[256] = {0};
@@ -298,7 +274,7 @@ rvfile_t* rvopen(const char* filepath, uint8_t filemode)
         handle = CreateFileW(filepath_u16, access, share, NULL, disp, attr, NULL);
     }
 
-#if !defined(HOST_64BIT) && !defined(UNDER_CE)
+#if !defined(HOST_64BIT) && !defined(HOST_TARGET_WINCE)
     if ((handle == NULL || handle == INVALID_HANDLE_VALUE) && !rvfile_win32_has_threaded_io()) {
         // Try to open file via ANSI syscall (Win9x & WinNT 3.51 compat)
         handle = CreateFileA(filepath, access, share, NULL, disp, attr, NULL);
@@ -324,7 +300,6 @@ rvfile_t* rvopen(const char* filepath, uint8_t filemode)
             // Attempt to lock the drive
             DeviceIoControl(handle, FSCTL_LOCK_VOLUME, NULL, 0, NULL, 0, &drive_tmp, NULL);
             size = ((uint64_t)dg.Cylinders.QuadPart) * dg.TracksPerCylinder * dg.SectorsPerTrack * dg.BytesPerSector;
-            rvvm_warn("Size: %lld", size);
         }
     }
 #endif
@@ -702,7 +677,6 @@ bool rvfsync(rvfile_t* file)
 #if defined(__linux__) || (defined(__FreeBSD__) && __FreeBSD__ >= 12) || defined(__NetBSD__)
             ret = !fdatasync(file->fd);
 #else
-            rvvm_warn("fsync()");
             ret = !fsync(file->fd);
 #endif
             if (errno != EINTR) {
@@ -814,7 +788,7 @@ int rvfile_get_posix_fd(rvfile_t* file)
 {
 #if defined(POSIX_FILE_IMPL)
     return file->fd;
-#elif !defined(WIN32_FILE_IMPL) && (defined(__unix__) || defined(__APPLE__) || defined(__HAIKU__))
+#elif !defined(WIN32_FILE_IMPL) && defined(HOST_TARGET_POSIX)
     return fileno(file->fp);
 #else
     UNUSED(file);
@@ -826,9 +800,9 @@ void* rvfile_get_win32_handle(rvfile_t* file)
 {
 #if defined(WIN32_FILE_IMPL)
     return (void*)file->handle;
-#elif !defined(POSIX_FILE_IMPL) && defined(_WIN32) && defined(UNDER_CE)
+#elif !defined(POSIX_FILE_IMPL) && defined(HOST_TARGET_WINCE)
     return (void*)_fileno(file->fp);
-#elif !defined(POSIX_FILE_IMPL) && defined(_WIN32) && !defined(UNDER_CE)
+#elif !defined(POSIX_FILE_IMPL) && defined(HOST_TARGET_WIN32)
     return (void*)_get_osfhandle(_fileno(file->fp));
 #else
     UNUSED(file);
@@ -837,7 +811,7 @@ void* rvfile_get_win32_handle(rvfile_t* file)
 }
 
 /*
- * Block device layer
+ * Raw block devices
  */
 
 static void blk_raw_close(void* dev)
