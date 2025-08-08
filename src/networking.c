@@ -324,13 +324,18 @@ static net_handle_t net_handle_create_ex(int domain, int type, int proto, bool b
                 net_handle_set_cloexec(fd);
             }
         }
-#if defined(IPPROTO_TCP) && defined(TCP_NODELAY)
-        // Enable TCP_NODELAY on TCP sockets
         if (fd != NET_HANDLE_INVALID && type == SOCK_STREAM) {
-            int nodelay = 1;
-            setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (void*)&nodelay, sizeof(nodelay));
-        }
+            int enable = 1;
+            UNUSED(enable);
+#if defined(IPPROTO_TCP) && defined(TCP_NODELAY)
+            // Enable TCP_NODELAY on TCP sockets
+            setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (void*)&enable, sizeof(enable));
 #endif
+#if defined(SOL_SOCKET) && defined(SO_OOBINLINE)
+            // Enable SO_OOBINLINE on TCP sockets
+            setsockopt(fd, SOL_SOCKET, SO_OOBINLINE, (void*)&enable, sizeof(enable));
+#endif
+        }
     }
     return fd;
 }
@@ -538,10 +543,6 @@ static void vec_fdset_mod(vec_fdset_t* vec, size_t fd, bool add)
         vector_at(*vec, index) |= (1ULL << (fd & VEC_FDSET_MASK));
     } else {
         vector_at(*vec, index) &= ~(1ULL << (fd & VEC_FDSET_MASK));
-        for (size_t i = vector_size(*vec); i-- && !vector_at(*vec, i);) {
-            // Shorten the bit vector when needed
-            vector_erase(*vec, i);
-        }
     }
 #endif
 }
@@ -577,10 +578,22 @@ static void vec_fdset_mod(vec_fdset_t* vec, size_t fd, bool add)
 #endif
 #endif
 
+// Prepare fd bitsets, return nfds for select()
 static int net_poll_select_prepare_nfds(net_poll_t* poll)
 {
 #if !defined(USE_SELECT_GENERIC) && !defined(_WIN32)
     size_t max_size = EVAL_MAX(vector_size(poll->r_set), vector_size(poll->w_set));
+    for (size_t i = max_size; i--;) {
+        // Shorten the bit vectors when needed
+        if (vector_size(poll->r_set) > i && vector_at(poll->r_set, i)) {
+            break;
+        } else if (vector_size(poll->w_set) > i && vector_at(poll->w_set, i)) {
+            break;
+        }
+        vector_erase(poll->r_set, i);
+        vector_erase(poll->w_set, i);
+        max_size = i;
+    }
     if (vector_buffer(poll->r_set) && vector_buffer(poll->w_set)) {
         // Match sizes of fd bitsets
         vector_resize(poll->r_set, max_size);
@@ -1001,6 +1014,9 @@ net_sock_t* net_tcp_connect(const net_addr_t* dst, const net_addr_t* src, bool b
 bool net_tcp_sockpair(net_sock_t* pair[2])
 {
     net_sock_t* listener = net_tcp_listen(NET_IPV4_LOCAL);
+    // Always return NULL sockets on failure
+    pair[0] = NULL;
+    pair[1] = NULL;
     if (listener) {
         pair[0] = net_tcp_connect(net_sock_addr(listener), NULL, false);
         if (pair[0]) {
@@ -1014,8 +1030,6 @@ bool net_tcp_sockpair(net_sock_t* pair[2])
         net_sock_close(pair[0]);
         net_sock_close(pair[1]);
     }
-    pair[0] = NULL;
-    pair[1] = NULL;
     return false;
 }
 
@@ -1271,14 +1285,10 @@ bool net_poll_add(net_poll_t* poll, net_sock_t* sock, const net_event_t* event)
         };
         return !epoll_ctl(poll->fd, EPOLL_CTL_ADD, sock->fd, &ev);
 #elif defined(KQUEUE_NET_IMPL)
-        struct kevent ev[3] = {0};
+        struct kevent ev[2] = {0};
         EV_SET(&ev[0], sock->fd, EVFILT_READ, EV_ADD, 0, 0, event->data);
-        EV_SET(&ev[1], sock->fd, EVFILT_WRITE, EV_ADD, 0, 0, event->data);
-        if (event->flags & NET_POLL_SEND) {
-            EV_SET(&ev[2], sock->fd, EVFILT_WRITE, EV_ENABLE, 0, 0, event->data);
-        } else {
-            EV_SET(&ev[2], sock->fd, EVFILT_WRITE, EV_DISABLE, 0, 0, event->data);
-        }
+        EV_SET(&ev[1], sock->fd, EVFILT_WRITE, //
+               EV_ADD | ((event->flags & NET_POLL_SEND) ? 0 : EV_DISABLE), 0, 0, event->data);
         return !kevent(poll->fd, ev, STATIC_ARRAY_SIZE(ev), NULL, 0, NULL);
 #else
         return net_poll_select_add(poll, sock, event);
@@ -1297,8 +1307,11 @@ bool net_poll_mod(net_poll_t* poll, net_sock_t* sock, const net_event_t* event)
         };
         return !epoll_ctl(poll->fd, EPOLL_CTL_MOD, sock->fd, &ev);
 #elif defined(KQUEUE_NET_IMPL)
-        // There's no way to completely mimic EPOLL_CTL_MOD on kqueue without extra syscalls
-        return net_poll_add(poll, sock, event);
+        struct kevent ev[2] = {0};
+        EV_SET(&ev[0], sock->fd, EVFILT_READ, EV_ENABLE, 0, 0, event->data);
+        EV_SET(&ev[1], sock->fd, EVFILT_WRITE, //
+               (event->flags & NET_POLL_SEND) ? EV_ENABLE : EV_DISABLE, 0, 0, event->data);
+        return !kevent(poll->fd, ev, STATIC_ARRAY_SIZE(ev), NULL, 0, NULL);
 #else
         return net_poll_select_mod(poll, sock, event);
 #endif
