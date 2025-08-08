@@ -8,10 +8,14 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
+// Expose termios, ONLCR, O_NOCTTY, O_CLOEXEC
+#include "feature_test.h"
+
 #include "chardev.h"
 #include <stdio.h> // For fputs(), setvbuf()
 
-#if defined(__unix__) || defined(__APPLE__) || defined(__HAIKU__)
+#if defined(HOST_TARGET_POSIX)
+
 #include <fcntl.h>    // For open()
 #include <sys/time.h> // For select()
 #include <termios.h>  // For tcgetattr(), tcsetattr(), etc
@@ -20,20 +24,31 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
 #endif
-
 #ifndef O_NOCTTY
 #define O_NOCTTY 0
 #endif
 
+#ifndef ONLCR
+#define ONLCR 0
+#endif
+#ifndef OPOST
+#define OPOST 0
+#endif
+#ifndef CREAD
+#define CREAD 0
+#endif
+
 #define POSIX_TERM_IMPL 1
 
-#elif defined(_WIN32) && !defined(UNDER_CE)
+#elif defined(HOST_TARGET_WIN32) && !defined(HOST_TARGET_WINCE)
+
 #include <conio.h>   // For _kbhit()
 #include <windows.h> // For GetStdHandle(), ReadFile(), WriteFile(), SetConsoleMode(), etc
 
 #define WIN32_TERM_IMPL 1
 
 #else
+
 // Fallback to stdio
 #include "mem_ops.h"
 #warning No terminal input support!
