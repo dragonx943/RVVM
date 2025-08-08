@@ -7,38 +7,18 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-// Make POSIX/GNU/BSD features available in strict C standard mode
-// For getpwnam_r(), prctl(), pledge()
-#undef _GNU_SOURCE
-#define _GNU_SOURCE
-#undef _BSD_SOURCE
-#define _BSD_SOURCE
-#undef _DEFAULT_SOURCE
-#define _DEFAULT_SOURCE
-#undef _DARWIN_C_SOURCE
-#define _DARWIN_C_SOURCE
-#undef _POSIX_C_SOURCE
-#define _POSIX_C_SOURCE 200809L
+// Expose getpwnam_r(), prctl(), pledge()
+#include "feature_test.h"
 
-// Force 64-bit file offsets & time_t
-#undef _TIME_BITS
-#define _TIME_BITS 64
-#undef _FILE_OFFSET_BITS
-#define _FILE_OFFSET_BITS 64
-
-// We only need a minimal WinAPI subset
-#undef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN 1
-
-#include "rvvm_isolation.h"
 #include "compiler.h"
+#include "rvvm_isolation.h"
 
 #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__) || defined(__SANITIZE_MEMORY)
 // Do not isolate under sanitizers to prevent breakage
 #define SANITIZERS_PRESENT 1
 #endif
 
-#if defined(USE_ISOLATION) && (defined(__unix__) || defined(__APPLE__))
+#if defined(USE_ISOLATION) && defined(HOST_TARGET_POSIX)
 #include <errno.h>  // For errno, ENOSYS, EINVAL, etc
 #include <pwd.h>    // For struct passwd, getpwnam_r()
 #include <string.h> // For strerror()
