@@ -7,20 +7,12 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-// Make GNU, BSD, Darwin features available in strict C standard mode
-// For syscall(), sysconf(), madvise(), mremap(), MAP_ANON
-#undef _GNU_SOURCE
-#define _GNU_SOURCE
-#undef _BSD_SOURCE
-#define _BSD_SOURCE
-#undef _DEFAULT_SOURCE
-#define _DEFAULT_SOURCE
-#undef _DARWIN_C_SOURCE
-#define _DARWIN_C_SOURCE
+// Expose syscall(), sysconf(), madvise(), mremap(), ftruncate(), MAP_ANON
+#include "feature_test.h"
 
 #include "vma_ops.h"
 
-#if defined(_WIN32)
+#if defined(HOST_TARGET_WIN32)
 
 // Win32 VMA implementation using VirtualAlloc(), VirtualFree(), VirtualProtect(), MapViewOfFile(), etc
 #include <windows.h>
@@ -72,7 +64,7 @@ static inline DWORD vma_native_view_prot(uint32_t flags)
 
 #define VMA_WIN32_IMPL 1
 
-#elif defined(__unix__) || defined(__APPLE__) || defined(__HAIKU__)
+#elif defined(HOST_TARGET_POSIX)
 
 // POSIX VMA implementation using mmap(), munmap(), madvise(), etc
 #include <fcntl.h>    // For open(), O_*
