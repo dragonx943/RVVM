@@ -103,7 +103,7 @@ typedef struct {
     uint32_t    flags;
 } net_monitor_t;
 
-#if defined(USE_SELECT_GENERIC) && !defined(HOST_TARGET_WIN32)
+#if defined(USE_SELECT_GENERIC)
 typedef fd_set vec_fdset_t;
 #else
 typedef vector_t(size_t) vec_fdset_t;
@@ -495,24 +495,24 @@ static void net_poll_select_wake(net_poll_t* poll)
 
 static void vec_fdset_mod(vec_fdset_t* vec, size_t fd, bool add)
 {
-#if defined(HOST_TARGET_WIN32)
+#if defined(USE_SELECT_GENERIC)
     if (add) {
-        vector_push_back(*vec, fd);
+        FD_SET(fd, vec);
+    } else {
+        FD_CLR(fd, vec);
+    }
+#elif defined(HOST_TARGET_WIN32)
+    if (add) {
+        vector_insert(*vec, EVAL_MAX(vector_size(*vec), 1), fd);
     } else {
         vector_foreach_back (*vec, i) {
-            if (vector_at(*vec, i) == fd) {
+            if (vector_at(*vec, i) == fd && i) {
                 vector_erase(*vec, i);
                 break;
             }
         }
     }
     vector_put(*vec, 0, EVAL_MAX(vector_size(*vec), 1) - 1);
-#elif defined(USE_SELECT_GENERIC)
-    if (add) {
-        FD_SET(fd, vec);
-    } else {
-        FD_CLR(fd, vec);
-    }
 #else
     size_t index = fd / VEC_FDSET_BITS;
     if (index >= vector_size(*vec)) {
@@ -526,16 +526,23 @@ static void vec_fdset_mod(vec_fdset_t* vec, size_t fd, bool add)
 #endif
 }
 
-#if defined(USE_SELECT_GENERIC) && !defined(HOST_TARGET_WIN32)
+#if defined(USE_SELECT_GENERIC)
 #define net_fdset_ptr(fdset)  ((void*)&(fdset))
 #define net_fdset_free(fdset) UNUSED(fdset)
 #define net_fdset_copy(fdset_dst, fdset_src)                                                                           \
     do {                                                                                                               \
         fdset_dst = fdset_src;                                                                                         \
     } while (0)
+#if defined(HOST_TARGET_WIN32)
+#define net_fdset_foreach(fdset, fd)                                                                                   \
+    for (size_t MACRO_IDENT(iter) = 0, fd = 0;                                                                         \
+         (MACRO_IDENT(iter) < (fdset).fd_count) ? (fd = (fdset).fd_array[MACRO_IDENT(iter)], 1) : 0;                   \
+         ++MACRO_IDENT(iter))
+#else
 #define net_fdset_foreach(fdset, fd)                                                                                   \
     for (size_t fd = 0; fd < FD_SETSIZE; ++fd)                                                                         \
         if (FD_ISSET((net_handle_t)fd, &(fdset)))
+#endif
 #else
 #define net_fdset_ptr(fdset)                 ((void*)vector_buffer(fdset))
 #define net_fdset_free(fdset)                vector_free(fdset)
@@ -544,7 +551,7 @@ static void vec_fdset_mod(vec_fdset_t* vec, size_t fd, bool add)
 #define net_fdset_foreach(fdset, fd)                                                                                   \
     if (vector_size(fdset) > 1 && vector_at(fdset, 0) < vector_size(fdset))                                            \
         for (size_t MACRO_IDENT(iter) = 0, fd = 0;                                                                     \
-             fd = vector_at(fdset, MACRO_IDENT(iter) + 1), MACRO_IDENT(iter) < vector_at(fdset, 0);                    \
+             (MACRO_IDENT(iter) < vector_at(fdset, 0)) ? (fd = vector_at(fdset, MACRO_IDENT(iter) + 1), 1) : 0;        \
              ++MACRO_IDENT(iter))
 #else
 #define net_fdset_foreach(fdset, fd)                                                                                   \
@@ -608,7 +615,7 @@ static bool net_poll_select_add(net_poll_t* poll, net_sock_t* sock, const net_ev
             break;
         }
 
-#if defined(USE_SELECT_GENERIC) || defined(__COSMOPOLITAN__)
+#if defined(USE_SELECT_GENERIC) && !defined(HOST_TARGET_WIN32) || defined(__COSMOPOLITAN__)
         if (sock->fd >= FD_SETSIZE) {
             // FD value too high; Cosmopolitan doesn't support nfds > FD_SETSIZE
             break;
