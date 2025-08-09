@@ -184,7 +184,7 @@ override path_wrap = $(subst $(SPACE),?,$(call path_make,$1))
 override str_wrap = $(QUOT)$(subst $(SPACE),$(MAGIC),$(subst $(QUOT),\$(QUOT),$(subst $(NEWLINE),\n,$(subst \,\\,$1)))$(QUOT))
 
 # Escape shell invocation containing internal path/string representations
-override shell_esc = $(foreach part,$1,$(if $(filter "%",$(part)),$(subst $(MAGIC),$(SPACE),$(part)),$(subst /,$(if $(filter windows,$(HOST_OS)),\,/),$(subst $(QUOT),\$(QUOT),$(call path_shell,$(part))))))
+override shell_esc = $(foreach part,$1,$(if $(filter "%",$(part)),$(subst $(MAGIC),$(SPACE),$(part)),$(subst /,$(PATH_SEPARATOR),$(subst $(QUOT),\$(QUOT),$(call path_shell,$(part))))))
 
 # Invoke shell command with escaping
 override shell_ex = $(shell $(call shell_esc,$1))
@@ -218,7 +218,7 @@ override recursive_match = $(filter $(subst *,%,$2),$(call tree_dir,$1))
 override recursive_wildcard = $(foreach wc,$1,$(call recursive_match,$(dir $(wc)),$(wc)))
 
 # Create directories, i.e. portable mkdir -p $1
-override create_dirs = $(if $(call paths_exist,$1),,$(if $(filter windows,$(HOST_OS)),$(if $(foreach directory,$1,$(call shell_ex,mkdir $(directory) 2>&1)),),$(if $(call shell_ex,mkdir -p $1 2>&1),)))
+override create_dirs = $(if $(HOST_POSIX),$(call shell_ex,mkdir -p $1),$(if $(call shell_ex,mkdir $1 2>&1),))
 
 # Install file $1 at path $2 under permissions $3
 override install_file = $(foreach fd,$(call path_wrap,$2),$(foreach fs,$(call path_wrap,$1),$(call create_dirs,$(dir $(fd)))$(if $(call shell_ex,install -m $(firstword $3 0644) $(fs) $(fd) 2>&1),$(if $(call shell_ex,$(if $(filter windows,$(HOST_OS)),copy,cp) $1 $2 2>&1),))))
@@ -282,11 +282,15 @@ override check_cc_flags = $(if $(call check_cc_flag,$1),$1,$(foreach ldflag,$1,$
 override OS := $(filter-out Windows_NT,$(OS))
 
 # Get host uname; pipe stderr in a portable way. Don't use uname output if it's not exactly one word (Likely due to command failure).
-# NOTE: Cygwin and MSYS return garbage in uname -s, uname -o gives a prettier result.
+# NOTE: Cygwin and MSYS return garbage in `uname -s`, `uname -o` gives a prettier result.
 # NOTE: We might also get "MS/Windows" or "Windows_NT" from uname on e.q. w64devkit.
+# NOTE: MSYS, w64devkit, etc are considered POSIX-like with forward slashes; MinGW with stock Windows CMD is not
 override HOST_UNAME := $(call var_single,$(shell uname -s 2>&1))
 override HOST_UNAME := $(firstword $(if $(call find_any_str,- _ .,$(HOST_UNAME)),$(call var_single,$(shell uname -o 2>&1))) $(HOST_UNAME))
-override HOST_UNAME := $(firstword $(findstring Windows,$(HOST_UNAME)) $(HOST_UNAME) $(if $(call var_def,windir)$(call var_def,WINDIR),Windows,POSIX))
+override HOST_POSIX := $(firstword $(findstring Windows,$(HOST_UNAME)) $(HOST_UNAME) $(if $(call var_def,windir)$(call var_def,WINDIR),,POSIX))
+override HOST_UNAME := $(firstword $(HOST_POSIX) Windows)
+
+override PATH_SEPARATOR := $(if $(HOST_POSIX),/,$(BSLSH))
 
 # Canonize host OS, determine host architecture, where to pipe null & number of cores
 override HOST_OS   := $(call canonize_os,$(HOST_UNAME))
@@ -312,13 +316,13 @@ endif
 # Colorful logging attributes
 override VT_ESC  := 
 override VT_BELL := 
-override RESET   := $(VT_ESC)[0m
-override BOLD    := $(VT_ESC)[1m
-override RED     := $(VT_ESC)[31m$(BOLD)
-override GREEN   := $(VT_ESC)[32m$(BOLD)
-override YELLOW  := $(VT_ESC)[33m$(BOLD)
-override WHITE   := $(VT_ESC)[37m$(BOLD)
-override TEXT    := $(RESET)$(BOLD)
+override RESET   := $(if $(HOST_POSIX),$(VT_ESC)[0m)
+override BOLD    := $(if $(HOST_POSIX),$(VT_ESC)[1m)
+override RED     := $(if $(HOST_POSIX),$(VT_ESC)[31m$(BOLD))
+override GREEN   := $(if $(HOST_POSIX),$(VT_ESC)[32m$(BOLD))
+override YELLOW  := $(if $(HOST_POSIX),$(VT_ESC)[33m$(BOLD))
+override WHITE   := $(if $(HOST_POSIX),$(VT_ESC)[37m$(BOLD))
+override TEXT    := $(if $(HOST_POSIX),$(RESET)$(BOLD))
 
 # Logger prefixes
 override INFO_PREFIX := $(TEXT)[$(YELLOW)INFO$(TEXT)]
@@ -427,11 +431,11 @@ override CC_PRETTY := $(call prettify_cc,$(CC_BRAND)) $(CC_VERSION)
 
 override GIT_DESCRIBE := $(firstword $(call var_single,$(call shell_ex,git describe --tags --always --long --dirty $(PIPE_STDERR))) $(call var_def,GIT_DESCRIBE) $(call var_def,GIT_COMMIT))
 override GIT_DIRTY    := $(if $(filter %-dirty,$(GIT_DESCRIBE)),dirty)
-override TMP          := $(patsubst %-dirty,%,$(GIT_DESCRIBE))
-override GIT_COMMIT   := $(lastword $(subst -g,$(SPACE),$(TMP)))
-override TMP          := $(filter-out $(GIT_COMMIT),$(patsubst %-g$(GIT_COMMIT),%,$(TMP)))
-override GIT_REVISION := $(call is_numeric,$(lastword $(subst -,$(SPACE),$(TMP))))
-override GIT_TAG      := $(patsubst %-$(GIT_REVISION),%,$(TMP))
+override _            := $(patsubst %-dirty,%,$(GIT_DESCRIBE))
+override GIT_COMMIT   := $(lastword $(subst -g,$(SPACE),$(_)))
+override _            := $(filter-out $(GIT_COMMIT),$(patsubst %-g$(GIT_COMMIT),%,$(_)))
+override GIT_REVISION := $(call is_numeric,$(lastword $(subst -,$(SPACE),$(_))))
+override GIT_TAG      := $(patsubst %-$(GIT_REVISION),%,$(_))
 
 # Produce a git version in the form of tag-g1234567-dirty for dev builds, tag for releases,
 # and just a commit hash for non-tagged projects. Takes a fallback tag (For shallow clones).
@@ -828,7 +832,7 @@ endif
 # Set compiler-specific optimization options
 # Enable -O2 unless USE_DEBUG_FULL is set, which enables -O0
 #
-# Enable -flto=auto on GCC 5.0+, -flto-incremental on GCC 15.0+
+# Enable -flto=auto on GCC 5.0+, -flto-incremental on GCC 15.0+ (non-Windows)
 # Enable -fvisibility=hidden -frounding-math -fno-math-errno on GCC 4.0+
 # Enable -fno-plt -fno-semantic-interposition on GCC 6.0+
 # Enable -fanalyzer for USE_ANALYZER on GCC 10.1+
@@ -839,7 +843,7 @@ endif
 #
 # Enable -Bsymbolic-functions on GCC/Clang 4.0+
 override OPTIMIZE_OPTS := $(strip $(OPTIMIZE_OPTS) \
-$(if $(LTO_SUPPORTED),$(if $(call gcc_min_ver,5.0),-flto=auto) $(if $(call gcc_min_ver,15.0),-flto-incremental=$(OBJDIR))) \
+$(if $(LTO_SUPPORTED),$(if $(call gcc_min_ver,5.0),-flto=auto) $(if $(call gcc_min_ver,15.0),$(if $(filter-out windows,$(OS)),-flto-incremental=$(OBJDIR)))) \
 $(if $(call gcc_min_ver,4.0),-fvisibility=hidden -fno-math-errno -frounding-math) \
 $(if $(call gcc_min_ver,6.0),-fno-plt -fno-semantic-interposition) \
 $(if $(call var_use,USE_ANALYZER),$(if $(call gcc_min_ver,10.1),-fanalyzer)) \
