@@ -12,6 +12,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "feature_test.h"
 
 #include "chardev.h"
+#include "ringbuf.h"
+#include "spinlock.h"
+
 #include <stdio.h> // For fputs(), setvbuf()
 
 #if defined(HOST_TARGET_POSIX)
@@ -45,6 +48,26 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include <conio.h>   // For _kbhit()
 #include <windows.h> // For GetStdHandle(), ReadFile(), WriteFile(), SetConsoleMode(), etc
 
+#include "dlib.h" // For AllocConsole(), GetConsoleSelectionInfo() probing
+
+typedef struct {
+    DWORD      flags;
+    COORD      anchor;
+    SMALL_RECT selection;
+} console_selection_info_t;
+
+static BOOL (*__stdcall get_console_selection_info)(void*) = NULL;
+
+// Check for console selection (quick edit) to ideally prevent locking up in WriteFile()
+static bool win32_console_busy(void)
+{
+    console_selection_info_t csi = {0};
+    if (get_console_selection_info) {
+        get_console_selection_info(&csi);
+    }
+    return !!csi.flags;
+}
+
 #define WIN32_TERM_IMPL 1
 
 #else
@@ -55,9 +78,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #endif
 
-// RVVM internal headers come after system headers because of safe_free()
-#include "ringbuf.h"
-#include "spinlock.h"
+// Internal headers come after system headers because of safe_free()
 #include "utils.h"
 
 SOURCE_OPTIMIZATION_SIZE
@@ -115,10 +136,10 @@ static size_t term_write_raw(chardev_term_t* term, const char* buffer, size_t si
 #elif defined(WIN32_TERM_IMPL)
     HANDLE console = GetStdHandle(STD_OUTPUT_HANDLE);
     DWORD  count   = size;
-    if (!WriteFile(console, buffer, size, &count, NULL)) {
-        return 0;
+    if (console && !win32_console_busy()) {
+        WriteFile(console, buffer, size, &count, NULL);
     }
-    return count;
+    return size;
 #else
     char   tmp[256] = {0};
     size_t ret      = EVAL_MIN(size, sizeof(tmp) - 1);
@@ -140,8 +161,8 @@ static size_t term_read_raw(chardev_term_t* term, char* buffer, size_t size)
 #elif defined(WIN32_TERM_IMPL)
     HANDLE console = GetStdHandle(STD_INPUT_HANDLE);
     DWORD  count   = size;
-    if (!ReadFile(console, buffer, size, &count, NULL)) {
-        return 0;
+    if (!console || !ReadFile(console, buffer, size, &count, NULL)) {
+        count = 0;
     }
     return count;
 #else
@@ -177,17 +198,31 @@ static void term_raw_mode(void)
     cfsetospeed(&term_opts, cfgetospeed(&orig_term_opts));
     tcsetattr(0, TCSANOW, &term_opts);
 #elif defined(WIN32_TERM_IMPL)
+    DO_ONCE_SCOPED {
+        BOOL (*__stdcall alloc_console)(void) = dlib_get_symbol("kernel32.dll", "AllocConsole");
+        if (alloc_console) {
+            // Create a console since we may be running as GUI subsystem
+            alloc_console();
+        }
+
+        // Probe GetConsoleSelectionInfo() (NT 5.1+)
+        get_console_selection_info = dlib_get_symbol("kernel32.dll", "GetConsoleSelectionInfo");
+    }
+
+    // Set console encoding to UTF-8
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
+
+    // Save previous console mode
     GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &orig_input_mode);
     GetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), &orig_output_mode);
 
-    // Pre-Win10 raw console setup
-    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), 0x0);
+    // Pre-Win10 raw console setup; Disable quick edit via ENABLE_EXTENDED_FLAGS
+    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), 0x80);
     SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), 0x1);
 
-    // ENABLE_VIRTUAL_TERMINAL_INPUT
-    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), 0x200);
+    // ENABLE_VIRTUAL_TERMINAL_INPUT | ENABLE_EXTENDED_FLAGS
+    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), 0x280);
     // ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING
     SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), 0x5);
 #elif defined(_IONBF)
@@ -383,6 +418,7 @@ PUBLIC chardev_t* chardev_pty_create(const char* path)
         // Create a terminal character device on stdout
         return chardev_term_create();
     }
+
     if (rvvm_strcmp(path, "null")) {
         // NULL character device
         return NULL;
