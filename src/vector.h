@@ -82,17 +82,18 @@ void vector_swap_internal(void* vec_a, void* vec_b);
  * May be called multiple times, the vector is empty yet reusable afterwards (Identically to vector_clear())
  * Redundant after a vector_erase() call which left the vector empty
  */
-#define vector_free(vec)     vector_free_internal(&(vec))
+#define vector_free(vec) vector_free_internal(&(vec))
 
 /**
  * vector_put() - Put element at specific position, resizing the vector if needed
  */
 #define vector_put(vec, pos, val)                                                                                      \
     do {                                                                                                               \
-        if (unlikely(pos >= (vec).count)) {                                                                            \
-            vector_emplace_internal(&(vec), sizeof(*((vec).data)), pos);                                               \
+        size_t MACRO_IDENT(index) = pos;                                                                               \
+        if (unlikely(MACRO_IDENT(index) >= (vec).count)) {                                                             \
+            vector_emplace_internal(&(vec), sizeof(*((vec).data)), MACRO_IDENT(index));                                \
         }                                                                                                              \
-        (vec).data[pos] = val;                                                                                         \
+        (vec).data[MACRO_IDENT(index)] = val;                                                                          \
     } while (0)
 
 /**
@@ -100,8 +101,9 @@ void vector_swap_internal(void* vec_a, void* vec_b);
  */
 #define vector_insert(vec, pos, val)                                                                                   \
     do {                                                                                                               \
-        vector_emplace_internal(&(vec), sizeof(*((vec).data)), pos);                                                   \
-        (vec).data[pos] = val;                                                                                         \
+        size_t MACRO_IDENT(index) = pos;                                                                               \
+        vector_emplace_internal(&(vec), sizeof(*((vec).data)), MACRO_IDENT(index));                                    \
+        (vec).data[MACRO_IDENT(index)] = val;                                                                          \
     } while (0)
 
 /**
