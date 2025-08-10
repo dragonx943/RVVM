@@ -180,11 +180,11 @@ override path_make = $(subst \$(SPACE),?,$1)
 # Convert a single path variable (Possibly containing spaces) to an internal path representation
 override path_wrap = $(subst $(SPACE),?,$(call path_make,$1))
 
-# Escape string variable to an internal representation
-override str_wrap = $(QUOT)$(subst $(SPACE),$(MAGIC),$(subst $(QUOT),\$(QUOT),$(subst $(NEWLINE),\n,$(subst \,\\,$1)))$(QUOT))
+# Escape string variable to an internal representation suitable for shell_ex prinf invocation
+override str_wrap = $(QUOT)$(subst -,$(BSLSH)055,$(subst $(SPACE),$(MAGIC),$(subst $(QUOT),\$(QUOT),$(subst $(NEWLINE),\n,$(subst \,\\,$1)))$(QUOT)))
 
 # Escape shell invocation containing internal path/string representations
-override shell_esc = $(foreach part,$1,$(if $(filter "%",$(part)),$(subst $(MAGIC),$(SPACE),$(part)),$(subst /,$(PATH_SEPARATOR),$(subst $(QUOT),\$(QUOT),$(call path_shell,$(part))))))
+override shell_esc = $(foreach part,$1,$(if $(filter "%",$(part)),$(subst $(MAGIC),$(SPACE),$(part)),$(subst /,$(if $(HOST_POSIX),/,$(BSLSH)),$(subst $(QUOT),\$(QUOT),$(call path_shell,$(part))))))
 
 # Invoke shell command with escaping
 override shell_ex = $(shell $(call shell_esc,$1))
@@ -217,14 +217,14 @@ override recursive_match = $(filter $(subst *,%,$2),$(call tree_dir,$1))
 # Recusive filesystem wildcard
 override recursive_wildcard = $(foreach wc,$1,$(call recursive_match,$(dir $(wc)),$(wc)))
 
-# Create directories, i.e. portable mkdir -p $1
-override create_dirs = $(if $(HOST_POSIX),$(call shell_ex,mkdir -p $1),$(if $(call shell_ex,mkdir $1 2>&1),))
+# Create full directory paths, i.e. portable mkdir -p $1
+override create_dirs = $(if $(HOST_POSIX),$(call shell_ex,mkdir -p $1),$(if $(call shell_ex,md $1 2>&1),))
 
 # Install file $1 at path $2 under permissions $3
 override install_file = $(foreach fd,$(call path_wrap,$2),$(foreach fs,$(call path_wrap,$1),$(call create_dirs,$(dir $(fd)))$(if $(call shell_ex,install -m $(firstword $3 0644) $(fs) $(fd) 2>&1),$(if $(call shell_ex,$(if $(filter windows,$(HOST_OS)),copy,cp) $1 $2 2>&1),))))
 
 # Install string $1 as file $2
-override install_string = $(foreach fd,$(call path_wrap,$2),$(call create_dirs,$(dir $(fd)))$(if $(call shell_ex,printf $(call str_wrap,$1) 2>&1 1>$(fd)),$(file >$(fd),$1)))
+override install_string = $(foreach fd,$(call path_wrap,$2),$(call create_dirs,$(dir $(fd)))$(if $(HOST_POSIX),$(call shell_ex,printf $(call str_wrap,$1$(NEWLINE)) >$(fd)),$(file >$(fd),$1)))
 
 # Canonize architecture from triplet / uname (Also lower-case it)
 # amd64, x64, em64t, i86*  -> x86_64 (i86 is a Solaris gimmick)
@@ -290,8 +290,6 @@ override HOST_UNAME := $(firstword $(if $(call find_any_str,- _ .,$(HOST_UNAME))
 override HOST_POSIX := $(firstword $(findstring Windows,$(HOST_UNAME)) $(HOST_UNAME) $(if $(call var_def,windir)$(call var_def,WINDIR),,POSIX))
 override HOST_UNAME := $(firstword $(HOST_POSIX) Windows)
 
-override PATH_SEPARATOR := $(if $(HOST_POSIX),/,$(BSLSH))
-
 # Canonize host OS, determine host architecture, where to pipe null & number of cores
 override HOST_OS   := $(call canonize_os,$(HOST_UNAME))
 override HOST_ARCH := $(call canonize_arch,$(firstword $(if $(filter windows,$(HOST_OS)),$(PROCESSOR_ARCHITECTURE),$(shell uname -m 2>/dev/null)) Unknown))
@@ -314,15 +312,15 @@ override println = $(if $(call shell_ex,printf $(call str_wrap,$1$(NEWLINE)) 1>&
 endif
 
 # Colorful logging attributes
-override VT_ESC  := 
-override VT_BELL := 
-override RESET   := $(if $(HOST_POSIX),$(VT_ESC)[0m)
-override BOLD    := $(if $(HOST_POSIX),$(VT_ESC)[1m)
-override RED     := $(if $(HOST_POSIX),$(VT_ESC)[31m$(BOLD))
-override GREEN   := $(if $(HOST_POSIX),$(VT_ESC)[32m$(BOLD))
-override YELLOW  := $(if $(HOST_POSIX),$(VT_ESC)[33m$(BOLD))
-override WHITE   := $(if $(HOST_POSIX),$(VT_ESC)[37m$(BOLD))
-override TEXT    := $(if $(HOST_POSIX),$(RESET)$(BOLD))
+override VT_ESC  := $(if $(HOST_POSIX)$(call var_def,WT_SESSION)$(call var_def,TERM),)
+override VT_BELL := $(if $(VT_ESC),)
+override RESET   := $(if $(VT_ESC),$(VT_ESC)[0m)
+override BOLD    := $(if $(VT_ESC),$(VT_ESC)[1m)
+override RED     := $(if $(VT_ESC),$(VT_ESC)[31m$(BOLD))
+override GREEN   := $(if $(VT_ESC),$(VT_ESC)[32m$(BOLD))
+override YELLOW  := $(if $(VT_ESC),$(VT_ESC)[33m$(BOLD))
+override WHITE   := $(if $(VT_ESC),$(VT_ESC)[37m$(BOLD))
+override TEXT    := $(if $(VT_ESC),$(RESET)$(BOLD))
 
 # Logger prefixes
 override INFO_PREFIX := $(TEXT)[$(YELLOW)INFO$(TEXT)]
@@ -890,7 +888,6 @@ override CURR_LD_INFO := $(LDFLAGS)
 sinclude $(CC_INFO) $(LD_INFO)
 
 ifneq ($(CURR_CC_INFO),$(call var_src,PREV_CC_INFO))
-$(call install_string,$(subst $(SPACE),$(NEWLINE),$(CPPFLAGS) $(WARN_OPTS)),compile_flags.txt)
 $(call install_string,PREV_CC_INFO := $(CURR_CC_INFO),$(CC_INFO))
 $(call install_string,This file triggers source rebuild,$(CC_TRIGGER))
 endif
@@ -900,6 +897,9 @@ $(call install_string,PREV_LD_INFO := $(CURR_LD_INFO),$(LD_INFO))
 $(call install_string,This file triggers linker rebuild,$(LD_TRIGGER))
 endif
 
+# Provide compile_flags for clangd
+$(call install_string,$(subst $(SPACE),$(NEWLINE),$(CPPFLAGS) $(WARN_OPTS)),compile_flags.txt)
+
 ###################################################################################################
 #
 # Print build information
@@ -907,7 +907,7 @@ endif
 ###################################################################################################
 
 # Show the project logo if terminal supports unicode
-ifneq (,$(if $(findstring UTF,$(LANG)),$(LOGO)))
+ifneq (,$(if $(findstring UTF,$(call var_def,LANG)),$(LOGO)))
 $(call println,$(RESET))
 $(call println,$(LOGO))
 endif
@@ -1083,9 +1083,10 @@ cppcheck:
 .PHONY: clean       # Clean the build directory
 clean:
 	$(call log_info,Cleaning up)
+ifneq (,$(HOST_POSIX))
 	@-rm $(BIN_TARGETS) $(LIB_TARGETS) $(LIB_STATIC_TARGETS) $(NULL_STDERR) ||:
 	@-rm -r $(OBJDIR) $(NULL_STDERR) ||:
-ifeq ($(HOST_OS),windows)
+else
 	@-del $(subst /,\, $(BIN_TARGETS) $(LIB_TARGETS) $(LIB_STATIC_TARGETS)) $(NULL_STDERR) ||:
 	@-rmdir /S /Q $(subst /,\, $(OBJDIR)) $(NULL_STDERR) ||:
 endif
