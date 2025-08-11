@@ -192,10 +192,12 @@ override shell_ex = $(shell $(call shell_esc,$1))
 # Space-aware wildcard
 override safe_wildcard = $(foreach wc,$(call path_strip,$(call path_make,$1)),$(foreach lp,$(firstword $(subst *,$(SPACE),$(wc))),$(subst ?$(lp),$(SPACE)$(lp),$(call path_wrap,$(wildcard $(call path_shell,$(wc)))))))
 
-# Check whether some paths in list are missing in the filesystem, return them
+# Returns paths in list which are missing in the filesystem
+# NOTE: Older GNU Make caches directory contents and ignores files created in current run
 override paths_missing = $(filter-out $(call safe_wildcard,$1),$1)
 
-# Check whether all paths in list exist in system, returns 1 if so
+# Check whether all paths in list exist in the filesystem, returns 1 if so
+# NOTE: Older GNU Make caches directory contents and ignores files created in current run
 override paths_exist = $(if $(call paths_missing,$1),,1)
 
 # Check if path is a directory, returns 1 if so
@@ -218,13 +220,13 @@ override recursive_match = $(filter $(subst *,%,$2),$(call tree_dir,$1))
 override recursive_wildcard = $(foreach wc,$1,$(call recursive_match,$(dir $(wc)),$(wc)))
 
 # Create full directory paths, i.e. portable mkdir -p $1
-override create_dirs = $(if $(call paths_missing,$1),$(if $(HOST_POSIX),$(call shell_ex,mkdir -p $(call paths_missing,$1)),$(if $(call shell_ex,md $(call paths_missing,$1) 2>&1),)))
+override create_dirs = $(if $(if $(call paths_missing,$1),$(if $(HOST_POSIX),$(call shell_ex,mkdir -p $(call paths_missing,$1)),$(call shell_ex,md $(call paths_missing,$1) 2>&1))),)
 
 # Install file $1 at path $2 under permissions $3
-override install_file = $(foreach fd,$(call path_wrap,$2),$(foreach fs,$(call path_wrap,$1),$(call create_dirs,$(dir $(fd)))$(if $(call shell_ex,install -m $(firstword $3 0644) $(fs) $(fd) 2>&1),$(if $(call shell_ex,$(if $(filter windows,$(HOST_OS)),copy,cp) $1 $2 2>&1),))))
+override install_file = $(if $(foreach dst,$(call path_wrap,$2),$(foreach src,$(call path_wrap,$1),$(call create_dirs,$(dir $(dst)))$(if $(call shell_ex,install -m $(firstword $3 0644) $(src) $(dst) 2>&1),$(call shell_ex,$(if $(HOST_POSIX),cp,copy) $(src) $(dst) 2>&1)))),)
 
 # Install string $1 as file $2
-override install_string = $(foreach fd,$(call path_wrap,$2),$(call create_dirs,$(dir $(fd)))$(if $(HOST_POSIX),$(call shell_ex,printf $(call str_wrap,$1$(NEWLINE)) >$(fd)),$(file >$(fd),$1)))
+override install_string = $(if $(foreach dst,$(call path_wrap,$2),$(call create_dirs,$(dir $(dst)))$(if $(HOST_POSIX),$(call shell_ex,printf $(call str_wrap,$1$(NEWLINE)) >$(dst)),$(file >$(dst),$1))),)
 
 # Canonize architecture from triplet / uname (Also lower-case it)
 # amd64, x64, em64t, i86*  -> x86_64 (i86 is a Solaris gimmick)
@@ -266,7 +268,7 @@ override prettify_cc = $(call capitalize,$(patsubst clang,LLVM Clang,$(patsubst 
 
 # Check whether source $1 compiles with flags $2, cache result as $3
 # NOTE: May only be called after "Project output handling" stage
-override check_compile = $(foreach out,$(call path_wrap,$(OBJDIR)/check-$(subst =,,$(subst $(COMMA),,$(subst $(SPACE),-,$(strip $(subst -,$(SPACE),$3)))))),$(if $(call paths_exist,$(out)$(BIN_EXT)),y,$(if $(call install_string,$1,$(out).c),)$(if $(call shell_ex,$(CC) $2 $(CFLAGS) $(LDFLAGS) $(out).c -o $(out)$(BIN_EXT) $(PIPE_STDERR)),)$(if $(call paths_exist,$(out)$(BIN_EXT)),y)))
+override check_compile = $(foreach out,$(call path_wrap,$(firstword $(OBJDIR) .)/check-$(subst =,,$(subst $(COMMA),,$(subst $(SPACE),-,$(strip $(subst -,$(SPACE),$3)))))),$(if $(call paths_exist,$(out)$(BIN_EXT)),1,$(call install_string,$1,$(out).c)$(if $(call shell_ex,$(CC) $2 $(CFLAGS) $(LDFLAGS) -w $(out).c -o $(out)$(BIN_EXT) 2>&1),,1)))
 
 # Check CFLAG/LDFLAG availability (I.e. whether a library may be linked)
 override check_cc_flag = $(if $1,$(if $(call check_compile,int main(){return 0;},$1,$1),$1))
