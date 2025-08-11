@@ -218,7 +218,7 @@ override recursive_match = $(filter $(subst *,%,$2),$(call tree_dir,$1))
 override recursive_wildcard = $(foreach wc,$1,$(call recursive_match,$(dir $(wc)),$(wc)))
 
 # Create full directory paths, i.e. portable mkdir -p $1
-override create_dirs = $(if $(HOST_POSIX),$(call shell_ex,mkdir -p $1),$(if $(call shell_ex,md $1 2>&1),))
+override create_dirs = $(if $(call paths_missing,$1),$(if $(HOST_POSIX),$(call shell_ex,mkdir -p $(call paths_missing,$1)),$(if $(call shell_ex,md $(call paths_missing,$1) 2>&1),)))
 
 # Install file $1 at path $2 under permissions $3
 override install_file = $(foreach fd,$(call path_wrap,$2),$(foreach fs,$(call path_wrap,$1),$(call create_dirs,$(dir $(fd)))$(if $(call shell_ex,install -m $(firstword $3 0644) $(fs) $(fd) 2>&1),$(if $(call shell_ex,$(if $(filter windows,$(HOST_OS)),copy,cp) $1 $2 2>&1),))))
