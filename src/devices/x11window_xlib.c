@@ -533,12 +533,11 @@ static void x11_dispatch_events(void)
 
 static void* x11_event_thread(void* arg)
 {
-    fd_set fds     = {0};
-    int    fd      = ConnectionNumber(x11_dsp);
-    bool   running = true;
+    int  fd      = ConnectionNumber(x11_dsp);
+    bool running = true;
 
     while (running) {
-        FD_ZERO(&fds);
+        fd_set fds = ZERO_INIT;
         FD_SET(fd, &fds);
         if (select(fd + 1, &fds, NULL, NULL, NULL) > 0 && FD_ISSET(fd, &fds)) {
             scoped_spin_lock (&x11_lock) {
