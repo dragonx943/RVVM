@@ -27,49 +27,50 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include <fcntl.h>  // For struct flock, open(), fcntl(), posix_fallocate(), fallocate(), fspacectl(), fdiscard()
 #include <unistd.h> // For close(), lseek(), pread(), pwrite(), fdatasync(), ftruncate()
 
-#if defined(__NetBSD__)
+#if defined(HOST_TARGET_NETBSD)
 #include <sys/param.h> // For __NetBSD_Version__
 #endif
 
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
 #endif
-
 #ifndef O_NOATIME
 #define O_NOATIME 0
 #endif
-
 #ifndef O_CREAT
 #define O_CREAT 0
 #endif
-
 #ifndef O_EXCL
 #define O_EXCL 0
 #endif
-
 #ifndef O_TRUNC
 #define O_TRUNC 0
 #endif
-
 #ifndef O_DIRECT
 #define O_DIRECT 0
 #endif
-
 #ifndef O_SYNC
 #define O_SYNC 0
 #endif
-
 #ifndef O_DSYNC
 #define O_DSYNC O_SYNC
 #endif
 
-static bool try_lock_fd(int fd)
+#if !defined(F_OFD_SETLK) && defined(F_SETLK)
+#define F_OFD_SETLK F_SETLK
+#endif
+
+static bool rvfile_try_lock_fd(int fd)
 {
+#if defined(F_OFD_SETLK)
     struct flock flk = {
         .l_type   = F_WRLCK,
         .l_whence = SEEK_SET,
     };
-    return !fcntl(fd, F_SETLK, &flk) || (errno != EACCES && errno != EAGAIN);
+    return !fcntl(fd, F_OFD_SETLK, &flk) || (errno != EACCES && errno != EAGAIN);
+#else
+    return true;
+#endif
 }
 
 #define POSIX_FILE_IMPL 1
@@ -228,7 +229,7 @@ rvfile_t* rvopen(const char* filepath, uint8_t filemode)
         return NULL;
     }
 
-    if ((filemode & RVFILE_EXCL) && !try_lock_fd(fd)) {
+    if ((filemode & RVFILE_EXCL) && !rvfile_try_lock_fd(fd)) {
         rvvm_error("File %s is busy", filepath);
         close(fd);
         return NULL;
@@ -364,7 +365,7 @@ rvfile_t* rvopen(const char* filepath, uint8_t filemode)
         return NULL;
     }
 
-#ifdef _IONBF
+#if defined(_IONBF)
     // Disable stdio buffering altogether for coherence sake with mmap() and other opened instances
     setvbuf(fp, NULL, _IONBF, 0);
 #endif
@@ -602,23 +603,23 @@ size_t rvwrite(rvfile_t* file, const void* src, size_t size, uint64_t offset)
 bool rvtrim(rvfile_t* file, uint64_t offset, uint64_t size)
 {
     if (file) {
-#if defined(POSIX_FILE_IMPL) && defined(__linux__) && defined(FALLOC_FL_PUNCH_HOLE) && defined(FALLOC_FL_KEEP_SIZE)
+#if defined(POSIX_FILE_IMPL) && defined(HOST_TARGET_LINUX) && defined(FALLOC_FL_PUNCH_HOLE)
         // Use fallocate(FALLOC_FL_PUNCH_HOLE) on Linux to punch holes
         return !fallocate(file->fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, offset, size);
-#elif defined(POSIX_FILE_IMPL) && defined(__APPLE__) && defined(F_PUNCHHOLE)
+#elif defined(POSIX_FILE_IMPL) && defined(HOST_TARGET_DARWIN) && defined(F_PUNCHHOLE)
         // Use fcntl(F_PUNCHHOLE) on MacOS with page aligned offsets to punch holes
         uint64_t     align_off  = (offset + 0xFFF) & ~(uint64_t)0xFFF;
         uint64_t     align_size = (size - (align_off - offset)) & ~(uint64_t)0xFFF;
         fpunchhole_t punch      = {.fp_offset = align_off, .fp_length = align_size};
         return !fcntl(file->fd, F_PUNCHHOLE, &punch);
-#elif defined(POSIX_FILE_IMPL) && defined(__FreeBSD__) && __FreeBSD__ >= 14 && defined(SPACECTL_DEALLOC)
+#elif defined(POSIX_FILE_IMPL) && defined(HOST_TARGET_FREEBSD) && defined(SPACECTL_DEALLOC)
         // Use fspacectl(SPACECTL_DEALLOC) added in FreeBSD 14 to punch holes
         struct spacectl_range rqsr = {
             .r_offset = offset,
             .r_len    = size,
         };
         return !fspacectl(file->fd, SPACECTL_DEALLOC, &rqsr, 0, NULL);
-#elif defined(POSIX_FILE_IMPL) && defined(__NetBSD_Version__) && __NetBSD_Version__ >= 700000000
+#elif defined(POSIX_FILE_IMPL) && defined(HOST_TARGET_NETBSD) && HOST_TARGET_NETBSD >= 7
         // Use fdiscard() added in NetBSD 7 to punch holes
         return !fdiscard(file->fd, offset, size);
 #elif defined(WIN32_FILE_IMPL) && defined(FSCTL_SET_ZERO_DATA)
@@ -668,13 +669,13 @@ bool rvfsync(rvfile_t* file)
     bool ret = false;
     if (file) {
 #if defined(POSIX_FILE_IMPL)
-#if defined(__APPLE__) && defined(F_BARRIERFSYNC)
+#if defined(HOST_TARGET_DARWIN) && defined(F_BARRIERFSYNC)
         // Barrier sync on MacOS, will fail on Darling and possibly elsewhere
         ret = !fcntl(file->fd, F_BARRIERFSYNC);
 #endif
         // Spin on fdatasync() / fsync() for a few times in case of EINTR
         for (size_t i = 0; i < 10 && !ret; ++i) {
-#if defined(__linux__) || (defined(__FreeBSD__) && __FreeBSD__ >= 12) || defined(__NetBSD__)
+#if defined(HOST_TARGET_LINUX)
             ret = !fdatasync(file->fd);
 #else
             ret = !fsync(file->fd);
@@ -770,9 +771,10 @@ bool rvfallocate(rvfile_t* file, uint64_t length)
     if (length <= rvfilesize(file)) {
         return true;
     }
-#if defined(POSIX_FILE_IMPL)                                                                                           \
-    && (defined(__linux__) || (defined(__FreeBSD__) && __FreeBSD__ >= 9)                                               \
-        || (defined(__NetBSD_Version__) && __NetBSD_Version__ >= 700000000))
+#if defined(POSIX_FILE_IMPL)                                                                                            \
+    && ((defined(HOST_TARGET_LINUX) && defined(FALLOC_FL_PUNCH_HOLE))                                                  \
+        || (defined(HOST_TARGET_FREEBSD) && HOST_TARGET_FREEBSD >= 9)                                                  \
+        || (defined(HOST_TARGET_NETBSD) && HOST_TARGET_NETBSD >= 7))
     // Try to grow file via posix_fallocate() (Available on Linux 2.6.23+, FreeBSD 9+, NetBSD 7+)
     if (!posix_fallocate(file->fd, length - 1, 1)) {
         rvfile_grow_internal(file, length);
