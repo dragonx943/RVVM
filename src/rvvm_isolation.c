@@ -13,28 +13,32 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "compiler.h"
 #include "rvvm_isolation.h"
 
-#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__) || defined(__SANITIZE_MEMORY)
 // Do not isolate under sanitizers to prevent breakage
-#define SANITIZERS_PRESENT 1
-#endif
+#if !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__) && !defined(__SANITIZE_MEMORY)
 
-#if defined(USE_ISOLATION) && defined(HOST_TARGET_POSIX)
+#if defined(USE_ISOLATION) && (defined(HOST_TARGET_LINUX) || defined(HOST_TARGET_BSD) || defined(HOST_TARGET_SOLARIS))
+
 #include <errno.h>  // For errno, ENOSYS, EINVAL, etc
 #include <pwd.h>    // For struct passwd, getpwnam_r()
 #include <string.h> // For strerror()
 #include <unistd.h> // For getuid(), setgid(), setuid(), chdir()
 
 #define ISOLATION_DROP_ROOT_IMPL 1
+
 #endif
 
-#if defined(USE_ISOLATION) && defined(__linux__) && CHECK_INCLUDE(sys/prctl.h, 1)
+#if defined(USE_ISOLATION) && defined(HOST_TARGET_LINUX) && CHECK_INCLUDE(sys/prctl.h, 1)
+
+#include <errno.h>     // For errno, ENOSYS, EINVAL, etc
 #include <sys/prctl.h> // For prctl()
 
 #define ISOLATION_PRCTL_IMPL 1
+
 #endif
 
-#if defined(USE_ISOLATION) && defined(GNU_EXTS) && !defined(SANITIZERS_PRESENT) && defined(__linux__)                  \
-    && defined(PR_SET_NO_NEW_PRIVS) && CHECK_INCLUDE(linux/seccomp.h, 0)
+#if defined(USE_ISOLATION) && defined(HOST_TARGET_LINUX) && defined(GNU_EXTS) && defined(ISOLATION_PRCTL_IMPL)         \
+    && CHECK_INCLUDE(linux/seccomp.h, 0)
+
 #include <errno.h>         // For errno, ENOSYS, EINVAL, etc
 #include <linux/filter.h>  // For struct sock_filter, struct sock_fprog, BPF_STMT, etc
 #include <linux/seccomp.h> // For SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO, SECCOMP_RET_DATA, etc
@@ -43,12 +47,17 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include <sys/mman.h>      // For PROT_EXEC, PROT_WRITE
 
 #define ISOLATION_SECCOMP_IMPL 1
+
 #endif
 
-#if defined(USE_ISOLATION) && defined(__OpenBSD__)
+#if defined(USE_ISOLATION) && defined(HOST_TARGET_OPENBSD)
+
 #include <unistd.h> // For pledge()
 
 #define ISOLATION_PLEDGE_IMPL 1
+
+#endif
+
 #endif
 
 // Internal headers come after system headers because of safe_free()
@@ -56,30 +65,11 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 SOURCE_OPTIMIZATION_SIZE
 
-// Drop all the capabilities of the calling thread, prevent privilege escalation
-static void drop_thread_caps(void)
-{
-#ifdef ISOLATION_PRCTL_IMPL
-#ifdef PR_SET_NO_NEW_PRIVS
-    // Prevent privilege escalation via setuid etc
-    if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) && errno != ENOSYS) {
-        DO_ONCE(rvvm_warn("Failed to set PR_SET_NO_NEW_PRIVS!"));
-    }
-#endif
-
-#ifdef PR_CAPBSET_DROP
-    // Drop all capabilities
-    for (int cap = 0; cap < 64; ++cap) {
-        UNUSED(!prctl(PR_CAPBSET_DROP, cap, 0, 0, 0));
-    }
-#endif
-#endif
-}
+#if defined(ISOLATION_DROP_ROOT_IMPL)
 
 // Drop from root user to nobody
 static void drop_root_user_once(void)
 {
-#ifdef ISOLATION_DROP_ROOT_IMPL
     /*
      * On Linux, UID/GID are per-thread properties and the raw
      * setuid syscall only applies new UID to the calling thread.
@@ -108,7 +98,6 @@ static void drop_root_user_once(void)
         }
         UNUSED(!chdir("/"));
     }
-#endif
 }
 
 static void drop_root_user(void)
@@ -116,7 +105,31 @@ static void drop_root_user(void)
     DO_ONCE(drop_root_user_once());
 }
 
-#if defined(ISOLATION_SECCOMP_IMPL) && !defined(SANITIZERS_PRESENT)
+#endif
+
+#if defined(ISOLATION_PRCTL_IMPL)
+
+// Drop all the capabilities of the calling thread, prevent privilege escalation
+static void drop_thread_caps(void)
+{
+#if defined(PR_SET_NO_NEW_PRIVS)
+    // Prevent privilege escalation via setuid etc
+    if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) && errno != ENOSYS) {
+        DO_ONCE(rvvm_warn("Failed to set PR_SET_NO_NEW_PRIVS!"));
+    }
+#endif
+
+#if defined(PR_CAPBSET_DROP)
+    // Drop all capabilities
+    for (int cap = 0; cap < 64; ++cap) {
+        UNUSED(!prctl(PR_CAPBSET_DROP, cap, 0, 0, 0));
+    }
+#endif
+}
+
+#endif
+
+#if defined(ISOLATION_SECCOMP_IMPL)
 
 #if defined(__riscv) && !defined(__NR_riscv_flush_icache)
 // Allow icache flush if no syscall definition is provided
@@ -911,11 +924,13 @@ static void seccomp_setup_syscall_filter(bool all_threads) {
 
 static void restrict_process_once(void)
 {
+#if defined(ISOLATION_DROP_ROOT_IMPL)
     drop_root_user();
+#endif
+#if defined(ISOLATION_PRCTL_IMPL)
     drop_thread_caps();
-#if defined(SANITIZERS_PRESENT)
-    rvvm_info("Sanitizers are present, disabling isolation");
-#elif defined(ISOLATION_SECCOMP_IMPL)
+#endif
+#if defined(ISOLATION_SECCOMP_IMPL)
     seccomp_setup_syscall_filter(true);
 #elif defined(ISOLATION_PLEDGE_IMPL)
     if (pledge("stdio tmppath flock prot_exec inet dns unix sendfd recvfd tty audio drm vmm error", "")) {
@@ -926,9 +941,13 @@ static void restrict_process_once(void)
 
 void rvvm_restrict_this_thread(void)
 {
+#if defined(ISOLATION_DROP_ROOT_IMPL)
     drop_root_user();
+#endif
+#if defined(ISOLATION_PRCTL_IMPL)
     drop_thread_caps();
-#if defined(ISOLATION_SECCOMP_IMPL) && !defined(SANITIZERS_PRESENT)
+#endif
+#if defined(ISOLATION_SECCOMP_IMPL)
     seccomp_setup_syscall_filter(false);
 #endif
     // No per-thread pledge on OpenBSD :c
