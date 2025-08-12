@@ -27,6 +27,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #undef HOST_TARGET_WIN32
 #undef HOST_TARGET_WINNT
 #undef HOST_TARGET_WINCE
+#undef HOST_TARGET_COSMOPOLITAN
 #undef HOST_TARGET_EMSCRIPTEN
 #undef HOST_TARGET_SERENITY
 #undef HOST_TARGET_ANDROID
@@ -65,6 +66,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 #define HOST_TARGET_WINNT 1
 #endif
+#elif defined(__COSMOPOLITAN__)
+#define HOST_TARGET_POSIX        1
+#define HOST_TARGET_COSMOPOLITAN 1
 #elif defined(__EMSCRIPTEN__)
 #define HOST_TARGET_POSIX      1
 #define HOST_TARGET_EMSCRIPTEN 1
