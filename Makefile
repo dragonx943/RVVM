@@ -295,7 +295,7 @@ override HOST_UNAME := $(firstword $(HOST_POSIX) Windows)
 # Canonize host OS, determine host architecture, where to pipe null & number of cores
 override HOST_OS   := $(call canonize_os,$(HOST_UNAME))
 override HOST_ARCH := $(call canonize_arch,$(firstword $(if $(filter windows,$(HOST_OS)),$(PROCESSOR_ARCHITECTURE),$(shell uname -m 2>/dev/null)) Unknown))
-override HOST_NULL := $(if $(filter windows,$(HOST_OS)),nul,/dev/null)
+override HOST_NULL := $(if $(HOST_POSIX),/dev/null,nul)
 override HOST_CPUS := $(firstword $(if $(filter windows,$(HOST_OS)),$(NUMBER_OF_PROCESSORS),$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null)) 1)
 
 # Helpers for piping $(shell) invocation output (stdout/stderr)
@@ -713,8 +713,12 @@ override LDFLAGS := $(LDFLAGS) $(foreach useflag,$(USEFLAGS_ON),$(call var_src,L
 
 # Handle library include paths
 override LIBS_PKG := $(sort $(filter-out $(LIB_BASE_LIST),$(LIBS_ON)))
-override CPPFLAGS := $(CPPFLAGS) $(foreach lib,$(LIBS_PKG),$(call shell_ex,$(PKG_CONFIG) $(lib) --cflags-only-I $(NULL_STDERR)))
-override _        := $(foreach lib,$(LIBS_PKG),$(if $(call shell_ex,$(PKG_CONFIG) $(lib) --cflags --libs $(NULL_STDERR)),,$(call log_warn,Possibly missing library: $(lib))))
+override LIBS_OUT := $(if $(LIBS_PKG),$(call shell_ex,$(PKG_CONFIG) $(LIBS_PKG) --cflags --libs $(NULL_STDERR)))
+override LIBS_ERR := $(strip $(if $(LIBS_PKG),$(if $(LIBS_OUT),,$(foreach lib,$(LIBS_PKG),$(if $(call shell_ex,$(PKG_CONFIG) $(lib) --cflags --libs $(NULL_STDERR)),,$(lib))))))
+override LIBS_OUT := $(strip $(if $(LIBS_PKG),$(if $(LIBS_OUT),$(LIBS_OUT),$(foreach lib,$(LIBS_PKG),$(call shell_ex,$(PKG_CONFIG) $(lib) --cflags --libs $(NULL_STDERR))))))
+override CPPFLAGS := $(CPPFLAGS) $(patsubst -I%,$(if $(call gnuc_min_ver,3),-isystem%,-I%),$(filter-out $(filter-out -I% -isystem%,$(filter -%,$(LIBS_OUT))),$(LIBS_OUT)))
+
+$(if $(LIBS_ERR),$(call log_warn,Missing pkg-config metadata for libraries: $(LIBS_ERR)))
 
 ###################################################################################################
 #
