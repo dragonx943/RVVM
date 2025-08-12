@@ -205,9 +205,15 @@ static LONG CALLBACK bt_seh_handler(EXCEPTION_POINTERS* ptrs)
     return 0;
 }
 
+static void bt_revert_handlers(void)
+{
+    SetUnhandledExceptionFilter(seh_prev_handler);
+}
+
 static void bt_set_handlers(void)
 {
     seh_prev_handler = SetUnhandledExceptionFilter(bt_seh_handler);
+    call_at_deinit(bt_revert_handlers);
     if (!seh_prev_handler) {
         seh_prev_handler = bt_seh_dummy;
     }
@@ -264,12 +270,8 @@ void stacktrace_print(void)
 
 #else
 
-void stacktrace_init(void)
-{
-}
+void stacktrace_init(void) {}
 
-void stacktrace_print(void)
-{
-}
+void stacktrace_print(void) {}
 
 #endif
