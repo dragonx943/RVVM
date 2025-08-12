@@ -7,29 +7,62 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
+#include "feature_test.h"
+
+#include "compiler.h"
 #include "stacktrace.h"
 
-#include <stddef.h>
-#include <stdint.h>
+SOURCE_OPTIMIZATION_SIZE
+
+// Do not set signal handlers under sanitizers to prevent breakage
+#if !defined(USE_NO_STACKTRACE) && (defined(USE_NO_DLIB) || defined(__SANITIZE_ADDRESS__))
+#define USE_NO_STACKTRACE 1
+#endif
+
+#if !defined(USE_NO_STACKTRACE)
+
+#include "dlib.h"
 #include <stdio.h>
 
-#if (defined(__unix__) || defined(__APPLE__)) && !defined(NO_STACKTRACE) && !defined(__SANITIZE_ADDRESS__)
-#include <stdlib.h>
+#if defined(HOST_TARGET_POSIX) && !defined(HOST_TARGET_HAIKU) && CHECK_INCLUDE(signal.h, 1)
+
+// Set up stacktrace dump on SIGSEGV/SIGBUS/SIGILL/SIGFPE via sigaction()
+#include "rvtimer.h"
 #include <signal.h>
+
+#ifndef SIGILL
+#define SIGILL 4
+#endif
+#ifndef SIGFPE
+#define SIGFPE 8
+#endif
 #ifndef SIGBUS
 #define SIGBUS 10
 #endif
-#ifdef SA_SIGINFO
-#define STACKTRACE_SIGACTION_IMPL
-#endif
+#ifndef SIGSEGV
+#define SIGSEGV 11
 #endif
 
-// RVVM internal headers come after system headers because of safe_free()
-#include "compiler.h"
+#if defined(SA_SIGINFO)
+#define STACKTRACE_SIGACTION_IMPL 1
+#endif
+
+#endif
+
+#if defined(HOST_TARGET_WINNT)
+
+// Set up stacktrace dump on SEH via SetUnhandledExceptionFilter()
+#include "rvtimer.h"
+#include <windows.h>
+
+#if defined(EXCEPTION_ACCESS_VIOLATION)
+#define STACKTRACE_WIN32_SEH_IMPL 1
+#endif
+
+#endif
+
+// Internal headers come after system headers because of safe_free()
 #include "utils.h"
-#include "dlib.h"
-
-SOURCE_OPTIMIZATION_SIZE
 
 /*
  * libbacktrace boilerplace
@@ -38,24 +71,33 @@ SOURCE_OPTIMIZATION_SIZE
 struct backtrace_state;
 
 typedef void (*backtrace_error_callback)(void* data, const char* msg, int errnum);
-typedef int (*backtrace_full_callback)(void* data, uintptr_t pc, const char* filename, int lineno, const char* function);
+typedef int  (*backtrace_full_callback)(void* data, uintptr_t pc, //
+                                       const char* filename, int lineno, const char* function);
 
 static struct backtrace_state* (*backtrace_create_state)(const char* filename, int threaded,
-                                                         backtrace_error_callback error_callback, void *data) = NULL;
-static int (*backtrace_full)(struct backtrace_state *state, int skip, backtrace_full_callback callback,
-                             backtrace_error_callback error_callback, void *data) = NULL;
-static void (*backtrace_print)(struct backtrace_state *state, int skip, FILE* file) = NULL;
+                                                         backtrace_error_callback error_callback, void* data)
+    = NULL;
+static int (*backtrace_full)(struct backtrace_state* state, int skip, backtrace_full_callback callback,
+                             backtrace_error_callback error_callback, void* data)
+    = NULL;
+static void (*backtrace_print)(struct backtrace_state* state, int skip, FILE* file) = NULL;
 
 static struct backtrace_state* bt_state = NULL;
 
 static void backtrace_dummy_error(void* data, const char* msg, int errnum)
 {
-    UNUSED(data); UNUSED(msg); UNUSED(errnum);
+    UNUSED(data);
+    UNUSED(msg);
+    UNUSED(errnum);
 }
 
 static int backtrace_dummy_callback(void* data, uintptr_t pc, const char* filename, int lineno, const char* function)
 {
-    UNUSED(data); UNUSED(pc); UNUSED(filename); UNUSED(lineno); UNUSED(function);
+    UNUSED(data);
+    UNUSED(pc);
+    UNUSED(filename);
+    UNUSED(lineno);
+    UNUSED(function);
     return 0;
 }
 
@@ -63,38 +105,38 @@ static int backtrace_dummy_callback(void* data, uintptr_t pc, const char* filena
  * Fatal signal stacktraces
  */
 
-#ifdef STACKTRACE_SIGACTION_IMPL
+#if defined(STACKTRACE_SIGACTION_IMPL)
 
-static void signal_handler(int sig)
+static void bt_signal_handler(int sig)
 {
     switch (sig) {
         case SIGSEGV:
             rvvm_warn("Fatal signal: Segmentation fault!");
             break;
         case SIGBUS:
-            rvvm_warn("Fatal signal: Bus fault - Misaligned access or mapped IO error!");
+            rvvm_warn("Fatal signal: Bus fault - Misaligned access or mmapped IO error!");
             break;
         case SIGILL:
             rvvm_warn("Fatal signal: Illegal instruction!");
             break;
         case SIGFPE:
-            rvvm_warn("Fatal signal: Division by zero!");
+            rvvm_warn("Fatal signal: Arithmetic exception!");
             break;
         default:
             rvvm_warn("Fatal signal %d", sig);
             break;
     }
     stacktrace_print();
-    full_deinit();
-    _Exit(-sig);
+    rvvm_warn("Halting - Please attach a debugger");
+    while (true) {
+        sleep_ms(1000);
+    }
 }
 
-static void set_signal_handler(int sig)
+static void bt_set_signal_handler(int sig)
 {
     struct sigaction sa_old = {0};
-    struct sigaction sa = {
-        .sa_handler = signal_handler,
-    };
+    struct sigaction sa     = {.sa_handler = bt_signal_handler};
     sigaction(sig, NULL, &sa_old);
     if (!(sa_old.sa_flags & SA_SIGINFO)) {
         void* prev = sa_old.sa_handler;
@@ -105,7 +147,77 @@ static void set_signal_handler(int sig)
     }
 }
 
+static void bt_set_handlers(void)
+{
+    bt_set_signal_handler(SIGSEGV);
+    bt_set_signal_handler(SIGBUS);
+    bt_set_signal_handler(SIGILL);
+    bt_set_signal_handler(SIGFPE);
+}
+
 #endif
+
+#if defined(STACKTRACE_WIN32_SEH_IMPL)
+
+static LPTOP_LEVEL_EXCEPTION_FILTER seh_prev_handler = NULL;
+
+static LONG CALLBACK bt_seh_dummy(EXCEPTION_POINTERS* ptrs)
+{
+    UNUSED(ptrs);
+    return 0;
+}
+
+static LONG CALLBACK bt_seh_handler(EXCEPTION_POINTERS* ptrs)
+{
+    if (seh_prev_handler) {
+        LONG code = seh_prev_handler(ptrs);
+        if (code) {
+            return code;
+        }
+    } else {
+        // Spin until a proper top-level SEH handler is established
+        return -1;
+    }
+    switch (ptrs->ExceptionRecord->ExceptionCode) {
+        case EXCEPTION_STACK_OVERFLOW:
+        case EXCEPTION_ACCESS_VIOLATION:
+        case EXCEPTION_ARRAY_BOUNDS_EXCEEDED:
+            rvvm_warn("Fatal signal: Segmentation fault!");
+            break;
+        case EXCEPTION_IN_PAGE_ERROR:
+        case EXCEPTION_DATATYPE_MISALIGNMENT:
+            rvvm_warn("Fatal signal: Bus fault - Misaligned access or mmapped IO error!");
+            break;
+        case EXCEPTION_PRIV_INSTRUCTION:
+        case EXCEPTION_ILLEGAL_INSTRUCTION:
+            rvvm_warn("Fatal signal: Illegal instruction!");
+            break;
+        case EXCEPTION_INT_OVERFLOW:
+        case EXCEPTION_INT_DIVIDE_BY_ZERO:
+            rvvm_warn("Fatal signal: Arithmetic exception!");
+            break;
+    }
+    stacktrace_print();
+    rvvm_warn("Halting at PC %p - Please attach a debugger", ptrs->ExceptionRecord->ExceptionAddress);
+    while (true) {
+        sleep_ms(1000);
+    }
+    return 0;
+}
+
+static void bt_set_handlers(void)
+{
+    seh_prev_handler = SetUnhandledExceptionFilter(bt_seh_handler);
+    if (!seh_prev_handler) {
+        seh_prev_handler = bt_seh_dummy;
+    }
+}
+
+#endif
+
+/*
+ * Initialize libbacktrace
+ */
 
 static void backtrace_init_once(void)
 {
@@ -116,8 +228,8 @@ static void backtrace_init_once(void)
     dlib_ctx_t* libbt = dlib_open("backtrace", DLIB_NAME_PROBE);
 
     backtrace_create_state = dlib_resolve(libbt, "backtrace_create_state");
-    backtrace_full = dlib_resolve(libbt, "backtrace_full");
-    backtrace_print = dlib_resolve(libbt, "backtrace_print");
+    backtrace_full         = dlib_resolve(libbt, "backtrace_full");
+    backtrace_print        = dlib_resolve(libbt, "backtrace_print");
 
     dlib_close(libbt);
 
@@ -129,11 +241,8 @@ static void backtrace_init_once(void)
         backtrace_full(bt_state, 0, backtrace_dummy_callback, backtrace_dummy_error, NULL);
     }
 
-#ifdef STACKTRACE_SIGACTION_IMPL
-    set_signal_handler(SIGSEGV);
-    set_signal_handler(SIGBUS);
-    set_signal_handler(SIGILL);
-    set_signal_handler(SIGFPE);
+#if defined(STACKTRACE_SIGACTION_IMPL) || defined(STACKTRACE_WIN32_SEH_IMPL)
+    bt_set_handlers();
 #endif
 }
 
@@ -149,6 +258,18 @@ void stacktrace_print(void)
         rvvm_warn("Stacktrace:");
         backtrace_print(bt_state, 0, stderr);
     } else {
-        DO_ONCE(rvvm_warn("Please install libbacktrace to obtain debug stacktraces"));
+        rvvm_warn("Please install libbacktrace to obtain debug stacktraces");
     }
 }
+
+#else
+
+void stacktrace_init(void)
+{
+}
+
+void stacktrace_print(void)
+{
+}
+
+#endif
