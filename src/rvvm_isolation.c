@@ -14,7 +14,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "rvvm_isolation.h"
 
 // Do not isolate under sanitizers to prevent breakage
-#if !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__) && !defined(__SANITIZE_MEMORY)
+#if !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__) && !defined(__SANITIZE_MEMORY__)
 
 #if defined(USE_ISOLATION) && (defined(HOST_TARGET_LINUX) || defined(HOST_TARGET_BSD) || defined(HOST_TARGET_SOLARIS))
 
