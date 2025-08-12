@@ -45,11 +45,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *   built benches
  */
 
-#define _FILE_OFFSET_BITS 64
-#define _LARGEFILE64_SOURCE
-#define _GNU_SOURCE
-#define _BSD_SOURCE
-#define _DEFAULT_SOURCE
+#include "feature_test.h"
 
 //#define RVVM_USER_TEST
 //#define RVVM_USER_TEST_X86
