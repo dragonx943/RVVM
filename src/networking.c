@@ -41,23 +41,28 @@ typedef int    net_addrlen_t;
 #include <sys/resource.h> // For struct rlimit, getrlimit(), setrlimit(), RLIMIT_NOFILE
 #endif
 
-#if defined(__linux__) && CHECK_INCLUDE(sys/syscall.h, 1)
+#if defined(HOST_TARGET_LINUX) && CHECK_INCLUDE(sys/syscall.h, 1)
 #include <sys/syscall.h> // For __NR_accept4, __NR_epoll_create
 #endif
 
-#if !defined(USE_SELECT) && ((defined(__linux__) && defined(__NR_epoll_create)) || defined(__illumos__))
+#if ((defined(HOST_TARGET_LINUX) && defined(__NR_epoll_create)) || defined(HOST_TARGET_ILLUMOS)) /**/                  \
+    && !defined(USE_SELECT) && CHECK_INCLUDE(sys/epoll.h, 1)
+
 // Use epoll() for net_poll on Linux & Illumos
 #include <sys/epoll.h> // For struct epoll_event, epoll_create(), epoll_ctl(), epoll_wait(), EPOLL_CTL_ADD...
 
 #define EPOLL_NET_IMPL 1
 
-#elif !defined(USE_SELECT)                                                                                             \
-    && (defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__DragonFly__)                  \
-        || (defined(__APPLE__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060))
-// Use kqueue() for net_poll on FreeBSD, OpenBSD, NetBSD, DragonFlyBSD and Apple
-#include <sys/event.h> // For struct kevent, kqueue(), kevent(), EV_SET(), EVFILT_READ, EVFILT_WRITE
+#elif (defined(HOST_TARGET_BSD) || (defined(HOST_TARGET_DARWIN) && HOST_TARGET_DARWIN >= 11)) /**/                     \
+    && !defined(USE_SELECT) && CHECK_INCLUDE(sys/event.h, 1)
 
+// Use kqueue() for net_poll on FreeBSD, OpenBSD, NetBSD, DragonFlyBSD and Darwin (MacOS 11+)
+#include <sys/event.h> // For struct kevent, kqueue(), kevent(), EV_SET(), EVFILT_READ, EVFILT_WRITE...
+
+// Check EV_DISABLE/EV_ENABLE existence
+#if defined(EV_ADD) && defined(EV_ENABLE) && defined(EV_DISABLE) && defined(EV_DELETE)
 #define KQUEUE_NET_IMPL 1
+#endif
 
 #endif
 
@@ -270,7 +275,7 @@ static bool net_handle_set_blocking(net_handle_t fd, bool block)
 
 static void net_handle_set_cloexec(net_handle_t fd)
 {
-#if defined(HOST_TARGET_WIN32) && !defined(HOST_TARGET_WINCE) && defined(HANDLE_FLAG_INHERIT)
+#if defined(HOST_TARGET_WINNT) && defined(HANDLE_FLAG_INHERIT)
     SetHandleInformation((HANDLE)fd, HANDLE_FLAG_INHERIT, 0);
 #elif defined(F_SETFD) && defined(FD_CLOEXEC)
     fcntl(fd, F_SETFD, FD_CLOEXEC);
@@ -323,7 +328,7 @@ static net_handle_t net_handle_create_ex(int domain, int type, int proto, bool b
 static net_handle_t net_handle_accept_ex(net_handle_t listener, void* sock_addr, net_addrlen_t* addr_len)
 {
     net_handle_t fd = NET_HANDLE_INVALID;
-#if defined(__linux__)
+#if defined(HOST_TARGET_LINUX)
     // NOTE: Linux accept(2) does not inherit nonblocking flag on accepted socket
     bool nonblock = !!(fcntl(listener, F_GETFL, 0) & O_NONBLOCK);
 #if defined(__NR_accept4) && defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
@@ -336,7 +341,7 @@ static net_handle_t net_handle_accept_ex(net_handle_t listener, void* sock_addr,
         fd = accept(listener, sock_addr, addr_len);
         if (fd != NET_HANDLE_INVALID) {
             net_handle_set_cloexec(fd);
-#if defined(__linux__)
+#if defined(HOST_TARGET_LINUX)
             // Always inherit non-blocking mode properly
             if (nonblock && !net_handle_set_blocking(fd, false)) {
                 // Failed to set non-blocking mode
@@ -615,7 +620,7 @@ static bool net_poll_select_add(net_poll_t* poll, net_sock_t* sock, const net_ev
             break;
         }
 
-#if defined(USE_SELECT_GENERIC) && !defined(HOST_TARGET_WIN32) || defined(__COSMOPOLITAN__)
+#if defined(USE_SELECT_GENERIC) && !defined(HOST_TARGET_WIN32) || defined(HOST_TARGET_COSMOPOLITAN)
         if (sock->fd >= FD_SETSIZE) {
             // FD value too high; Cosmopolitan doesn't support nfds > FD_SETSIZE
             break;
@@ -1175,7 +1180,7 @@ size_t net_icmp_send(net_sock_t* sock, const void* buffer, size_t size, const ne
 int32_t net_icmp_recv(net_sock_t* sock, void* buffer, size_t size, net_addr_t* addr)
 {
     int32_t ret = net_udp_recv(sock, buffer, size, addr);
-#if !defined(__linux__)
+#if !defined(HOST_TARGET_LINUX)
     // Windows and MacOS keep IP header in received data packet
     int32_t ip_hdr_size = (sock->addr.type == NET_TYPE_IPV6) ? 40 : 20;
     if (sock->addr.type == NET_TYPE_IPV4 && ret > 0) {
