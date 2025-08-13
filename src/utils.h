@@ -14,8 +14,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #include "atomics.h"
 #include "rvvmlib.h"
-#include <stdbool.h>
-#include <stddef.h>
+
 #include <stdlib.h>
 
 /*
@@ -85,7 +84,8 @@ PUBLIC void rvvm_randomserial(char* serial, size_t size);
  * Safe memory allocation
  */
 
-#if GNU_ATTRIBUTE(__returns_nonnull__) && GNU_ATTRIBUTE(__warn_unused_result__) && GNU_ATTRIBUTE(__alloc_size__)
+#if GNU_ATTRIBUTE(__returns_nonnull__) && GNU_ATTRIBUTE(__warn_unused_result__) /**/                                   \
+    && GNU_ATTRIBUTE(__malloc__) && GNU_ATTRIBUTE(__alloc_size__)
 #define SAFE_MALLOC  __attribute__((__returns_nonnull__, __warn_unused_result__, __malloc__, __alloc_size__(1)))
 #define SAFE_CALLOC  __attribute__((__returns_nonnull__, __warn_unused_result__, __malloc__, __alloc_size__(1, 2)))
 #define SAFE_REALLOC __attribute__((__returns_nonnull__, __warn_unused_result__, __alloc_size__(2)))
@@ -104,16 +104,12 @@ PUBLIC SAFE_REALLOC void* safe_realloc(void* ptr, size_t size);
 #define safe_new_arr(type, size) ((type*)safe_calloc(size, sizeof(type)))
 #define safe_new_obj(type)       safe_new_arr(type, 1)
 
-#define default_free(ptr)        (free)(ptr)
-
+// Free and poison the pointer
 #define safe_free(ptr)                                                                                                 \
     do {                                                                                                               \
-        default_free(ptr);                                                                                             \
-        ptr = NULL;                                                                                                    \
+        free(ptr);                                                                                                     \
+        (ptr) = NULL;                                                                                                  \
     } while (0)
-
-// Implicitly NULL freed pointer to prevent use-after-free
-#define free(ptr) safe_free(ptr)
 
 /*
  * Command line & config parsing
@@ -154,11 +150,13 @@ PUBLIC void rvvm_set_loglevel(int loglevel);
 #define PRINT_FORMAT GNU_DUMMY_ATTRIBUTE
 #endif
 
-#ifdef USE_DEBUG
+#if defined(USE_DEBUG)
+
 // Debug logger enabled at build time
 PRINT_FORMAT void rvvm_debug(const char* format_str, ...);
 
 #else
+
 // Debug logs optimized out, but still performs compile-time format / unused arguments checking
 static PRINT_FORMAT forceinline void rvvm_debug(const char* format_str, ...)
 {
