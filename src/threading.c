@@ -10,27 +10,23 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 // Expose clock_gettime(), pthread_condattr_setclock(), pthread_cond_timedwait_relative_np(), syscall()
 #include "feature_test.h"
 
-#include "threading.h"
 #include "atomics.h"
-#include "compiler.h"
 #include "rvtimer.h"
 #include "spinlock.h"
+#include "threading.h"
+#include "utils.h"
 #include "vector.h"
+
+SOURCE_OPTIMIZATION_SIZE
 
 #if defined(HOST_TARGET_WIN32)
 
-// Use Win32 threads & events; Use RtlWaitOnAddress() for futexes if present
+// Use Win32 threads & events
 #include <windows.h>
 
-// For runtime feature probing
+#if defined(HOST_TARGET_WINNT)
+
 #include "dlib.h"
-
-#if !defined(HOST_TARGET_WINCE)
-
-// Win32 futexes via RtlWaitOnAddress(), Win8+
-static BOOL (*__stdcall rtl_wait_on_addr)(const void*, const void*, size_t, const LARGE_INTEGER*) = NULL;
-static void (*__stdcall rtl_wake_by_addr_single)(const void*)                                     = NULL;
-static void (*__stdcall rtl_wake_by_addr_all)(const void*)                                        = NULL;
 
 // High-resolution waitable timers via CreateWaitableTimerExW(CREATE_WAITABLE_TIMER_HIGH_RESOLUTION), Win10 1803+
 static HANDLE (*__stdcall create_waitable_timer_ex_w)(void*, LPCWSTR, DWORD, DWORD)                    = NULL;
@@ -47,7 +43,6 @@ static int32_t (*__stdcall nt_set_timer_resolution)(ULONG, BOOLEAN, PULONG) = NU
 
 static DWORD fls_waitable_timer = 0;
 
-#define WIN32_FUTEX_IMPL          1
 #define WIN32_WAITABLE_TIMER_IMPL 1
 
 #endif
@@ -59,7 +54,9 @@ static DWORD fls_waitable_timer = 0;
 #include <pthread.h> // For pthread, pthread_cond, pthread_mutex
 #include <time.h>    // For clock_gettime(), if CLOCK_REALTIME/CLOCK_MONOTONIC are defined
 
-#if defined(__linux__) && CHECK_INCLUDE(sys/syscall.h, 1)
+#if defined(HOST_TARGET_LINUX) && CHECK_INCLUDE(sys/syscall.h, 1)
+
+// Linux futexes (Linux 2.6.22+)
 #include <sys/syscall.h> // For __NR_futex, __NR_futex_time64
 #include <unistd.h>      // For syscall()
 
@@ -72,19 +69,22 @@ static DWORD fls_waitable_timer = 0;
 #endif
 
 #if defined(__NR_futex) && defined(FUTEX_WAIT_PRIVATE) && defined(FUTEX_WAKE_PRIVATE)
-// Linux futexes available
 #define LINUX_FUTEX_IMPL 1
 #endif
 
-#elif defined(__FreeBSD__) && __FreeBSD__ >= 11
+#elif defined(HOST_TARGET_FREEBSD) && HOST_TARGET_FREEBSD >= 11 && CHECK_INCLUDE(sys/umtx.h)
+
 // FreeBSD futexes (_umtx_op(), FreeBSD 11.0+)
-#define UMTX_OP_WAIT_UINT  11
-#define UMTX_OP_WAKE       3
-int _umtx_op(void* obj, int op, unsigned long val, void* uaddr, void* uaddr2);
+#include <sys/types.h>
+#include <sys/umtx.h>
 
+#if defined(UMTX_OP_WAIT_UINT) && defined(UMTX_OP_WAKE)
 #define FREEBSD_FUTEX_IMPL 1
+#endif
 
-#elif defined(__OpenBSD__) && CHECK_INCLUDE(sys/futex.h, 0)
+#elif defined(HOST_TARGET_OPENBSD) && CHECK_INCLUDE(sys/futex.h, 0)
+
+// OpenBSD futexes (OpenBSD 6.2+)
 #include <sys/futex.h>
 #include <sys/time.h>
 
@@ -92,7 +92,8 @@ int _umtx_op(void* obj, int op, unsigned long val, void* uaddr, void* uaddr2);
 #define OPENBSD_FUTEX_IMPL 1
 #endif
 
-#elif defined(__APPLE__)
+#elif defined(HOST_TARGET_DARWIN)
+
 // Mac OS futexes (__ulock_wait(), OS X 10.12+)
 #include "dlib.h" // For __ulock_wait() & __ulock_wake() probing
 
@@ -120,10 +121,9 @@ static int (*ulock_wake)(uint32_t op, void* ptr, uint64_t unused)           = NU
 
 #endif
 
-// Internal headers come after system headers because of safe_free()
-#include "utils.h"
-
 #if defined(HOST_TARGET_WIN32)
+
+#if defined(WIN32_WAITABLE_TIMER_IMPL)
 
 /*
  * Precise sub-millisecond delay/timeout using high-resolution WaitableTimer (Win10 1803+)
@@ -135,8 +135,6 @@ static int (*ulock_wake)(uint32_t op, void* ptr, uint64_t unused)           = NU
  * Prefer to use NtSetTimerResolution(156250) for power saving reasons, and use high-resolution waitable timers for
  * anything that requires actual precise delays.
  */
-
-#if defined(WIN32_WAITABLE_TIMER_IMPL)
 
 static void thread_local_waitable_timer_free(void* arg)
 {
@@ -414,14 +412,6 @@ static bool thread_futex_wait_native(void* ptr, uint32_t val, uint64_t timeout_n
         timeout_us = EVAL_MAX(timeout_us, 1);
     }
     return ulock_wait && ulock_wait(ULOCK_CMP_WAIT, ptr, val, timeout_us) >= 0;
-#elif defined(WIN32_FUTEX_IMPL)
-    LARGE_INTEGER  timeout     = {0};
-    LARGE_INTEGER* timeout_ptr = NULL;
-    if (timeout_ns != THREAD_FUTEX_INFINITE) {
-        timeout.QuadPart = -(timeout_ns / 100ULL);
-        timeout_ptr      = &timeout;
-    }
-    return rtl_wait_on_addr && rtl_wait_on_addr(ptr, &val, 4, timeout_ptr);
 #else
     UNUSED(ptr);
     UNUSED(val);
@@ -440,12 +430,6 @@ static bool thread_futex_wake_native(void* ptr, uint32_t num)
     return futex(ptr, FUTEX_WAKE, num, NULL, NULL) >= 0;
 #elif defined(APPLE_FUTEX_IMPL)
     return ulock_wake && ulock_wake((num > 1) ? ULOCK_WAKE_ALL : ULOCK_WAKE_ONE, ptr, 0) >= 0;
-#elif defined(WIN32_FUTEX_IMPL)
-    if (num > 1) {
-        return rtl_wake_by_addr_all && (rtl_wake_by_addr_all(ptr), true);
-    } else {
-        return rtl_wake_by_addr_single && (rtl_wake_by_addr_single(ptr), true);
-    }
 #else
     UNUSED(ptr);
     UNUSED(num);
@@ -525,17 +509,10 @@ static void thread_futex_wake_emu(void* ptr, uint32_t num)
 static slow_path bool thread_futex_init_once(void)
 {
     uint32_t tmp = 0;
-
-#if defined(WIN32_FUTEX_IMPL)
-    rtl_wait_on_addr        = dlib_get_symbol("ntdll.dll", "RtlWaitOnAddress");
-    rtl_wake_by_addr_single = dlib_get_symbol("ntdll.dll", "RtlWakeAddressSingle");
-    rtl_wake_by_addr_all    = dlib_get_symbol("ntdll.dll", "RtlWakeAddressAll");
-    if (!rtl_wait_on_addr || !rtl_wake_by_addr_single || !rtl_wake_by_addr_all) {
-        rtl_wait_on_addr        = NULL;
-        rtl_wake_by_addr_single = NULL;
-        rtl_wake_by_addr_all    = NULL;
+    if (rvvm_has_arg("no_futex")) {
+        return false;
     }
-#elif defined(APPLE_FUTEX_IMPL)
+#if defined(APPLE_FUTEX_IMPL)
     ulock_wait = dlib_get_symbol(NULL, "__ulock_wait");
     ulock_wake = dlib_get_symbol(NULL, "__ulock_wake");
     if (!ulock_wait || !ulock_wake) {
@@ -543,12 +520,10 @@ static slow_path bool thread_futex_init_once(void)
         ulock_wake = NULL;
     }
 #endif
-
-    if (!rvvm_has_arg("no_futex") && thread_futex_wake_native(&tmp, 1)) {
+    if (thread_futex_wake_native(&tmp, 1)) {
         rvvm_info("Native futexes available");
         return true;
     }
-
     return false;
 }
 
