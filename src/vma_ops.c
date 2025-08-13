@@ -10,14 +10,17 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 // Expose syscall(), sysconf(), madvise(), mremap(), ftruncate(), MAP_ANON
 #include "feature_test.h"
 
+#include "blk_io.h"
+#include "compiler.h"
+#include "mem_ops.h"
 #include "vma_ops.h"
+
+SOURCE_OPTIMIZATION_SIZE
 
 #if defined(HOST_TARGET_WIN32)
 
 // Win32 VMA implementation using VirtualAlloc(), VirtualFree(), VirtualProtect(), MapViewOfFile(), etc
 #include <windows.h>
-
-#include "spinlock.h"
 
 /*
  * TODO: Better mmap() emulation on Win32?
@@ -29,6 +32,77 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef FILE_MAP_EXECUTE
 #define FILE_MAP_EXECUTE 0x20
 #endif
+
+#define VMA_WIN32_IMPL 1
+
+#if defined(HOST_TARGET_WINNT) && defined(EXCEPTION_ACCESS_VIOLATION)
+#define VMA_WIN32_SEH_IMPL 1
+#endif
+
+#elif defined(HOST_TARGET_POSIX)
+
+// POSIX VMA implementation using mmap(), munmap(), madvise(), etc
+#include <fcntl.h>    // For open(), O_*
+#include <sys/mman.h> // For mmap(), munmap(), mprotect(), shm_open(), shm_unlink(), PROT_*, MAP_*, MFD_CLOEXEC
+#include <unistd.h>   // For sysconf(_SC_PAGESIZE), syscall(), close(), unlink(), ftruncate()
+
+#if defined(HOST_TARGET_LINUX)
+#include <sys/syscall.h> // For __NR_memfd_create, __NR_membarrier
+#endif
+
+#if defined(HOST_TARGET_SERENITY)
+#include <serenity.h> // For anon_create()
+#endif
+
+#if defined(HOST_TARGET_DARWIN) && defined(__aarch64__)
+#include <mach/task.h>         // For mach_msg_type_number_t, thread_act_t, task_threads()
+#include <mach/thread_state.h> // For mach_task_self(), thread_get_register_pointer_values()
+#include <mach/vm_map.h>       // For vm_address_t, vm_deallocate()
+#endif
+
+#ifndef MAP_ANON
+#define MAP_ANON MAP_ANONYMOUS
+#endif
+#ifndef MAP_JIT
+#define MAP_JIT 0
+#endif
+#ifndef MAP_NORESERVE
+#define MAP_NORESERVE 0
+#endif
+#ifndef MAP_FIXED
+#define MAP_FIXED 0
+#endif
+#ifndef MAP_NOSYNC
+#define MAP_NOSYNC 0
+#endif
+
+#ifndef MAP_FAILED
+#define MAP_FAILED ((void*)-1)
+#endif
+
+#ifndef O_EXCL
+#define O_EXCL 0
+#endif
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 0
+#endif
+#ifndef O_NOFOLLOW
+#define O_NOFOLLOW 0
+#endif
+
+#define VMA_MMAP_IMPL 1
+
+#else
+
+#include <stdlib.h>
+#warning No native VMA support!
+
+#endif
+
+// Internal headers come after system headers because of safe_free()
+#include "utils.h"
+
+#if defined(VMA_WIN32_IMPL)
 
 static inline DWORD vma_native_prot(uint32_t flags)
 {
@@ -62,61 +136,52 @@ static inline DWORD vma_native_view_prot(uint32_t flags)
     return ret;
 }
 
-#define VMA_WIN32_IMPL 1
+#if defined(VMA_WIN32_SEH_IMPL)
 
-#elif defined(HOST_TARGET_POSIX)
-
-// POSIX VMA implementation using mmap(), munmap(), madvise(), etc
-#include <fcntl.h>    // For open(), O_*
-#include <sys/mman.h> // For mmap(), munmap(), mprotect(), shm_open(), shm_unlink(), PROT_*, MAP_*, MFD_CLOEXEC
-#include <unistd.h>   // For sysconf(_SC_PAGESIZE), syscall(), close(), unlink(), ftruncate()
-
-#if defined(__linux__)
-#include <sys/syscall.h> // For __NR_memfd_create, __NR_membarrier
-#endif
-
-#if defined(__serenity__)
-#include <serenity.h> // For anon_create()
-#endif
-
-#if defined(__APPLE__) && defined(__aarch64__)
-#include <mach/task.h>         // For mach_msg_type_number_t, thread_act_t, task_threads()
-#include <mach/thread_state.h> // For mach_task_self(), thread_get_register_pointer_values()
-#include <mach/vm_map.h>       // For vm_address_t, vm_deallocate()
-#endif
+#include "spinlock.h"
 
 /*
- * Fallbacks for possibly missing definitions
+ * Pause SEH access violation handling in all threads at own will
+ * Prevents a crash when a thread accesses a VMA that's currently being zeroed by vma_clean()
+ * Evil ideas require evil solutions...
  */
 
-// Unify MAP_ANON / MAP_ANONYMOUS
-#ifndef MAP_ANON
-#define MAP_ANON MAP_ANONYMOUS
+static LPTOP_LEVEL_EXCEPTION_FILTER seh_prev_handler = NULL;
+
+static spinlock_t seh_lock = ZERO_INIT;
+
+static void seh_revert_handler(void)
+{
+    if (seh_prev_handler) {
+        SetUnhandledExceptionFilter(seh_prev_handler);
+        seh_prev_handler = NULL;
+    }
+}
+
+static LONG CALLBACK seh_handler(EXCEPTION_POINTERS* ptrs)
+{
+    LONG ret = 0;
+    scoped_spin_lock_slow (&seh_lock) {
+        if (ptrs->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
+            seh_revert_handler();
+            ret = -1;
+        } else if (seh_prev_handler) {
+            ret = seh_prev_handler(ptrs);
+        }
+    }
+    return ret;
+}
+
+// NOTE: Must be called under seh_lock!
+static void seh_suspend_access_violation(void)
+{
+    seh_prev_handler = SetUnhandledExceptionFilter(seh_handler);
+    DO_ONCE(call_at_deinit(seh_revert_handler));
+}
+
 #endif
 
-#ifndef MAP_JIT
-#define MAP_JIT 0
-#endif
-
-#ifndef MAP_NORESERVE
-#define MAP_NORESERVE 0
-#endif
-
-#ifndef MAP_FIXED
-#define MAP_FIXED 0
-#endif
-
-#ifndef O_EXCL
-#define O_EXCL 0
-#endif
-
-#ifndef O_CLOEXEC
-#define O_CLOEXEC 0
-#endif
-
-#ifndef O_NOFOLLOW
-#define O_NOFOLLOW 0
-#endif
+#elif defined(VMA_MMAP_IMPL)
 
 static inline int vma_native_prot(uint32_t flags)
 {
@@ -127,24 +192,10 @@ static inline int vma_native_prot(uint32_t flags)
     return ret ? ret : PROT_NONE;
 }
 
-#define VMA_MMAP_IMPL 1
-
-#else
-
-#include <stdlib.h>
-#warning No native VMA support!
-
 #endif
 
-// Internal headers come after system headers because of safe_free()
-#include "blk_io.h"
-#include "mem_ops.h"
-#include "utils.h"
-
-SOURCE_OPTIMIZATION_SIZE
-
 static size_t host_pagesize    = 0;
-static size_t host_granularity = 0; // Allocation granularity, may be > pagesize
+static size_t host_granularity = 0; // Allocation granularity, may be >= pagesize
 
 static void vma_page_size_init_once(void)
 {
@@ -158,7 +209,7 @@ static void vma_page_size_init_once(void)
     host_granularity = info.dwAllocationGranularity;
 #elif defined(VMA_MMAP_IMPL)
     host_pagesize = sysconf(_SC_PAGESIZE);
-#if defined(__COSMOPOLITAN__) && defined(_SC_GRANSIZE)
+#if defined(HOST_TARGET_COSMOPOLITAN) && defined(_SC_GRANSIZE)
     // Support Windows allocation granularity on Cosmopolitan
     host_granularity = sysconf(_SC_GRANSIZE);
 #endif
@@ -219,11 +270,11 @@ int vma_anon_memfd(size_t size)
     int memfd = -1;
 #if defined(VMA_MMAP_IMPL)
     size = align_size_up(size, vma_granularity());
-#if defined(__linux__) && defined(__NR_memfd_create) && defined(MFD_CLOEXEC)
+#if defined(HOST_TARGET_LINUX) && defined(__NR_memfd_create) && defined(MFD_CLOEXEC)
     memfd = syscall(__NR_memfd_create, "vma_anon", MFD_CLOEXEC);
-#elif defined(__FreeBSD__) && defined(SHM_ANON)
+#elif defined(HOST_TARGET_FREEBSD) && defined(SHM_ANON)
     memfd = shm_open(SHM_ANON, O_RDWR | O_CLOEXEC, 0);
-#elif defined(__serenity__)
+#elif defined(HOST_TARGET_SERENITY)
     memfd = anon_create(size, O_CLOEXEC);
     if (memfd >= 0) {
         return memfd;
@@ -236,7 +287,7 @@ int vma_anon_memfd(size_t size)
         char path[256]         = {0};
         char random_suffix[32] = {0};
         rvvm_randomserial(random_suffix, 16);
-#if !defined(ANDROID) && !defined(__ANDROID__) && !defined(__serenity__)
+#if !defined(HOST_TARGET_ANDROID) && !defined(HOST_TARGET_SERENITY)
         if (memfd < 0) {
             size_t off = rvvm_strlcpy(path, "/shm-vma-anon-", sizeof(path));
             rvvm_strlcpy(path + off, random_suffix, sizeof(path) - off);
@@ -281,7 +332,11 @@ int vma_anon_memfd(size_t size)
 
 bool vma_broadcast_membarrier(void)
 {
-#if defined(VMA_MMAP_IMPL) && defined(__linux__) && defined(__NR_membarrier)
+#if defined(VMA_WIN32_IMPL) && (defined(__aarch64__) || defined(_M_ARM64))
+    // Use FlushProcessWriteBuffers() on Windows ARM64
+    FlushProcessWriteBuffers();
+    return true;
+#elif defined(VMA_MMAP_IMPL) && defined(HOST_TARGET_LINUX) && defined(__NR_membarrier)
     static uint32_t has_membarrier = 0;
     // Register intent to use private expedited membarrier
     DO_ONCE_SCOPED {
@@ -294,23 +349,7 @@ bool vma_broadcast_membarrier(void)
         }
         atomic_store_uint32_relax(&has_membarrier, false);
     }
-#endif
-#if (defined(VMA_MMAP_IMPL) || defined(VMA_WIN32_IMPL)) && !defined(__aarch64__) && !defined(_M_ARM64)
-    // Most OS kernels perform an IPI for mprotect()/munmap(), though on ARM64 this is not guaranteed due to tlbi
-    void* ipi_page = vma_alloc(NULL, vma_page_size(), VMA_RDWR);
-    if (ipi_page) {
-        memset(ipi_page, 0, 4);
-        bool ret = vma_protect(ipi_page, vma_page_size(), VMA_READ);
-        vma_free(ipi_page, vma_page_size());
-        return ret;
-    }
-#endif
-#if defined(VMA_WIN32_IMPL) && (defined(__aarch64__) || defined(_M_ARM64))
-    // Use FlushProcessWriteBuffers() on Windows ARM64
-    FlushProcessWriteBuffers();
-    return true;
-#endif
-#if defined(VMA_MMAP_IMPL) && defined(__APPLE__) && defined(__aarch64__)
+#elif defined(VMA_MMAP_IMPL) && defined(HOST_TARGET_DARWIN) && defined(__aarch64__)
     // Request stack pointer value on each thread to enforce a global memory barrier
     mach_msg_type_number_t num_threads = 0;
     thread_act_t*          ptr_threads = NULL;
@@ -325,6 +364,16 @@ bool vma_broadcast_membarrier(void)
             }
         }
         vm_deallocate(mach_task_self(), (vm_address_t)ptr_threads, num_threads * sizeof(thread_act_t));
+        return ret;
+    }
+#endif
+#if (defined(VMA_MMAP_IMPL) || defined(VMA_WIN32_IMPL)) && !defined(__aarch64__) && !defined(_M_ARM64)
+    // Most OS kernels perform an IPI for mprotect()/munmap(), though on ARM64 this is not guaranteed due to tlbi
+    void* ipi_page = vma_alloc(NULL, vma_page_size(), VMA_RDWR);
+    if (ipi_page) {
+        memset(ipi_page, 0, 4);
+        bool ret = vma_protect(ipi_page, vma_page_size(), VMA_READ);
+        vma_free(ipi_page, vma_page_size());
         return ret;
     }
 #endif
@@ -343,7 +392,7 @@ static void* vma_mmap_aligned_internal(void* addr, size_t size, uint32_t flags, 
             return NULL;
         }
         if (file_handle) {
-#if defined(HOST_64BIT) || defined(UNDER_CE)
+#if defined(HOST_64BIT) || defined(HOST_TARGET_WINCE)
             // Use Unicode syscall on 64 bits and Windows CE, ANSI otherwise for Win9x support
             HANDLE file_map = CreateFileMappingW(file_handle, NULL, vma_native_prot(flags), 0, 0, NULL);
 #else
@@ -352,11 +401,11 @@ static void* vma_mmap_aligned_internal(void* addr, size_t size, uint32_t flags, 
             if (!file_map || file_map == INVALID_HANDLE_VALUE) {
                 return NULL;
             }
-#if !defined(UNDER_CE)
+#if defined(HOST_TARGET_WINNT)
             // No MapViewOfFileEx() on Windows CE
             if (flags & VMA_FIXED) {
-                ret = MapViewOfFileEx(file_map, vma_native_view_prot(flags), offset >> 32, (uint32_t)offset, size,
-                                      addr);
+                ret = MapViewOfFileEx(file_map, vma_native_view_prot(flags), //
+                                      offset >> 32, (uint32_t)offset, size, addr);
             }
 #endif
             if (!ret) {
@@ -396,12 +445,12 @@ static void* vma_mmap_aligned_internal(void* addr, size_t size, uint32_t flags, 
         ret = NULL;
     }
     // Apply madvise() flags
-#if defined(__linux__) && defined(MADV_MERGEABLE)
+#if defined(HOST_TARGET_LINUX) && defined(MADV_MERGEABLE)
     if (ret && (flags & VMA_KSM)) {
         madvise(ret, size, MADV_MERGEABLE);
     }
 #endif
-#if defined(__linux__) && defined(MADV_HUGEPAGE)
+#if defined(HOST_TARGET_LINUX) && defined(MADV_HUGEPAGE)
     if (ret && (flags & VMA_THP)) {
         madvise(ret, size, MADV_HUGEPAGE);
     }
@@ -482,11 +531,11 @@ void* vma_mmap(void* addr, size_t size, uint32_t flags, rvfile_t* file, uint64_t
 bool vma_multi_mmap(void** rw, void** exec, size_t size)
 {
     size = align_size_up(size, vma_granularity());
-#ifdef VMA_MMAP_IMPL
+#if defined(VMA_MMAP_IMPL)
     int memfd = vma_anon_memfd(size);
     if (memfd > 0) {
-        *rw   = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, memfd, 0);
-        *exec = mmap(NULL, size, PROT_READ | PROT_EXEC, MAP_SHARED, memfd, 0);
+        *rw   = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_NOSYNC, memfd, 0);
+        *exec = mmap(NULL, size, PROT_READ | PROT_EXEC, MAP_SHARED | MAP_NOSYNC, memfd, 0);
         close(memfd);
         if (*rw != MAP_FAILED && *exec != MAP_FAILED) {
             return true;
@@ -523,7 +572,7 @@ void* vma_remap(void* addr, size_t old_size, size_t new_size, uint32_t flags)
         return addr;
     }
 
-#if defined(VMA_MMAP_IMPL) && defined(__linux__) && defined(MREMAP_MAYMOVE)
+#if defined(VMA_MMAP_IMPL) && defined(HOST_TARGET_LINUX) && defined(MREMAP_MAYMOVE)
     ret = mremap(addr, old_size, new_size, (flags & VMA_FIXED) ? 0 : MREMAP_MAYMOVE);
     if (ret == MAP_FAILED) {
         ret = NULL;
@@ -594,67 +643,32 @@ bool vma_sync(void* addr, size_t size)
     return false;
 }
 
-#if defined(VMA_WIN32_IMPL) && !defined(UNDER_CE)
-
-static spinlock_t seh_lock = ZERO_INIT;
-static void*      orig_seh = NULL;
-
-// Lock on a seh_lock when a SEH exception occurs, reverts the original SEH handler under the lock
-// Prevents a crash when a thread accesses a VMA that's currently being zeroed by vma_clean()
-// Evil ideas require evil solutions...
-static LONG CALLBACK win32_ignore_seh(void* ptrs)
-{
-    UNUSED(ptrs);
-    scoped_spin_lock (&seh_lock) {
-        // Sleep for a bit if we actually trigger a SEH
-        // This fixes an obscure crash under Wine with a torture test...
-        Sleep(10);
-        if (orig_seh) {
-            SetUnhandledExceptionFilter(orig_seh);
-            orig_seh = NULL;
-        }
-    }
-    return -1;
-}
-
-#endif
-
 bool vma_clean(void* addr, size_t size, bool lazy)
 {
     vma_align_inward(&addr, &size);
     if (addr && size) {
-#if defined(VMA_WIN32_IMPL) && !defined(UNDER_CE)
+#if defined(VMA_WIN32_IMPL) && defined(VMA_WIN32_SEH_IMPL)
         MEMORY_BASIC_INFORMATION mbi = {0};
         if (VirtualQuery(addr, &mbi, sizeof(mbi)) && mbi.Type == MEM_PRIVATE) {
-            bool ret = false;
-            scoped_spin_lock (&seh_lock) {
-                if (!orig_seh) {
-                    orig_seh = SetUnhandledExceptionFilter((void*)win32_ignore_seh);
+            scoped_spin_lock_slow (&seh_lock) {
+                seh_suspend_access_violation();
+                if (!VirtualFree(addr, size, MEM_DECOMMIT)) {
+                    rvvm_fatal("vma_clean(): VirtualFree() failed!");
                 }
-                ret = VirtualFree(addr, size, MEM_DECOMMIT);
-                if (ret && !VirtualAlloc(addr, size, MEM_COMMIT, mbi.Protect)) {
+                if (!VirtualAlloc(addr, size, MEM_COMMIT, mbi.Protect)) {
                     rvvm_fatal("vma_clean(): VirtualAlloc() failed!");
                 }
             }
-            if (ret) {
-                return true;
-            }
-        }
-#endif
-#if defined(VMA_WIN32_IMPL)
-        if (VirtualAlloc(addr, size, MEM_RESET, PAGE_NOACCESS) && lazy) {
             return true;
         }
-#endif
-#if defined(VMA_MMAP_IMPL) && defined(__linux__) && defined(MADV_DONTNEED)
+#elif defined(VMA_MMAP_IMPL) && defined(HOST_TARGET_LINUX) && defined(MADV_DONTNEED)
         if (!madvise(addr, size, MADV_DONTNEED)) {
             return true;
         }
-#endif
-#if defined(VMA_MMAP_IMPL) && defined(MADV_FREE)
-        if (!madvise(addr, size, MADV_FREE) && lazy) {
-            return true;
-        }
+#elif defined(VMA_MMAP_IMPL) && defined(HOST_TARGET_DARWIN) && defined(MADV_FREE_REUSABLE)
+        madvise(addr, size, MADV_FREE_REUSABLE);
+#elif defined(VMA_MMAP_IMPL) && defined(MADV_FREE)
+        madvise(addr, size, MADV_FREE);
 #endif
         return lazy;
     }
@@ -665,25 +679,17 @@ bool vma_pageout(void* addr, size_t size, bool lazy)
 {
     vma_align_inward(&addr, &size);
     if (addr && size) {
-#if defined(VMA_WIN32_IMPL) && defined(ERROR_NOT_LOCKED) && !defined(UNDER_CE)
-        if (!lazy && (VirtualUnlock(addr, size) || GetLastError() == ERROR_NOT_LOCKED)) {
+#if defined(VMA_WIN32_IMPL) && defined(HOST_TARGET_WINNT)
+        if (VirtualUnlock(addr, size) || GetLastError() == ERROR_NOT_LOCKED) {
             return true;
         }
-#endif
-#if defined(VMA_MMAP_IMPL) && defined(__linux__) && defined(MADV_PAGEOUT)
+#elif defined(VMA_MMAP_IMPL) && defined(HOST_TARGET_LINUX) && defined(MADV_PAGEOUT) && defined(MADV_COLD)
         if (!lazy && !madvise(addr, size, MADV_PAGEOUT)) {
             return true;
         }
-#endif
-#if defined(VMA_MMAP_IMPL) && defined(__linux__) && defined(MADV_COLD)
-        if (!madvise(addr, size, MADV_COLD) && lazy) {
-            return true;
-        }
-#endif
-#if defined(VMA_MMAP_IMPL) && defined(__FreeBSD__) && !defined(__linux__) && defined(MADV_DONTNEED)
-        if (!madvise(addr, size, MADV_DONTNEED) && lazy) {
-            return true;
-        }
+        madvise(addr, size, MADV_COLD);
+#elif defined(VMA_MMAP_IMPL) && defined(POSIX_MADV_DONTNEED)
+        posix_madvise(addr, size, POSIX_MADV_DONTNEED);
 #endif
         return lazy;
     }
@@ -704,7 +710,7 @@ bool vma_free(void* addr, size_t size)
             rvvm_warn("vma_free(): Invalid VMA address: %p != %p", mbi.AllocationBase, addr);
         }
         if (mbi.RegionSize != size) {
-            rvvm_warn("vma_free(): Invalid VMA size: %llx != %llx", (uint64_t)mbi.RegionSize, (uint64_t)size);
+            rvvm_warn("vma_free(): Invalid VMA size: %llx != %llx", (long long)mbi.RegionSize, (long long)size);
         }
         if (mbi.Type == MEM_MAPPED) {
             return UnmapViewOfFile(addr);
