@@ -72,7 +72,7 @@ static DWORD fls_waitable_timer = 0;
 #define LINUX_FUTEX_IMPL 1
 #endif
 
-#elif defined(HOST_TARGET_FREEBSD) && HOST_TARGET_FREEBSD >= 11 && CHECK_INCLUDE(sys/umtx.h)
+#elif defined(HOST_TARGET_FREEBSD) && HOST_TARGET_FREEBSD >= 11 && CHECK_INCLUDE(sys/umtx.h, 1)
 
 // FreeBSD futexes (_umtx_op(), FreeBSD 11.0+)
 #include <sys/types.h>
