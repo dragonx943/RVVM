@@ -12,14 +12,14 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "utils.h"
 #include "blk_io.h"
 #include "rvtimer.h"
-#include "vector.h"
 #include "spinlock.h"
 #include "stacktrace.h"
+#include "vector.h"
 
 #include <stdarg.h>
-#include <stdlib.h>
-#include <string.h>
+#include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 SOURCE_OPTIMIZATION_SIZE
 
@@ -29,44 +29,58 @@ SOURCE_OPTIMIZATION_SIZE
 
 static inline char digit_symbol(uint32_t val)
 {
-    if (val < 10) return '0' + val;
-    if (val < 36) return 'a' + val - 10;
+    if (val < 10) {
+        return '0' + val;
+    }
+    if (val < 36) {
+        return 'a' + val - 10;
+    }
     return '?';
 }
 
 static inline uint32_t digit_value(char digit)
 {
-    if (digit >= '0' && digit <= '9') return digit - '0';
-    if (digit >= 'A' && digit <= 'Z') return digit - 'A' + 10;
-    if (digit >= 'a' && digit <= 'z') return digit - 'a' + 10;
+    if (digit >= '0' && digit <= '9') {
+        return digit - '0';
+    }
+    if (digit >= 'A' && digit <= 'Z') {
+        return digit - 'A' + 10;
+    }
+    if (digit >= 'a' && digit <= 'z') {
+        return digit - 'a' + 10;
+    }
     return -1;
 }
 
 size_t uint_to_str_base(char* str, size_t size, uint64_t val, uint8_t base)
 {
     size_t len = 0;
-    if (base >= 2 && base <= 36) do {
-        if (len + 1 >= size) {
-            len = 0;
-            break;
-        }
-        str[len++] = digit_symbol(val % base);
-        val /= base;
-    } while (val);
+    if (base >= 2 && base <= 36) {
+        do {
+            if (len + 1 >= size) {
+                len = 0;
+                break;
+            }
+            str[len++]  = digit_symbol(val % base);
+            val        /= base;
+        } while (val);
+    }
     // Reverse the string
-    for (size_t i=0; i<len / 2; ++i) {
-        char tmp = str[i];
-        str[i] = str[len - i - 1];
+    for (size_t i = 0; i < len / 2; ++i) {
+        char tmp         = str[i];
+        str[i]           = str[len - i - 1];
         str[len - i - 1] = tmp;
     }
-    if (size) str[len] = 0;
+    if (size) {
+        str[len] = 0;
+    }
     return len;
 }
 
 uint64_t str_to_uint_base(const char* str, size_t* len, uint8_t base)
 {
-    uint64_t val = 0;
-    size_t size = 0;
+    uint64_t val  = 0;
+    size_t   size = 0;
     if (base == 0) {
         base = 10;
         if (str[0] == '0') {
@@ -82,11 +96,17 @@ uint64_t str_to_uint_base(const char* str, size_t* len, uint8_t base)
             }
         }
     }
-    if (len) len[0] = 0;
-    if (base >= 2 && base <= 36) while (digit_value(str[size]) < base) {
-        val *= base;
-        val += digit_value(str[size++]);
-        if (len) len[0] = size;
+    if (len) {
+        len[0] = 0;
+    }
+    if (base >= 2 && base <= 36) {
+        while (digit_value(str[size]) < base) {
+            val *= base;
+            val += digit_value(str[size++]);
+            if (len) {
+                len[0] = size;
+            }
+        }
     }
     return val;
 }
@@ -96,19 +116,23 @@ size_t int_to_str_base(char* str, size_t size, int64_t val, uint8_t base)
     size_t off = (val < 0 && size) ? 1 : 0;
     size_t len = uint_to_str_base(str + off, size - off, off ? -val : val, base);
     if (!len) {
-        if (size) str[0] = 0;
+        if (size) {
+            str[0] = 0;
+        }
     } else if (off) {
-        str[0] = '-';
-        len += off;
+        str[0]  = '-';
+        len    += off;
     }
     return len;
 }
 
 int64_t str_to_int_base(const char* str, size_t* len, uint8_t base)
 {
-    bool neg = (str[0] == '-');
+    bool     neg = (str[0] == '-');
     uint64_t val = str_to_uint_base(str + neg, len, base);
-    if (neg && len && len[0]) len[0]++;
+    if (neg && len && len[0]) {
+        len[0]++;
+    }
     return neg ? -val : val;
 }
 
@@ -129,21 +153,27 @@ int64_t str_to_int_dec(const char* str)
 size_t rvvm_strlen(const char* string)
 {
     size_t i = 0;
-    while (string[i]) i++;
+    while (string[i]) {
+        i++;
+    }
     return i;
 }
 
 size_t rvvm_strnlen(const char* string, size_t size)
 {
     size_t i = 0;
-    while (i < size && string[i]) i++;
+    while (i < size && string[i]) {
+        i++;
+    }
     return i;
 }
 
 bool rvvm_strcmp(const char* s1, const char* s2)
 {
     size_t i = 0;
-    while (s1[i] && s1[i] == s2[i]) i++;
+    while (s1[i] && s1[i] == s2[i]) {
+        i++;
+    }
     return s1[i] == s2[i];
 }
 
@@ -154,7 +184,9 @@ size_t rvvm_strlcpy(char* dst, const char* src, size_t size)
         dst[i] = src[i];
         i++;
     }
-    if (size) dst[i] = 0;
+    if (size) {
+        dst[i] = 0;
+    }
     return i;
 }
 
@@ -167,7 +199,9 @@ const char* rvvm_strfind(const char* string, const char* pattern)
             tmp++;
             pat++;
         }
-        if (!(*pat)) return string;
+        if (!(*pat)) {
+            return string;
+        }
         string++;
     }
     return NULL;
@@ -177,35 +211,43 @@ const char* rvvm_strfind(const char* string, const char* pattern)
  * Random generation
  */
 
+static uint64_t rvvm_rng_seed = 0;
+
 void rvvm_randombytes(void* buffer, size_t size)
 {
     // Xorshift RNG seeded by precise timer
-    static uint64_t seed = 0;
-    uint8_t* bytes = buffer;
-    size_t size_rem = size & 0x7;
-    size -= size_rem;
-    seed += rvtimer_clocksource(1000000000ULL);
-    for (size_t i=0; i<size; i += 8) {
+    uint64_t seed  = atomic_load_uint64_relax(&rvvm_rng_seed);
+    uint8_t* dest  = buffer;
+    size_t   rem   = size & 0x7;
+    size          -= rem;
+    if (!seed) {
+        seed = rvtimer_clocksource(1000000000ULL);
+    }
+    for (size_t i = 0; i < size; i += 8) {
         seed ^= (seed >> 17);
         seed ^= (seed << 21);
         seed ^= (seed << 28);
         seed ^= (seed >> 49);
-        memcpy(bytes + i, &seed, 8);
+        memcpy(dest + i, &seed, 8);
     }
     seed ^= (seed >> 17);
     seed ^= (seed << 21);
     seed ^= (seed << 28);
     seed ^= (seed >> 49);
-    memcpy(bytes + size, &seed, size_rem);
+    memcpy(dest + size, &seed, rem);
+    atomic_store_uint64_relax(&rvvm_rng_seed, seed);
 }
 
 void rvvm_randomserial(char* serial, size_t size)
 {
     rvvm_randombytes(serial, size);
-    for (size_t i=0; i<size; ++i) {
+    for (size_t i = 0; i < size; ++i) {
         size_t c = ((uint8_t*)serial)[i] % ('Z' - 'A' + 10);
-        if (c <= 9) serial[i] = '0' + c;
-        else serial[i] = 'A' + c - 10;
+        if (c <= 9) {
+            serial[i] = '0' + c;
+        } else {
+            serial[i] = 'A' + c - 10;
+        }
     }
 }
 
@@ -216,7 +258,9 @@ void rvvm_randomserial(char* serial, size_t size)
 SAFE_MALLOC void* safe_malloc(size_t size)
 {
     void* ret = malloc(size);
-    if (unlikely(!size)) rvvm_warn("Suspicious 0-byte allocation");
+    if (unlikely(!size)) {
+        rvvm_warn("Suspicious 0-byte allocation");
+    }
     if (unlikely(ret == NULL)) {
         rvvm_fatal("Out of memory!");
     }
@@ -226,7 +270,9 @@ SAFE_MALLOC void* safe_malloc(size_t size)
 SAFE_CALLOC void* safe_calloc(size_t size, size_t n)
 {
     void* ret = calloc(size, n);
-    if (unlikely(!size || !n)) rvvm_warn("Suspicious 0-byte allocation");
+    if (unlikely(!size || !n)) {
+        rvvm_warn("Suspicious 0-byte allocation");
+    }
     if (unlikely(ret == NULL)) {
         rvvm_fatal("Out of memory!");
     }
@@ -238,7 +284,9 @@ SAFE_CALLOC void* safe_calloc(size_t size, size_t n)
 SAFE_REALLOC void* safe_realloc(void* ptr, size_t size)
 {
     void* ret = realloc(ptr, size);
-    if (unlikely(!size)) rvvm_warn("Suspicious 0-byte allocation");
+    if (unlikely(!size)) {
+        rvvm_warn("Suspicious 0-byte allocation");
+    }
     if (unlikely(ret == NULL)) {
         rvvm_fatal("Out of memory!");
     }
@@ -252,84 +300,118 @@ SAFE_REALLOC void* safe_realloc(void* ptr, size_t size)
 static int    argc_internal = 0;
 static char** argv_internal = NULL;
 
+static void rvvm_set_args_internal(int argc, char** argv)
+{
+    if (argc > 1) {
+        argc_internal = argc;
+        argv_internal = argv;
+    }
+}
+
 void rvvm_set_args(int argc, char** argv)
 {
-    argc_internal = argc;
-    argv_internal = argv;
-
+    rvvm_set_args_internal(argc, argv);
     if (rvvm_has_arg("v") || rvvm_has_arg("verbose")) {
         rvvm_set_loglevel(LOG_INFO);
     }
 }
 
-static bool config_skip(const char** strptr)
+static inline bool rvvm_config_is_newline(char c)
 {
-    bool found_newline = false;
-    const char* str = *strptr;
-    while (*str == ' ' || *str == '\n') {
-        if (*str++ == '\n') {
-            found_newline = true;
-        }
-    }
-    if (*str == '#') {
-        // Found a comment. skip till newline
-        while (*str && *str != '\n') {
-            str++;
-        }
-        *strptr = str;
-        config_skip(strptr);
-        return true;
-    }
-    *strptr = str;
-    return found_newline;
+    return c == '\n' || c == '\r';
 }
 
-static int config_split(const char* str, char** argv)
+static inline bool rvvm_config_is_space(char c)
 {
-    int argc = 1;
-    bool arg_prefix = true;
-    if (argv) {
+    return c == ' ';
+}
+
+static inline bool rvvm_config_is_delim(char c)
+{
+    return rvvm_config_is_space(c) || rvvm_config_is_newline(c);
+}
+
+static inline bool rvvm_config_is_comment(char c)
+{
+    return c == '#';
+}
+
+static inline bool rvvm_config_is_quot(char c)
+{
+    return c == '\"';
+}
+
+static int rvvm_split_config(const char* str, int argc, char** argv)
+{
+    bool arg = true;
+    int  ret = 1;
+    if (argc && argv) {
         argv[0] = "rvvm";
     }
-    config_skip(&str);
     while (*str) {
-        const char* arg_start = str;
-        while (*str && *str != ' ' && *str != '\n') {
+        // Skip delimiters (spaces, newlines)
+        while (rvvm_config_is_delim(*str)) {
+            if (rvvm_config_is_newline(*str)) {
+                // Found newline
+                arg = true;
+            }
             str++;
         }
-        if (argv) {
-            size_t arg_size = str - arg_start;
-            char* buffer = safe_new_arr(char, arg_size + (arg_prefix ? 2 : 1));
-            if (arg_prefix) {
-                buffer[0] = '-';
-                memcpy(buffer + 1, arg_start, arg_size);
-            } else {
-                memcpy(buffer, arg_start, arg_size);
+        if (rvvm_config_is_comment(*str)) {
+            // Skip comment
+            while (*str && !rvvm_config_is_newline(*str)) {
+                str++;
             }
-            argv[argc] = buffer;
+        } else {
+            // Parse token
+            bool        quoted = rvvm_config_is_quot(*str);
+            const char* token  = str + quoted;
+            if (quoted) {
+                // Find end of quotation
+                do {
+                    str++;
+                } while (*str && !rvvm_config_is_quot(*str));
+                str += rvvm_config_is_quot(*str);
+            } else {
+                // Find delimiter or start of comment
+                while (*str && !rvvm_config_is_delim(*str) && !rvvm_config_is_comment(*str)) {
+                    str++;
+                }
+            }
+            if (ret < argc && argv) {
+                // Fill argv
+                size_t size   = str - token - quoted;
+                char*  buffer = safe_new_arr(char, size + arg + 1);
+                if (arg) {
+                    buffer[0] = '-';
+                }
+                memcpy(buffer + arg, token, size);
+                argv[ret] = buffer;
+            }
+            arg = false;
+            ret++;
         }
-        arg_prefix = config_skip(&str);
-        argc++;
     }
-    return argc;
+    return ret;
 }
 
 bool rvvm_load_config(const char* path)
 {
     rvfile_t* cfg = rvopen(path, 0);
-    if (cfg) {
-        size_t filesize = rvfilesize(cfg);
-        char* filebuf = safe_new_arr(char, filesize + 1);
-        rvread(cfg, filebuf, filesize, 0);
-        rvclose(cfg);
-
-        int argc = config_split(filebuf, NULL);
-        char** argv = safe_new_arr(char*, argc + 1);
-        config_split(filebuf, argv);
-        free(filebuf);
-        rvvm_set_args(argc, argv);
+    if (rvfilesize(cfg) && rvfilesize(cfg) < 0x100000) {
+        char* buf = safe_new_arr(char, rvfilesize(cfg) + 1);
+        if (rvread(cfg, buf, rvfilesize(cfg), 0) == rvfilesize(cfg)) {
+            int argc = rvvm_split_config(buf, 0, NULL);
+            if (argc > 1) {
+                char** argv = safe_new_arr(char*, argc + 1);
+                rvvm_split_config(buf, argc, argv);
+                rvvm_set_args_internal(argc, argv);
+            }
+        }
+        safe_free(buf);
     }
-    return false;
+    rvclose(cfg);
+    return !!cfg;
 }
 
 const char* rvvm_next_arg(const char** val, int* iter)
@@ -372,7 +454,7 @@ const char* rvvm_next_arg(const char** val, int* iter)
 bool rvvm_has_arg(const char* arg)
 {
     const char* arg_name = NULL;
-    int arg_iter = 1;
+    int         arg_iter = 1;
     while ((arg_name = rvvm_next_arg(NULL, &arg_iter))) {
         if (rvvm_strcmp(arg_name, arg)) {
             return true;
@@ -384,8 +466,8 @@ bool rvvm_has_arg(const char* arg)
 const char* rvvm_getarg(const char* arg)
 {
     const char* arg_name = NULL;
-    const char* arg_val = NULL;
-    int arg_iter = 1;
+    const char* arg_val  = NULL;
+    int         arg_iter = 1;
     while ((arg_name = rvvm_next_arg(&arg_val, &arg_iter))) {
         if (rvvm_strcmp(arg_name, arg)) {
             return arg_val;
@@ -416,7 +498,7 @@ uint64_t rvvm_getarg_size(const char* arg)
 {
     const char* arg_val = rvvm_getarg(arg);
     if (arg_val) {
-        size_t len = 0;
+        size_t   len = 0;
         uint64_t ret = str_to_int_base(arg_val, &len, 0);
         return ret << mem_suffix_shift(arg_val[len]);
     }
@@ -436,23 +518,26 @@ void rvvm_set_loglevel(int loglevel)
 
 static bool log_has_colors(void)
 {
-    return getenv("TERM") != NULL;
+    // TERM is set on any POSIX, WT_SESSION is set by Windows Terminal
+    return !!getenv("TERM") || !!getenv("WT_SESSION");
 }
 
 static void log_print(const char* prefix, const char* fmt, va_list args)
 {
-    char buffer[256] = {0};
-    size_t pos = rvvm_strlcpy(buffer, prefix, sizeof(buffer));
-    size_t vsp_size = sizeof(buffer) - EVAL_MIN(pos + 6, sizeof(buffer));
+    char   buffer[256] = {0};
+    size_t pos         = rvvm_strlcpy(buffer, prefix, sizeof(buffer));
+    size_t vsp_size    = sizeof(buffer) - EVAL_MIN(pos + 6, sizeof(buffer));
     if (vsp_size > 1) {
         int tmp = vsnprintf(buffer + pos, vsp_size, fmt, args);
-        if (tmp > 0) pos += EVAL_MIN(vsp_size - 1, (size_t)tmp);
+        if (tmp > 0) {
+            pos += EVAL_MIN(vsp_size - 1, (size_t)tmp);
+        }
     }
     rvvm_strlcpy(buffer + pos, log_has_colors() ? "\033[0m\n" : "\n", sizeof(buffer) - pos);
     fputs(buffer, stderr);
 }
 
-#ifdef USE_DEBUG
+#if defined(USE_DEBUG)
 
 PRINT_FORMAT void rvvm_debug(const char* format_str, ...)
 {
@@ -513,28 +598,27 @@ PRINT_FORMAT void rvvm_fatal(const char* format_str, ...)
 slow_path void do_once_finalize(uint32_t* ticket)
 {
     while (atomic_load_uint32_ex(ticket, ATOMIC_ACQUIRE) != 2) {
-        sleep_ms(1);
+        // Yield this thread
+        // NOTE: Implementation of sleep_ms(0) mustn't use DO_ONCE!
+        sleep_ms(0);
     }
 }
 
 typedef void (*deinit_func_t)(void);
-static vector_t(deinit_func_t) deinit_funcs = {0};
-static spinlock_t deinit_lock = {0};
-static bool deinit_happened = false;
+
+static vector_t(deinit_func_t) deinit_funcs = ZERO_INIT;
+static spinlock_t              deinit_lock  = ZERO_INIT;
+static bool                    deinit_made  = false;
 
 void call_at_deinit(void (*function)(void))
 {
-    bool call_func = false;
-
-    while (!spin_try_lock(&deinit_lock)) sleep_ms(1);
-    if (!deinit_happened) {
+    spin_lock_busy_loop(&deinit_lock);
+    if (!deinit_made) {
         vector_push_back(deinit_funcs, function);
-    } else {
-        call_func = true;
+        function = NULL;
     }
     spin_unlock(&deinit_lock);
-
-    if (call_func) {
+    if (function) {
         function();
     }
 }
@@ -542,14 +626,11 @@ void call_at_deinit(void (*function)(void))
 static deinit_func_t dequeue_func(void)
 {
     deinit_func_t ret = NULL;
-
-    while (!spin_try_lock(&deinit_lock)) sleep_ms(1);
-    deinit_happened = true;
-    if (vector_size(deinit_funcs) == 0) {
-        vector_free(deinit_funcs);
-    } else {
+    spin_lock_busy_loop(&deinit_lock);
+    deinit_made = true;
+    if (vector_size(deinit_funcs)) {
         size_t end = vector_size(deinit_funcs) - 1;
-        ret = vector_at(deinit_funcs, end);
+        ret        = vector_at(deinit_funcs, end);
         vector_erase(deinit_funcs, end);
     }
     spin_unlock(&deinit_lock);
@@ -558,13 +639,12 @@ static deinit_func_t dequeue_func(void)
 
 GNU_DESTRUCTOR void full_deinit(void)
 {
-    rvvm_info("Fully deinitializing librvvm");
-    while (true) {
-        deinit_func_t func = dequeue_func();
-        if (func) {
+    deinit_func_t func = dequeue_func();
+    if (func) {
+        rvvm_info("Fully deinitializing librvvm");
+        do {
             func();
-        } else {
-            break;
-        }
+            func = dequeue_func();
+        } while (func);
     }
 }
