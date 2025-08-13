@@ -141,29 +141,30 @@ slow_path static void spin_lock_wait_internal(spinlock_t* lock, const char* loca
             // Contention is going on, retry
             reset_timer = true;
             spin_pause_hint();
+        } else if (flags & SPINLOCK_WAIT_BUSY_LOOP) {
+            spin_pause_hint();
         } else {
             if (reset_timer) {
                 reset_timer = false;
                 rvtimer_init(&deadlock_timer, 1000000000ULL);
             }
 
-            if (!(flags & SPINLOCK_WAIT_BUSY_LOOP)) {
-                // Indicate that we're waiting on this lock
-                if (!spin_flag_has_waiters(flag)) {
-                    if (atomic_cas_uint32(&lock->flag, flag, flag | SPINLOCK_HAS_WAITERS)) {
-                        flag |= SPINLOCK_HAS_WAITERS;
-                    }
-                }
-
-                // Wait on a futex if we succesfully marked ourselves as a waiter
-                if (spin_flag_has_waiters(flag)) {
-                    if (thread_futex_wait(&lock->flag, flag, SPINLOCK_DEADLOCK_NS)) {
-                        // Reset deadlock timer upon noticing any forward progress
-                        reset_timer = true;
-                    }
+            // Indicate that we're waiting on this lock
+            if (!spin_flag_has_waiters(flag)) {
+                if (atomic_cas_uint32(&lock->flag, flag, flag | SPINLOCK_HAS_WAITERS)) {
+                    flag |= SPINLOCK_HAS_WAITERS;
                 }
             }
 
+            // Wait on a futex if we succesfully marked ourselves as a waiter
+            if (spin_flag_has_waiters(flag)) {
+                if (thread_futex_wait(&lock->flag, flag, SPINLOCK_DEADLOCK_NS)) {
+                    // Reset deadlock timer upon noticing any forward progress
+                    reset_timer = true;
+                }
+            }
+
+            // Check for deadlock
             if (rvtimer_get(&deadlock_timer) >= SPINLOCK_DEADLOCK_NS) {
                 reset_timer = true;
                 if (!location) {
