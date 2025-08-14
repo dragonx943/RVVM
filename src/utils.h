@@ -220,21 +220,25 @@ static inline uint16_t* utf8_to_utf16(const char* str_u8)
     size_t    pos_u16  = 0;
     size_t    size_u8  = 0;
     size_t    pos_u8   = 0;
-    uint16_t* str_u16  = safe_new_arr(uint16_t, size_u16);
-    uint32_t  code     = 0;
+    uint16_t* str_u16  = safe_new_arr(uint16_t, size_u16 + 1);
     while (str_u8 && str_u8[size_u8]) {
         size_u8++;
     }
     while (pos_u8 < size_u8) {
-        size_t b_u8 = utf8_decode_code_point(str_u8 + pos_u8, size_u8 - pos_u8, &code);
+        uint32_t code = 0;
+        size_t   b_u8 = utf8_decode_code_point(str_u8 + pos_u8, size_u8 - pos_u8, &code);
         if (b_u8) {
             size_t b_u16 = utf16_encode_code_point(str_u16 + pos_u16, size_u16 - pos_u16, code);
             if (b_u16) {
                 pos_u16 += b_u16;
                 pos_u8  += b_u8;
+            } else if (size_u16 - pos_u16 < 2) {
+                size_u16 += size_u16 >> 2;
+                str_u16   = (uint16_t*)safe_realloc(str_u16, (size_u16 + 1) * sizeof(uint16_t));
             } else {
-                size_u16 += 16;
-                str_u16   = (uint16_t*)safe_realloc(str_u16, size_u16);
+                // Failed to encode UTF-16
+                safe_free(str_u16);
+                return NULL;
             }
         } else {
             // Invalid UTF-8 input
@@ -248,25 +252,29 @@ static inline uint16_t* utf8_to_utf16(const char* str_u8)
 
 static inline char* utf16_to_utf8(const uint16_t* str_u16)
 {
-    size_t   size_u8  = 16;
-    size_t   pos_u8   = 0;
-    size_t   size_u16 = 0;
-    size_t   pos_u16  = 0;
-    char*    str_u8   = safe_new_arr(char, size_u8);
-    uint32_t code     = 0;
+    size_t size_u8  = 16;
+    size_t pos_u8   = 0;
+    size_t size_u16 = 0;
+    size_t pos_u16  = 0;
+    char*  str_u8   = safe_new_arr(char, size_u8 + 1);
     while (str_u16 && str_u16[size_u16]) {
         size_u16++;
     }
     while (pos_u16 < size_u16) {
-        size_t b_u16 = utf16_decode_code_point(str_u16 + pos_u16, size_u16 - pos_u16, &code);
+        uint32_t code  = 0;
+        size_t   b_u16 = utf16_decode_code_point(str_u16 + pos_u16, size_u16 - pos_u16, &code);
         if (b_u16) {
             size_t b_u8 = utf8_encode_code_point(str_u8 + pos_u8, size_u8 - pos_u8, code);
             if (b_u8) {
                 pos_u16 += b_u16;
                 pos_u8  += b_u8;
+            } else if (size_u8 - pos_u8 < 4) {
+                size_u8 += size_u8 >> 2;
+                str_u8   = (char*)safe_realloc(str_u8, size_u8 + 1);
             } else {
-                size_u8 += 16;
-                str_u8   = (char*)safe_realloc(str_u8, size_u8);
+                // Failed to encode UTF-8
+                safe_free(str_u8);
+                return NULL;
             }
         } else {
             // Invalid UTF-16 input
