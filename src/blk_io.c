@@ -13,6 +13,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "feature_test.h"
 
 #include "blk_io.h"
+#include "utils.h"
 
 // Maximum buffer size processed per internal IO syscall: 256M
 #define RVFILE_MAX_BUFF    0x10000000U
@@ -126,7 +127,7 @@ static bool rvfile_win32_has_threaded_io(void)
 
 #if defined(HOST_TARGET_WIN32)
 #include <io.h>      // For _get_osfhandle()
-#include <windows.h> // For GetModuleFileNameW(), WideCharToMultiByte() on WinCE
+#include <windows.h> // For GetModuleFileNameW() on WinCE
 #endif
 
 #include "spinlock.h"
@@ -141,9 +142,6 @@ static inline bool rvfile_stdio_overflow(uint64_t offset)
 }
 
 #endif
-
-// RVVM internal headers come after system headers because of safe_free()
-#include "utils.h"
 
 struct blk_io_rvfile {
     uint64_t size;
@@ -180,24 +178,30 @@ rvfile_t* rvopen(const char* filepath, uint8_t filemode)
     }
 
 #if defined(HOST_TARGET_WINCE)
-    // Windows CE doesn't support relative file paths, nor current working directory
-    // Workaround by appending executable directory before each relative path
+    /*
+     * Windows CE doesn't support relative file paths, nor current working directory
+     * Workaround by appending executable directory before each relative path
+     */
     char wince_path[256] = {0};
     if (filepath[0] != '\\') {
-        wchar_t wpath[256] = {0};
-        GetModuleFileNameW(NULL, wpath, STATIC_ARRAY_SIZE(wpath));
-        WideCharToMultiByte(CP_UTF8, 0, wpath, -1, wince_path, sizeof(wince_path), NULL, NULL);
-        size_t len = rvvm_strlen(wince_path);
-        while (len && wince_path[len - 1] != '\\') {
-            len--;
-        }
-        rvvm_strlcpy(wince_path + len, filepath, sizeof(wince_path) - len);
-        for (char* ptr = wince_path; ptr[0]; ptr++) {
-            if (ptr[0] == '/') {
-                ptr[0] = '\\';
+        wchar_t exe_path_u16[256] = {0};
+        char*   exe_path_u8       = NULL;
+        GetModuleFileNameW(NULL, exe_path_u16, STATIC_ARRAY_SIZE(exe_path_u16));
+        exe_path_u8 = utf16_to_utf8((const uint16_t*)exe_path_u16);
+        if (exe_path_u8) {
+            size_t len = rvvm_strlcpy(wince_path, exe_path_u8, sizeof(wince_path));
+            safe_free(exe_path_u8);
+            while (len && wince_path[len - 1] != '\\') {
+                len--;
             }
+            rvvm_strlcpy(wince_path + len, filepath, sizeof(wince_path) - len);
+            for (char* ptr = wince_path; ptr[0]; ptr++) {
+                if (ptr[0] == '/') {
+                    ptr[0] = '\\';
+                }
+            }
+            filepath = wince_path;
         }
-        filepath = wince_path;
     }
 #endif
 
@@ -267,22 +271,21 @@ rvfile_t* rvopen(const char* filepath, uint8_t filemode)
         }
     }
 
-    HANDLE handle   = NULL;
-    int    path_len = MultiByteToWideChar(CP_UTF8, 0, filepath, -1, NULL, 0);
-    if (path_len > 0) {
-        wchar_t* filepath_u16 = safe_new_arr(wchar_t, path_len);
-        MultiByteToWideChar(CP_UTF8, 0, filepath, -1, filepath_u16, path_len);
-        handle = CreateFileW(filepath_u16, access, share, NULL, disp, attr, NULL);
+    HANDLE    handle       = INVALID_HANDLE_VALUE;
+    uint16_t* filepath_u16 = utf8_to_utf16(filepath);
+    if (filepath_u16) {
+        handle = CreateFileW((wchar_t*)filepath_u16, access, share, NULL, disp, attr, NULL);
+        safe_free(filepath_u16);
     }
 
 #if !defined(HOST_64BIT) && !defined(HOST_TARGET_WINCE)
-    if ((handle == NULL || handle == INVALID_HANDLE_VALUE) && !rvfile_win32_has_threaded_io()) {
-        // Try to open file via ANSI syscall (Win9x & WinNT 3.51 compat)
+    if (!handle && GetLastError() == ERROR_CALL_NOT_IMPLEMENTED) {
+        // Try ANSI CreateFileA() (Win9x compat)
         handle = CreateFileA(filepath, access, share, NULL, disp, attr, NULL);
     }
 #endif
 
-    if (handle == NULL || handle == INVALID_HANDLE_VALUE) {
+    if (!handle || handle == INVALID_HANDLE_VALUE) {
         if (GetLastError() == ERROR_SHARING_VIOLATION) {
             rvvm_error("File %s is busy", filepath);
         }
@@ -397,7 +400,7 @@ void rvclose(rvfile_t* file)
 #else
         fclose(file->fp);
 #endif
-        free(file);
+        safe_free(file);
     }
 }
 
@@ -771,7 +774,7 @@ bool rvfallocate(rvfile_t* file, uint64_t length)
     if (length <= rvfilesize(file)) {
         return true;
     }
-#if defined(POSIX_FILE_IMPL)                                                                                            \
+#if defined(POSIX_FILE_IMPL)                                                                                           \
     && ((defined(HOST_TARGET_LINUX) && defined(FALLOC_FL_PUNCH_HOLE))                                                  \
         || (defined(HOST_TARGET_FREEBSD) && HOST_TARGET_FREEBSD >= 9)                                                  \
         || (defined(HOST_TARGET_NETBSD) && HOST_TARGET_NETBSD >= 7))
@@ -896,6 +899,6 @@ void blk_close(blkdev_t* dev)
 {
     if (dev) {
         dev->type->close(dev->data);
-        free(dev);
+        safe_free(dev);
     }
 }
