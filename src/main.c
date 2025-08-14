@@ -21,6 +21,8 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+#include "feature_test.h"
+
 #include "gdbstub.h"
 #include "rvvm_isolation.h"
 #include "rvvm_user.h"
@@ -44,7 +46,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include "devices/syscon.h"
 #include "devices/usb-xhci.h"
 
-#if defined(_WIN32) && !defined(UNDER_CE)
+#if defined(HOST_TARGET_WINNT)
 #include <windows.h> // For WriteFile(), SetConsoleOutputCP(), SetConsoleCP(), GetCommandLineW(), CommandLineToArgvW()
 #else
 #include <stdio.h> // For puts()
@@ -52,7 +54,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 static void print_string(const char* str)
 {
-#if defined(_WIN32) && !defined(UNDER_CE)
+#if defined(HOST_TARGET_WINNT)
     DWORD       count = 0;
     const char* tmp   = str;
     while (*tmp++) {
@@ -170,7 +172,7 @@ static bool rvvm_cli_configure(rvvm_machine_t* machine, const char* bios, tap_de
                     return false;
                 }
                 gui_window_init_auto(machine, fb_x, fb_y);
-#ifdef USE_NET
+#if defined(USE_NET)
             } else if (tap && rvvm_strcmp(arg_name, "portfwd")) {
                 if (!tap_portfwd(tap, arg_val)) {
                     return false;
@@ -312,7 +314,7 @@ static int rvvm_cli_main(int argc, char** argv)
 
 int main(int argc, char** argv)
 {
-#if defined(_WIN32) && !defined(UNDER_CE)
+#if defined(HOST_TARGET_WINNT)
     // Prefer UTF-8 arguments on Windows whenever GetCommandLineW() & CommandLineToArgvW() are available
     LPWSTR  (*__stdcall get_command_line_w)(void)              = NULL;
     LPWSTR* (*__stdcall command_line_to_argv_w)(LPCWSTR, int*) = NULL;
@@ -333,11 +335,8 @@ int main(int argc, char** argv)
                 bool   success = true;
                 int    ret     = 0;
                 for (int i = 0; i < argc_u8; ++i) {
-                    int arg_len = WideCharToMultiByte(CP_UTF8, 0, argv_u16[i], -1, NULL, 0, NULL, NULL);
-                    if (arg_len > 0) {
-                        argv_u8[i] = safe_new_arr(char, arg_len);
-                        WideCharToMultiByte(CP_UTF8, 0, argv_u16[i], -1, argv_u8[i], arg_len, NULL, NULL);
-                    } else {
+                    argv_u8[i] = utf16_to_utf8(argv_u16[i]);
+                    if (!argv_u8[i]) {
                         success = false;
                         break;
                     }
