@@ -14,8 +14,11 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "chardev.h"
 #include "ringbuf.h"
 #include "spinlock.h"
+#include "utils.h"
 
 #include <stdio.h> // For fputs(), setvbuf()
+
+SOURCE_OPTIMIZATION_SIZE
 
 #if defined(HOST_TARGET_POSIX)
 
@@ -41,14 +44,29 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define CREAD 0
 #endif
 
+static bool posix_fd_ready(int fd, bool write)
+{
+    struct timeval tv = {0};
+    if (fd >= 0 && fd < FD_SETSIZE) {
+        fd_set  fds  = {0};
+        fd_set* rfds = write ? NULL : &fds;
+        fd_set* wfds = write ? &fds : NULL;
+        FD_SET(fd, &fds);
+        return select(fd + 1, rfds, wfds, NULL, &tv) > 0 && FD_ISSET(fd, &fds);
+    }
+    DO_ONCE(rvvm_warn("Invalid terminal fd!"));
+    return false;
+}
+
 #define POSIX_TERM_IMPL 1
 
-#elif defined(HOST_TARGET_WIN32) && !defined(HOST_TARGET_WINCE)
+#elif defined(HOST_TARGET_WINNT)
 
-#include <conio.h>   // For _kbhit()
-#include <windows.h> // For GetStdHandle(), ReadFile(), WriteFile(), SetConsoleMode(), etc
+// For GetStdHandle(), ReadFile(), WriteFile(), SetConsoleMode(), GetNumberOfConsoleInputEvents()
+#include <windows.h>
 
-#include "dlib.h" // For AllocConsole(), GetConsoleSelectionInfo() probing
+// For AllocConsole(), GetConsoleSelectionInfo() probing
+#include "dlib.h"
 
 typedef struct {
     DWORD      flags;
@@ -73,15 +91,9 @@ static bool win32_console_busy(void)
 #else
 
 // Fallback to stdio
-#include "mem_ops.h"
 #warning No terminal input support!
 
 #endif
-
-// Internal headers come after system headers because of safe_free()
-#include "utils.h"
-
-SOURCE_OPTIMIZATION_SIZE
 
 typedef struct {
     chardev_t  chardev;
@@ -108,67 +120,70 @@ static DWORD orig_output_mode = 0;
 
 #endif
 
-static bool term_ready_for_io(chardev_term_t* term, bool write)
+static size_t term_read_raw(chardev_term_t* term, char* buffer, size_t size)
 {
-    UNUSED(term);
 #if defined(POSIX_TERM_IMPL)
-    struct timeval timeout = {0};
-    fd_set         fds     = {0};
-    int            rfd     = term ? term->rfd : 0;
-    int            wfd     = term ? term->wfd : 1;
-    int            fd      = write ? wfd : rfd;
-    FD_SET(fd, &fds);
-    return select(fd + 1, write ? NULL : &fds, write ? &fds : NULL, NULL, &timeout) > 0 && FD_ISSET(fd, &fds);
+    if (posix_fd_ready(term->rfd, false)) {
+        int ret = read(term->rfd, buffer, size);
+        return EVAL_MAX(ret, 0);
+    }
 #elif defined(WIN32_TERM_IMPL)
-    return write || _kbhit();
-#else
-    return write;
+    HANDLE console = GetStdHandle(STD_INPUT_HANDLE);
+    if (size && console && console != INVALID_HANDLE_VALUE) {
+        // Check available input without _kbhit, implementation from Wine msvcrt
+        DWORD events = 0;
+        DWORD count  = 0;
+        GetNumberOfConsoleInputEvents(console, &events);
+        if (events) {
+            INPUT_RECORD* ir = safe_new_arr(INPUT_RECORD, events);
+            PeekConsoleInputA(console, ir, events, &events);
+            for (DWORD i = 0; i < events; ++i) {
+                if (ir[i].EventType == KEY_EVENT && ir[i].Event.KeyEvent.bKeyDown //
+                    && (ir[i].Event.KeyEvent.uChar.AsciiChar || ir[i].Event.KeyEvent.uChar.UnicodeChar)) {
+                    // Input available
+                    ReadFile(console, buffer, size, &count, NULL);
+                    break;
+                }
+            }
+            safe_free(ir);
+            return count;
+        }
+    }
 #endif
+    // No way to implement non-blocking input using stdio
+    UNUSED(term);
+    UNUSED(buffer);
+    UNUSED(size);
+    return 0;
 }
 
 static size_t term_write_raw(chardev_term_t* term, const char* buffer, size_t size)
 {
-    UNUSED(term);
 #if defined(POSIX_TERM_IMPL)
-    int wfd = term ? term->wfd : 1;
-    int tmp = write(wfd, buffer, size);
-    return (tmp > 0) ? tmp : 0;
+    if (posix_fd_ready(term->wfd, true)) {
+        int ret = write(term->wfd, buffer, size);
+        return EVAL_MAX(ret, 0);
+    }
 #elif defined(WIN32_TERM_IMPL)
     HANDLE console = GetStdHandle(STD_OUTPUT_HANDLE);
     DWORD  count   = size;
-    if (console && !win32_console_busy()) {
-        WriteFile(console, buffer, size, &count, NULL);
+    if (size) {
+        if (console && console != INVALID_HANDLE_VALUE && !win32_console_busy()) {
+            WriteFile(console, buffer, size, &count, NULL);
+        }
+        return count;
     }
-    return size;
 #else
-    char   tmp[256] = {0};
-    size_t ret      = EVAL_MIN(size, sizeof(tmp) - 1);
-    memcpy(tmp, buffer, ret);
-    fputs(tmp, stdout);
-    return ret;
+    char str[256] = {0};
+    if (size) {
+        size_t ret = EVAL_MIN(size, sizeof(str) - 1);
+        rvvm_strlcpy(str, buffer, ret + 1);
+        fputs(str, stdout);
+        return ret;
+    }
 #endif
-}
-
-static size_t term_read_raw(chardev_term_t* term, char* buffer, size_t size)
-{
     UNUSED(term);
-    UNUSED(buffer);
-    UNUSED(size);
-#if defined(POSIX_TERM_IMPL)
-    int rfd = term ? term->rfd : 0;
-    int tmp = read(rfd, buffer, size);
-    return (tmp > 0) ? tmp : 0;
-#elif defined(WIN32_TERM_IMPL)
-    HANDLE console = GetStdHandle(STD_INPUT_HANDLE);
-    DWORD  count   = size;
-    if (!console || !ReadFile(console, buffer, size, &count, NULL)) {
-        count = 0;
-    }
-    return count;
-#else
-    // No way to implement non-blocking input using stdio
     return 0;
-#endif
 }
 
 static void term_orig_mode(void)
@@ -284,24 +299,20 @@ static void term_process_input(chardev_term_t* term, char* buffer, size_t size)
 
 static void term_pull_rx(chardev_term_t* term)
 {
-    if (term_ready_for_io(term, false)) {
-        char   rx_buf[256] = {0};
-        size_t rx_size     = EVAL_MIN(sizeof(rx_buf), ringbuf_space(&term->rx));
-        rx_size            = term_read_raw(term, rx_buf, rx_size);
+    char   rx_buf[256] = {0};
+    size_t rx_size     = EVAL_MIN(sizeof(rx_buf), ringbuf_space(&term->rx));
+    rx_size            = term_read_raw(term, rx_buf, rx_size);
 
-        term_process_input(term, rx_buf, rx_size);
-        ringbuf_write(&term->rx, rx_buf, rx_size);
-    }
+    term_process_input(term, rx_buf, rx_size);
+    ringbuf_write(&term->rx, rx_buf, rx_size);
 }
 
 static void term_push_tx(chardev_term_t* term)
 {
-    if (term_ready_for_io(term, true)) {
-        char   tx_buf[256] = {0};
-        size_t tx_size     = ringbuf_peek(&term->tx, tx_buf, sizeof(tx_buf));
-        tx_size            = term_write_raw(term, tx_buf, tx_size);
-        ringbuf_skip(&term->tx, tx_size);
-    }
+    char   tx_buf[256] = {0};
+    size_t tx_size     = ringbuf_peek(&term->tx, tx_buf, sizeof(tx_buf));
+    tx_size            = term_write_raw(term, tx_buf, tx_size);
+    ringbuf_skip(&term->tx, tx_size);
 }
 
 static void term_update(chardev_t* dev)
