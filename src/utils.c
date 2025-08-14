@@ -323,7 +323,7 @@ static inline bool rvvm_config_is_newline(char c)
 
 static inline bool rvvm_config_is_space(char c)
 {
-    return c == ' ';
+    return c == ' ' || c == '\t';
 }
 
 static inline bool rvvm_config_is_delim(char c)
@@ -544,7 +544,7 @@ PRINT_FORMAT void rvvm_debug(const char* format_str, ...)
     if (rvvm_loglevel >= LOG_INFO) {
         va_list args;
         va_start(args, format_str);
-        log_print(log_has_colors() ? "\033[33;1mDEBUG\033[37;1m: " : "DEBUG: ", format_str, args);
+        log_print(log_has_colors() ? "\033[33;1mDEBUG\033[0;1m: " : "DEBUG: ", format_str, args);
         va_end(args);
     }
 }
@@ -556,7 +556,7 @@ PRINT_FORMAT void rvvm_info(const char* format_str, ...)
     if (rvvm_loglevel >= LOG_INFO) {
         va_list args;
         va_start(args, format_str);
-        log_print(log_has_colors() ? "\033[33;1mINFO\033[37;1m: " : "INFO: ", format_str, args);
+        log_print(log_has_colors() ? "\033[33;1mINFO\033[0;1m: " : "INFO: ", format_str, args);
         va_end(args);
     }
 }
@@ -566,7 +566,7 @@ PRINT_FORMAT void rvvm_warn(const char* format_str, ...)
     if (rvvm_loglevel >= LOG_WARN) {
         va_list args;
         va_start(args, format_str);
-        log_print(log_has_colors() ? "\033[31;1mWARN\033[37;1m: " : "WARN: ", format_str, args);
+        log_print(log_has_colors() ? "\033[31;1mWARN\033[0;1m: " : "WARN: ", format_str, args);
         va_end(args);
     }
 }
@@ -576,7 +576,7 @@ PRINT_FORMAT void rvvm_error(const char* format_str, ...)
     if (rvvm_loglevel >= LOG_ERROR) {
         va_list args;
         va_start(args, format_str);
-        log_print(log_has_colors() ? "\033[31;1mERROR\033[37;1m: " : "ERROR: ", format_str, args);
+        log_print(log_has_colors() ? "\033[31;1mERROR\033[0;1m: " : "ERROR: ", format_str, args);
         va_end(args);
     }
 }
@@ -585,7 +585,7 @@ PRINT_FORMAT void rvvm_fatal(const char* format_str, ...)
 {
     va_list args;
     va_start(args, format_str);
-    log_print(log_has_colors() ? "\033[31;1mFATAL\033[37;1m: " : "FATAL: ", format_str, args);
+    log_print(log_has_colors() ? "\033[31;1mFATAL\033[0;1m: " : "FATAL: ", format_str, args);
     va_end(args);
     stacktrace_print();
     abort();
