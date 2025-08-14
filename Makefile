@@ -317,12 +317,11 @@ endif
 override VT_ESC  := $(if $(HOST_POSIX)$(call var_def,WT_SESSION)$(call var_def,TERM),)
 override VT_BELL := $(if $(VT_ESC),)
 override RESET   := $(if $(VT_ESC),$(VT_ESC)[0m)
-override BOLD    := $(if $(VT_ESC),$(VT_ESC)[1m)
-override RED     := $(if $(VT_ESC),$(VT_ESC)[31m$(BOLD))
-override GREEN   := $(if $(VT_ESC),$(VT_ESC)[32m$(BOLD))
-override YELLOW  := $(if $(VT_ESC),$(VT_ESC)[33m$(BOLD))
-override WHITE   := $(if $(VT_ESC),$(VT_ESC)[37m$(BOLD))
-override TEXT    := $(if $(VT_ESC),$(RESET)$(BOLD))
+override TEXT    := $(if $(VT_ESC),$(VT_ESC)[0;1m)
+override RED     := $(if $(VT_ESC),$(VT_ESC)[31;1m)
+override GREEN   := $(if $(VT_ESC),$(VT_ESC)[32;1m)
+override YELLOW  := $(if $(VT_ESC),$(VT_ESC)[33;1m)
+override WHITE   := $(if $(VT_ESC),$(VT_ESC)[37;1m)
 
 # Logger prefixes
 override INFO_PREFIX := $(TEXT)[$(YELLOW)INFO$(TEXT)]
