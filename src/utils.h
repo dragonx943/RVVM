@@ -234,7 +234,7 @@ static inline uint16_t* utf8_to_utf16(const char* str_u8)
                 pos_u8  += b_u8;
             } else {
                 size_u16 += 16;
-                str_u16   = safe_realloc(str_u16, size_u16);
+                str_u16   = (uint16_t*)safe_realloc(str_u16, size_u16);
             }
         } else {
             // Invalid UTF-8 input
@@ -266,7 +266,7 @@ static inline char* utf16_to_utf8(const uint16_t* str_u16)
                 pos_u8  += b_u8;
             } else {
                 size_u8 += 16;
-                str_u8   = safe_realloc(str_u8, size_u8);
+                str_u8   = (char*)safe_realloc(str_u8, size_u8);
             }
         } else {
             // Invalid UTF-16 input
