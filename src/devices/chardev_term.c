@@ -130,23 +130,37 @@ static size_t term_read_raw(chardev_term_t* term, char* buffer, size_t size)
 #elif defined(WIN32_TERM_IMPL)
     HANDLE console = GetStdHandle(STD_INPUT_HANDLE);
     if (size && console && console != INVALID_HANDLE_VALUE) {
-        // Check available input without _kbhit, implementation from Wine msvcrt
-        DWORD events = 0;
-        DWORD count  = 0;
+        size_t ret    = 0;
+        DWORD  events = 0;
         GetNumberOfConsoleInputEvents(console, &events);
         if (events) {
             INPUT_RECORD* ir = safe_new_arr(INPUT_RECORD, events);
-            PeekConsoleInputA(console, ir, events, &events);
-            for (DWORD i = 0; i < events; ++i) {
-                if (ir[i].EventType == KEY_EVENT && ir[i].Event.KeyEvent.bKeyDown //
-                    && (ir[i].Event.KeyEvent.uChar.AsciiChar || ir[i].Event.KeyEvent.uChar.UnicodeChar)) {
-                    // Input available
-                    ReadFile(console, buffer, size, &count, NULL);
-                    break;
+            if (PeekConsoleInputW(console, ir, events, &events)) {
+                // Pulled widechar console events, convert to UTF-8
+                DWORD pos = 0;
+                for (; pos < events; ++pos) {
+                    if (ir[pos].EventType == KEY_EVENT && ir[pos].Event.KeyEvent.bKeyDown) {
+                        size_t tmp = utf8_encode_code_point(buffer + ret, size - ret, //
+                                                            ir[pos].Event.KeyEvent.uChar.UnicodeChar);
+                        if (!tmp && (size - ret) < 4) {
+                            // The buffer is full
+                            break;
+                        }
+                        ret += tmp;
+                    }
+                }
+                // Skip events
+                ReadConsoleInputW(console, ir, pos, &pos);
+            } else if (ReadConsoleInputA(console, ir, size, &events)) {
+                // Fallback to ANSI input on 9x and similar
+                for (DWORD pos = 0; pos < events; ++pos) {
+                    if (ir[pos].EventType == KEY_EVENT && ir[pos].Event.KeyEvent.bKeyDown && ret < size) {
+                        buffer[ret++] = ir[pos].Event.KeyEvent.uChar.AsciiChar;
+                    }
                 }
             }
             safe_free(ir);
-            return count;
+            return ret;
         }
     }
 #endif
