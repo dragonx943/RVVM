@@ -112,6 +112,173 @@ PUBLIC SAFE_REALLOC void* safe_realloc(void* ptr, size_t size);
     } while (0)
 
 /*
+ * Unicode handling
+ */
+
+static inline size_t utf8_decode_code_point(const char* str, size_t size, uint32_t* code_point)
+{
+    const uint8_t* str_u8 = (const uint8_t*)str;
+
+    if (size >= 1 && str_u8[0] < 0x80U) {
+        // ASCII character
+        *code_point = str_u8[0];
+        return 1;
+    } else if (size >= 1 && str_u8[0] < 0xC2U) {
+        // Illegal UTF8 sequence (Character starts with continuation/reserved byte)
+        *code_point = 0;
+        return 0;
+    } else if (size >= 2 && str_u8[0] < 0xE0U) {
+        // 2-byte code point
+        *code_point = ((str_u8[0] & 0x1FU) << 6) | (str_u8[1] & 0x3FU);
+        return 2;
+    } else if (size >= 3 && str_u8[0] < 0xF0U) {
+        // 3-byte code point
+        *code_point = ((str_u8[0] & 0x0FU) << 12) | ((str_u8[1] & 0x1FU) << 6) | (str_u8[2] & 0x3FU);
+        return 3;
+    } else if (size >= 4 && str_u8[0] < 0xF6U) {
+        // 4-byte code point
+        *code_point  = ((str_u8[0] & 0x07U) << 18) | ((str_u8[1] & 0x0FU) << 12);
+        *code_point |= ((str_u8[2] & 0x1FU) << 6) | (str_u8[3] & 0x3FU);
+        return 4;
+    }
+
+    *code_point = 0;
+    return 0;
+}
+
+static inline size_t utf8_encode_code_point(char* str, size_t size, uint32_t code_point)
+{
+    uint8_t* str_u8 = (uint8_t*)str;
+
+    if (size >= 1 && code_point < 0x80U) {
+        // ASCII character
+        str_u8[0] = code_point;
+        return 1;
+    } else if (size >= 2 && code_point < 0x800U) {
+        // 2-byte code point
+        str_u8[0] = (0xC0U | (code_point >> 6));
+        str_u8[1] = (0x80U | (code_point & 0x3FU));
+        return 2;
+    } else if (size >= 3 && code_point < 0x10000U) {
+        // 3-byte code point
+        str_u8[0] = (0xE0U | (code_point >> 12));
+        str_u8[1] = (0x80U | ((code_point >> 6) & 0x3FU));
+        str_u8[2] = (0x80U | (code_point & 0x3F));
+        return 3;
+    } else if (size >= 4 && code_point < 0x200000U) {
+        // 4-byte code point
+        str_u8[0] = (0xF0U | (code_point >> 18));
+        str_u8[1] = (0x80U | ((code_point >> 12) & 0x3FU));
+        str_u8[2] = (0x80U | ((code_point >> 6) & 0x3FU));
+        str_u8[3] = (0x80U | (code_point & 0x3FU));
+        return 4;
+    }
+
+    return 0;
+}
+
+static inline size_t utf16_decode_code_point(const uint16_t* str, size_t size, uint32_t* code_point)
+{
+    const uint16_t* str_u16 = str;
+
+    if (size >= 1 && (str_u16[0] >= 0xE000 || str_u16[0] < 0xD800U)) {
+        // Single code unit
+        *code_point = str_u16[0];
+        return 1;
+    } else if (size >= 2 && str_u16[0] >= 0xD800U && str_u16[0] < 0xE000U) {
+        // Surrogate pair encoding
+        *code_point = (str_u16[0] & 0x3FFU) << 10 | (str_u16[1] & 0x3FFU);
+        return 2;
+    }
+
+    *code_point = 0;
+    return 0;
+}
+
+static inline size_t utf16_encode_code_point(uint16_t* str, size_t size, uint32_t code_point)
+{
+    uint16_t* str_u16 = str;
+
+    if (size >= 1 && (code_point < 0xD800U || (code_point >= 0xE000U && code_point < 0x10000U))) {
+        // Single code unit
+        str_u16[0] = code_point;
+        return 1;
+    } else if (size >= 2 && code_point <= 0x110000U) {
+        // Surrogate pair encoding
+        code_point -= 0x10000U;
+        str_u16[0]  = (0xD800U | (code_point >> 10));
+        str_u16[1]  = (0xDC00U | (code_point & 0x3FFU));
+        return 2;
+    }
+
+    return 0;
+}
+
+static inline uint16_t* utf8_to_utf16(const char* str_u8)
+{
+    size_t    size_u16 = 16;
+    size_t    pos_u16  = 0;
+    size_t    size_u8  = 0;
+    size_t    pos_u8   = 0;
+    uint16_t* str_u16  = safe_new_arr(uint16_t, size_u16);
+    uint32_t  code     = 0;
+    while (str_u8 && str_u8[size_u8]) {
+        size_u8++;
+    }
+    while (pos_u8 < size_u8) {
+        size_t b_u8 = utf8_decode_code_point(str_u8 + pos_u8, size_u8 - pos_u8, &code);
+        if (b_u8) {
+            size_t b_u16 = utf16_encode_code_point(str_u16 + pos_u16, size_u16 - pos_u16, code);
+            if (b_u16) {
+                pos_u16 += b_u16;
+                pos_u8  += b_u8;
+            } else {
+                size_u16 += 16;
+                str_u16   = safe_realloc(str_u16, size_u16);
+            }
+        } else {
+            // Invalid UTF-8 input
+            safe_free(str_u16);
+            return NULL;
+        }
+    }
+    str_u16[pos_u16] = 0;
+    return str_u16;
+}
+
+static inline char* utf16_to_utf8(const uint16_t* str_u16)
+{
+    size_t   size_u8  = 16;
+    size_t   pos_u8   = 0;
+    size_t   size_u16 = 0;
+    size_t   pos_u16  = 0;
+    char*    str_u8   = safe_new_arr(char, size_u8);
+    uint32_t code     = 0;
+    while (str_u16 && str_u16[size_u16]) {
+        size_u16++;
+    }
+    while (pos_u16 < size_u16) {
+        size_t b_u16 = utf16_decode_code_point(str_u16 + pos_u16, size_u16 - pos_u16, &code);
+        if (b_u16) {
+            size_t b_u8 = utf8_encode_code_point(str_u8 + pos_u8, size_u8 - pos_u8, code);
+            if (b_u8) {
+                pos_u16 += b_u16;
+                pos_u8  += b_u8;
+            } else {
+                size_u8 += 16;
+                str_u8   = safe_realloc(str_u8, size_u8);
+            }
+        } else {
+            // Invalid UTF-16 input
+            safe_free(str_u8);
+            return NULL;
+        }
+    }
+    str_u8[pos_u8] = 0;
+    return str_u8;
+}
+
+/*
  * Command line & config parsing
  */
 
