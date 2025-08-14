@@ -9,32 +9,35 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#include "dlib.h"
+#include "feature_test.h"
 
-#if !defined(USE_NO_DLIB) && defined(_WIN32) && !defined(UNDER_CE)
+#include "dlib.h"
+#include "utils.h"
+
+SOURCE_OPTIMIZATION_SIZE
+
+#if !defined(USE_NO_DLIB) && defined(HOST_TARGET_WIN32)
+
 #include <windows.h>
 
 #define DLIB_WIN32_IMPL 1
 
-#elif !defined(USE_NO_DLIB) && !defined(__EMSCRIPTEN__)                                                                \
-    && (defined(__unix__) || defined(__APPLE__) || defined(__HAIKU__))
+#elif !defined(USE_NO_DLIB) && defined(HOST_TARGET_POSIX) && !defined(HOST_TARGET_EMSCRIPTEN)
+
 #include <dlfcn.h>
 
 #define DLIB_POSIX_IMPL 1
 
-#if defined(__COSMOPOLITAN__)
+#if defined(HOST_TARGET_COSMOPOLITAN)
+
 // Support Cosmopolitan libc & foreign ABI (MSABI, etc) via cosmo_dltramp()
 #define dlopen(lib, flags) cosmo_dlopen(lib, flags)
 #define dlsym(lib, symbol) cosmo_dltramp(cosmo_dlsym(lib, symbol))
 #define dlclose(lib)       cosmo_dlclose(lib)
-#endif
 
 #endif
 
-// RVVM internal headers come after system headers because of safe_free()
-#include "utils.h"
-
-SOURCE_OPTIMIZATION_SIZE
+#endif
 
 struct dlib_ctx {
 #if defined(DLIB_WIN32_IMPL)
@@ -50,23 +53,36 @@ struct dlib_ctx {
 static dlib_ctx_t* dlib_open_internal(const char* lib_name, uint32_t flags)
 {
 #if defined(DLIB_WIN32_IMPL)
-    wchar_t u16_name[256] = {0};
-    MultiByteToWideChar(CP_UTF8, 0, lib_name, -1, u16_name, STATIC_ARRAY_SIZE(u16_name));
-
-    // Try to get module from already loaded modules
-    HMODULE handle = GetModuleHandleW(u16_name);
-    if (handle) {
-        // Prevent unloading an existing module
-        flags &= ~DLIB_MAY_UNLOAD;
-    } else {
-        handle = LoadLibraryW(u16_name);
-    }
-
-    if (handle) {
-        dlib_ctx_t* lib = safe_new_obj(dlib_ctx_t);
-        lib->handle     = handle;
-        lib->flags      = flags;
-        return lib;
+    uint16_t* lib_name_u16 = utf8_to_utf16(lib_name);
+    if (lib_name_u16) {
+        // Try to get module from already loaded modules
+        HMODULE handle = GetModuleHandleW(lib_name_u16);
+#if defined(HOST_32BIT) && !defined(HOST_TARGET_WINCE)
+        if (!handle && GetLastError() == ERROR_CALL_NOT_IMPLEMENTED) {
+            // Try ANSI GetModuleHandleA() (Win9x compat)
+            handle = GetModuleHandleA(lib_name);
+        }
+#endif
+        if (handle) {
+            // Prevent unloading an existing module
+            flags &= ~DLIB_MAY_UNLOAD;
+        }
+        if (!handle) {
+            handle = LoadLibraryW(lib_name_u16);
+        }
+#if defined(HOST_32BIT) && !defined(HOST_TARGET_WINCE)
+        if (!handle && GetLastError() == ERROR_CALL_NOT_IMPLEMENTED) {
+            // Try ANSI LoadLibraryA() (Win9x compat)
+            handle = LoadLibraryA(lib_name);
+        }
+#endif
+        safe_free(lib_name_u16);
+        if (handle) {
+            dlib_ctx_t* lib = safe_new_obj(dlib_ctx_t);
+            lib->handle     = handle;
+            lib->flags      = flags;
+            return lib;
+        }
     }
 #elif defined(DLIB_POSIX_IMPL)
     void* handle = dlopen(lib_name, RTLD_LAZY | RTLD_LOCAL);
@@ -145,7 +161,7 @@ void dlib_close(dlib_ctx_t* lib)
         dlclose(lib->handle);
 #endif
     }
-    free(lib);
+    safe_free(lib);
 }
 
 void* dlib_resolve(dlib_ctx_t* lib, const char* symbol_name)
@@ -153,7 +169,12 @@ void* dlib_resolve(dlib_ctx_t* lib, const char* symbol_name)
     void* ret = NULL;
     UNUSED(symbol_name);
     if (lib) {
-#if defined(DLIB_WIN32_IMPL)
+#if defined(DLIB_WIN32_IMPL) && defined(HOST_TARGET_WINCE)
+        uint16_t* symbol_u16 = utf8_to_utf16(symbol_name);
+        if (symbol_u16) {
+            ret = (void*)GetProcAddressW(lib->handle, symbol_u16);
+        }
+#elif defined(DLIB_WIN32_IMPL)
         ret = (void*)GetProcAddress(lib->handle, symbol_name);
 #elif defined(DLIB_POSIX_IMPL)
         ret = (void*)dlsym(lib->handle, symbol_name);
