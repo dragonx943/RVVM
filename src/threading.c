@@ -33,10 +33,10 @@ static HANDLE (*__stdcall create_waitable_timer_ex_w)(void*, LPCWSTR, DWORD, DWO
 static BOOL   (*__stdcall set_waitable_timer)(HANDLE, const LARGE_INTEGER*, LONG, void*, LPVOID, BOOL) = NULL;
 
 // Fiber-local storage, Win Vista+
-static DWORD (*__stdcall fls_alloc)(void* cb)                = NULL;
-static BOOL  (*__stdcall fls_free)(DWORD fls)                = NULL;
-static PVOID (*__stdcall fls_get_val)(DWORD fls)             = NULL;
-static BOOL  (*__stdcall fls_set_val)(DWORD fls, PVOID data) = NULL;
+static DWORD (*__stdcall fls_alloc)(PFLS_CALLBACK_FUNCTION) = NULL;
+static BOOL  (*__stdcall fls_free)(DWORD)                   = NULL;
+static PVOID (*__stdcall fls_get_val)(DWORD)                = NULL;
+static BOOL  (*__stdcall fls_set_val)(DWORD, PVOID)         = NULL;
 
 // Scheduler resoluton handling via NtSetTimerResolution(), used when hires timers are missing
 static int32_t (*__stdcall nt_set_timer_resolution)(ULONG, BOOLEAN, PULONG) = NULL;
@@ -136,7 +136,7 @@ static int (*ulock_wake)(uint32_t op, void* ptr, uint64_t unused)           = NU
  * anything that requires actual precise delays.
  */
 
-static void thread_local_waitable_timer_free(void* arg)
+static void __stdcall thread_local_waitable_timer_free(PVOID arg)
 {
     if (arg) {
         CloseHandle(arg);
@@ -147,12 +147,20 @@ static void thread_local_waitable_timer_cleanup(void)
 {
     if (fls_waitable_timer) {
         fls_free(fls_waitable_timer);
+        fls_waitable_timer = 0;
     }
 }
 
-static HANDLE thread_local_waitable_timer_init(void)
+static inline HANDLE thread_local_waitable_timer_init(void)
 {
     HANDLE timer = NULL;
+    bool   hires = false;
+    if (likely(fls_waitable_timer)) {
+        timer = fls_get_val(fls_waitable_timer);
+        if (likely(timer)) {
+            return timer;
+        }
+    }
     DO_ONCE_SCOPED {
         fls_alloc                  = dlib_get_symbol("kernel32.dll", "FlsAlloc");
         fls_free                   = dlib_get_symbol("kernel32.dll", "FlsFree");
@@ -171,15 +179,22 @@ static HANDLE thread_local_waitable_timer_init(void)
         // Create a high-resolution, manual reset waitable timer (Win10 1803+)
         timer = create_waitable_timer_ex_w(NULL, NULL, 0x3, 0x1F0003);
         if (timer) {
-            return timer;
+            hires = true;
+        } else {
+            // Create a manual reset waitable timer (Win Vista+)
+            timer = create_waitable_timer_ex_w(NULL, NULL, 0x1, 0x1F0003);
         }
-
-        // Create a manual reset waitable timer
-        timer = create_waitable_timer_ex_w(NULL, NULL, 0x1, 0x1F0003);
+        if (timer) {
+            // Save the waitable timer in TLS
+            fls_set_val(fls_waitable_timer, timer);
+        } else {
+            // CreateWaitableTimerExW() failed miserably, deinit TLS
+            thread_local_waitable_timer_cleanup();
+        }
     }
     DO_ONCE_SCOPED {
-        // Boost scheduler resolution when high-resolution timers are missing
-        if (nt_set_timer_resolution) {
+        // Boost scheduler resolution if high-resolution timers are missing
+        if (!hires && nt_set_timer_resolution) {
             ULONG cur = 0;
             nt_set_timer_resolution(5000, TRUE, &cur);
         }
@@ -200,17 +215,8 @@ static inline void thread_local_waitable_timer_set(HANDLE timer, uint64_t ns)
 HANDLE thread_local_waitable_timer(uint64_t ns)
 {
 #if defined(WIN32_WAITABLE_TIMER_IMPL)
-    HANDLE timer = NULL;
-    if (likely(fls_waitable_timer)) {
-        timer = fls_get_val(fls_waitable_timer);
-        if (likely(timer)) {
-            thread_local_waitable_timer_set(timer, ns);
-            return timer;
-        }
-    }
-    timer = thread_local_waitable_timer_init();
-    if (timer) {
-        fls_set_val(fls_waitable_timer, timer);
+    HANDLE timer = thread_local_waitable_timer_init();
+    if (likely(timer)) {
         thread_local_waitable_timer_set(timer, ns);
         return timer;
     }
