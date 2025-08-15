@@ -666,10 +666,9 @@ endif
 ###################################################################################################
 
 ifndef .VARIABLES
-# Backward compatibility with ancient GNU Make (3.x) where .VARIABLES is not even supported yet
-# Dump all words in Makefile and env, then filter actual variables via $(origin)
-override WORD_DUMP  := $(shell cat Makefile) $(shell cat project.mk) $(shell printenv | sed 's;=.*;;')
-override .VARIABLES := $(strip $(foreach var,$(WORD_DUMP),$(if $(call var_def,$(var)),$(var))))
+# Backward compatibility with ancient GNU Make (<3.80) where .VARIABLES is not even supported yet
+# Dump all words in Makefile, project.mk and env, then filter actual variables via $(origin)
+override .VARIABLES := $(sort $(foreach w,$(shell cat Makefile) $(shell cat project.mk) $(shell printenv | sed 's;=.*;;'),$(if $(filter undefined,$(origin $(w))),,$(w))))
 endif
 
 override USEFLAGS  := $(sort $(filter USE_%,$(.VARIABLES)))
