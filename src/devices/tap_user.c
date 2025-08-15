@@ -924,7 +924,6 @@ static void tap_icmp_recv(tap_dev_t* tap, tap_sock_t* ts)
         tap_addr_convert(&addr);
         uint8_t* ipv4 = create_eth_frame(tap, buffer, ETH2_IPv4);
         uint8_t* icmp = create_ipv4_frame(ipv4, size, IP_PROTO_ICMP, ts->addr.ip, addr.ip);
-        memcpy(icmp, buffer+offset, size);
         write_uint16_be_m(icmp + 4, icmp_id);
         write_uint16_be_m(icmp + 2, 0); // Initial checksum is zero
         write_uint16_be_m(icmp + 2, ip_checksum(icmp, size, 0));
