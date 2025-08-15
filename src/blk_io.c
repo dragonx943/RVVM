@@ -21,9 +21,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 // Valid rvopen() flags
 #define RVFILE_LEGAL_FLAGS 0x3F
 
-#if !defined(USE_STDIO) && defined(HOST_TARGET_POSIX)
+#if !defined(USE_STDIO) && defined(HOST_TARGET_POSIX) && HOST_TARGET_POSIX >= 200112L
 
-// Threaded POSIX file implementation using pread() / pwrite()
+// Threaded POSIX 1003.1-2001 file implementation using pread() / pwrite()
 #include <errno.h>  // For errno
 #include <fcntl.h>  // For struct flock, open(), fcntl(), posix_fallocate(), fallocate(), fspacectl(), fdiscard()
 #include <unistd.h> // For close(), lseek(), pread(), pwrite(), fdatasync(), ftruncate()
