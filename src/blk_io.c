@@ -683,7 +683,7 @@ bool rvfsync(rvfile_t* file)
 #else
             ret = !fsync(file->fd);
 #endif
-            if (errno != EINTR) {
+            if (!ret && errno != EINTR) {
                 break;
             }
         }
