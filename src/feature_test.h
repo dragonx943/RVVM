@@ -13,7 +13,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 /*
  * Detect most POSIX/Win32 systems we ever wish to support
  *
- * - Any POSIX-compliant system defines HOST_TARGET_POSIX
+ * - Any POSIX-compliant system defines HOST_TARGET_POSIX to latest POSIX version date
  * - Any Win32 flavor (NT, 9x, CE) defines HOST_TARGET_WIN32
  * - Windows CE additionally defines HOST_TARGET_WINCE
  * - Windows NT and it's small cousin 9x define HOST_TARGET_WINNT
@@ -67,53 +67,52 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define HOST_TARGET_WINNT 1
 #endif
 #elif defined(__COSMOPOLITAN__)
-#define HOST_TARGET_POSIX        1
+#define HOST_TARGET_POSIX        200809L
 #define HOST_TARGET_COSMOPOLITAN 1
 #elif defined(__EMSCRIPTEN__)
-#define HOST_TARGET_POSIX      1
+#define HOST_TARGET_POSIX      200809L
 #define HOST_TARGET_EMSCRIPTEN 1
 #elif defined(__serenity__)
-#define HOST_TARGET_POSIX    1
+#define HOST_TARGET_POSIX    200809L
 #define HOST_TARGET_SERENITY 1
 #elif defined(__sun)
-#define HOST_TARGET_POSIX   1
+#define HOST_TARGET_POSIX   200809L
 #define HOST_TARGET_SOLARIS 1
 #if defined(__illumos__)
 #define HOST_TARGET_ILLUMOS 1
 #endif
 #elif defined(__DragonFly__)
-#define HOST_TARGET_POSIX   1
+#define HOST_TARGET_POSIX   200809L
 #define HOST_TARGET_BSD     1
 #define HOST_TARGET_DFLYBSD 1
 #elif defined(__FreeBSD__)
-#define HOST_TARGET_POSIX   1
+#define HOST_TARGET_POSIX   200809L
 #define HOST_TARGET_BSD     1
 #define HOST_TARGET_FREEBSD ((__FreeBSD__ - 0) ? (__FreeBSD__ - 0) : 14)
 #elif defined(__OpenBSD__)
-#define HOST_TARGET_POSIX   1
+#define HOST_TARGET_POSIX   200809L
 #define HOST_TARGET_BSD     1
 #define HOST_TARGET_OPENBSD 1
 #elif defined(__NetBSD__)
 /*
  * Need to include <sys/param.h> for NetBSD version detection, assumes NetBSD 10 otherwise
  */
-#define HOST_TARGET_POSIX  1
+#define HOST_TARGET_POSIX  200809L
 #define HOST_TARGET_BSD    1
 #define HOST_TARGET_NETBSD ((__NetBSD_Version__ - 0) ? ((__NetBSD_Version__ - 0) / 100000000) : 10)
 #elif defined(__CYGWIN__)
 /*
  * Cygwin also support Win32 API, but let's not be a Frakenstein
  */
-#define HOST_TARGET_POSIX  1
+#define HOST_TARGET_POSIX  200809L
 #define HOST_TARGET_CYGWIN 1
 #elif defined(__amigaos__)
 /*
- * AmigaOS has optional POSIX compatibility layers (ixemul, clib)
+ * Pretty much only clock_gettime() and pthreads work with ixemul
  */
-#define HOST_TARGET_POSIX 1
 #define HOST_TARGET_AMIGA 1
 #elif defined(__APPLE__)
-#define HOST_TARGET_POSIX 1
+#define HOST_TARGET_POSIX 200112L
 #define HOST_TARGET_APPLE                                                                                              \
     ((__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ - 0) /**/                                                          \
          ? ((__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ - 0) / 100)                                                 \
@@ -123,73 +122,79 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 /*
  * Consider Haiku compatible with BeOS if we ever have BeOS-specific code
  */
-#define HOST_TARGET_POSIX 1
+#define HOST_TARGET_POSIX 200809L
 #define HOST_TARGET_HAIKU 1
 #define HOST_TARGET_BEOS  1
 #elif defined(__linux__)
-#define HOST_TARGET_POSIX 1
+#define HOST_TARGET_POSIX 200809L
 #define HOST_TARGET_LINUX 1
 #if defined(__ANDROID__)
 #define HOST_TARGET_ANDROID 1
 #endif
 #elif defined(__minix)
-#define HOST_TARGET_POSIX 1
+#define HOST_TARGET_POSIX 200112L
 #define HOST_TARGET_MINIX 1
 #elif defined(__redox__)
-#define HOST_TARGET_POSIX 1
+#define HOST_TARGET_POSIX 200809L
 #define HOST_TARGET_REDOX 1
 #elif defined(__OS400__)
-#define HOST_TARGET_POSIX 1
+#define HOST_TARGET_POSIX 200112L
 #define HOST_TARGET_OS400 1
 #elif defined(__BEOS__)
-#define HOST_TARGET_POSIX 1
-#define HOST_TARGET_BEOS  1
+/*
+ * BeOS lacks much of POSIX (No mmap/pthreads)
+ */
+#define HOST_TARGET_BEOS 1
 #elif defined(__hpux) || defined(_hpux)
-#define HOST_TARGET_POSIX 1
+#define HOST_TARGET_POSIX 200112L
 #define HOST_TARGET_HPUX  1
 #elif defined(__GNU__) || defined(__gnu_hurd__)
-#define HOST_TARGET_POSIX 1
+#define HOST_TARGET_POSIX 200809L
 #define HOST_TARGET_HURD  1
 #elif defined(__sgi)
-#define HOST_TARGET_POSIX 1
+#define HOST_TARGET_POSIX 199309L
 #define HOST_TARGET_IRIX  1
 #elif defined(__AIX)
-#define HOST_TARGET_POSIX 1
-#define HOST_TARGET_VMS   1
+#define HOST_TARGET_POSIX 200112L
+#define HOST_TARGET_AIX   1
 #elif defined(__MSDOS__) || defined(__MSDOS) || defined(__DJGPP__) || defined(__DJGPP)
 #define HOST_TARGET_DOS 1
 #elif defined(__VMS)
-#define HOST_TARGET_POSIX 1
+#define HOST_TARGET_POSIX 200112L
 #define HOST_TARGET_VMS   1
 #elif defined(__QNX__)
-#define HOST_TARGET_POSIX 1
+#define HOST_TARGET_POSIX 200809L
 #define HOST_TARGET_QNX   1
 #elif defined(__unix__) || defined(__unix) || defined(unix)
 /*
  * An unknown Unix variant. Who are you, warrior?
  */
-#define HOST_TARGET_POSIX 1
+#define HOST_TARGET_POSIX 200112L
 #endif
 
 /*
- * Enable POSIX.1-2008
+ * NOTE: Defining _POSIX_C_SOURCE has a negative effect at least on following systems:
+ * - MacOS, Solaris, FreeBSD, DragonFlyBSD, NetBSD
+ *
+ * Defining _POSIX_C_SOURCE on those system completely hides system extensions, like
+ * MAP_ANON and other widely used interfaces.
+ *
+ * The following systems are verified to not require _POSIX_C_SOURCE in presence of other macros:
+ * - Cosmopolitan, Emscripten, Serenity, Solaris, *BSD, Cygwin, Darwin, Haiku, Linux, GNU Hurd
+ *
+ * If any platform needs to define _POSIX_C_SOURCE in future, it should be done here.
+ *
+ * Expected features from defining _POSIX_C_SOURCE=200809L (POSIX 1003.1-2008):
  * - Exposes pread(), pwrite(), readlink(), O_CLOEXEC
  * - Exposes posix_fallocate() on Linux, FreeBSD 9+, NetBSD 7+
  * - Exposes fdatasync() on Linux, FreeBSD 12+, NetBSD
  * - Exposes clock_gettime(), nanosleep(), sched_yield()
  * - Exposes fileno()
  * - Exposes pthread_condattr_setclock()
- *
- * NOTE: Defining _POSIX_C_SOURCE has a negative effect at least of MacOS, Solaris, FreeBSD, NetBSD:
- * - Defining _POSIX_C_SOURCE hides all system extensions, including even MAP_ANON
- * - Undefining _POSIX_C_SOURCE specifically on those systems actually exposes latest POSIX
  */
 #undef _POSIX_SOURCE
+#undef _XOPEN_SOURCE
 #undef _POSIX_C_SOURCE
-#if !defined(HOST_TARGET_APPLE) && !defined(HOST_TARGET_SOLARIS) /**/                                                  \
-    && !defined(HOST_TARGET_FREEBSD) && !defined(HOST_TARGET_NETBSD)
-#define _POSIX_C_SOURCE 200809L
-#endif
 
 /*
  * Enable GNU & BSD extensions
@@ -224,10 +229,28 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define _NETBSD_SOURCE 1
 
 /*
+ * Enable AIX extensions
+ */
+#undef _ALL_SOURCE
+#define _ALL_SOURCE 1
+
+/*
+ * Enable general Solaris extensions
+ */
+#undef __EXTENSIONS__
+#define __EXTENSIONS__ 1
+
+/*
  * Enable POSIX-compatible threading semantics on Solaris
  */
 #undef _POSIX_PTHREAD_SEMANTICS
 #define _POSIX_PTHREAD_SEMANTICS 1
+
+/*
+ * Enable reentrant standard library semantics (For errno, stdio)
+ */
+#undef _REENTRANT
+#define _REENTRANT 1
 
 /*
  * Force 64-bit file offsets & time (off_t & time_t)
