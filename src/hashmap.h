@@ -52,11 +52,10 @@ void hashmap_free(hashmap_t* map);
 
 static forceinline void hashmap_put_ptr(hashmap_t* map, size_t key, void* val)
 {
-    size_t mask = map->mask;
     size_t hash = hashmap_hash(key);
 
-    if (likely(mask)) {
-        size_t index = hash & mask;
+    if (likely(map->data)) {
+        size_t index = hash & map->mask;
         if (likely(!map->data[index].val)) {
             // Found empty cell
             if (likely(val)) {
@@ -77,11 +76,10 @@ static forceinline void hashmap_put_ptr(hashmap_t* map, size_t key, void* val)
 
 static forceinline void* hashmap_get_ptr(const hashmap_t* map, size_t key)
 {
-    size_t mask = map->mask;
     size_t hash = hashmap_hash(key);
 
-    if (likely(mask)) {
-        size_t index = hash & mask;
+    if (likely(map->data)) {
+        size_t index = hash & map->mask;
         if (likely(map->data[index].key == key)) {
             // Found cell with matching key
             return map->data[index].val;
@@ -121,7 +119,7 @@ static forceinline size_t hashmap_used_mem(const hashmap_t* map)
  */
 
 #define hashmap_foreach(map, k, v)                                                                                     \
-    if ((map)->mask)                                                                                                   \
+    if (likely((map)->data))                                                                                                   \
         for (size_t k, v, MACRO_IDENT(iter) = 0;                                                                       \
              (MACRO_IDENT(iter) <= (map)->mask)                                                                        \
                  ? (k = (map)->data[MACRO_IDENT(iter)].key, v = (size_t)(map)->data[MACRO_IDENT(iter)].val, 1)         \
