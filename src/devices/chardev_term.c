@@ -20,7 +20,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 SOURCE_OPTIMIZATION_SIZE
 
-#if defined(HOST_TARGET_POSIX)
+#if defined(HOST_TARGET_POSIX) && !defined(HOST_TARGET_VMS)
 
 #include <fcntl.h>    // For open()
 #include <sys/time.h> // For select()
