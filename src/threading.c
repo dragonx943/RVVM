@@ -111,7 +111,8 @@ static int (*ulock_wake)(uint32_t op, void* ptr, uint64_t unused)           = NU
 
 #endif
 
-#if !defined(PTHREAD_COND_TIMEDWAIT_RELATIVE_IMPL) && defined(CLOCK_REALTIME) && defined(CLOCK_MONOTONIC)
+#if !defined(PTHREAD_COND_TIMEDWAIT_RELATIVE_IMPL) && defined(CLOCK_REALTIME) && defined(CLOCK_MONOTONIC)              \
+    && defined(HOST_TARGET_POSIX) && HOST_TARGET_POSIX >= 200809L
 // Use pthread_condattr_setclock(CLOCK_MONOTONIC), fallback to CLOCK_REALTIME
 #define PTHREAD_COND_ATTR_MONOTONIC_IMPL 1
 #elif !defined(PTHREAD_COND_TIMEDWAIT_RELATIVE_IMPL)
