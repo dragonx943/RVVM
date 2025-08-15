@@ -13,6 +13,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "blk_io.h"
 #include "compiler.h"
 #include "mem_ops.h"
+#include "utils.h"
 #include "vma_ops.h"
 
 SOURCE_OPTIMIZATION_SIZE
@@ -33,15 +34,90 @@ SOURCE_OPTIMIZATION_SIZE
 #define FILE_MAP_EXECUTE 0x20
 #endif
 
+static inline DWORD vma_native_prot(uint32_t flags)
+{
+    switch (flags & VMA_RWX) {
+        case VMA_EXEC:
+            return PAGE_EXECUTE;
+        case VMA_READ:
+            return PAGE_READONLY;
+        case VMA_RDEX:
+            return PAGE_EXECUTE_READ;
+        case VMA_WRITE:
+        case VMA_RDWR:
+            return PAGE_READWRITE;
+        case VMA_EXEC | VMA_WRITE:
+        case VMA_RWX:
+            return PAGE_EXECUTE_READWRITE;
+    }
+    return PAGE_NOACCESS;
+}
+
+static inline DWORD vma_native_view_prot(uint32_t flags)
+{
+    DWORD ret = 0;
+    if (!(flags & VMA_SHARED) && (flags & VMA_WRITE)) {
+        // Set FILE_MAP_COPY on private writable mappings
+        return FILE_MAP_COPY;
+    }
+    ret |= (flags & VMA_EXEC) ? FILE_MAP_EXECUTE : 0;
+    ret |= (flags & VMA_READ) ? FILE_MAP_READ : 0;
+    ret |= (flags & VMA_WRITE) ? FILE_MAP_WRITE : 0;
+    return ret;
+}
+
 #define VMA_WIN32_IMPL 1
 
 #if defined(HOST_TARGET_WINNT) && defined(EXCEPTION_ACCESS_VIOLATION)
+
+/*
+ * Pause SEH access violation handling in all threads at own will
+ * Prevents a crash when a thread accesses a VMA that's currently being zeroed by vma_clean()
+ * Evil ideas require evil solutions...
+ */
+
 #define VMA_WIN32_SEH_IMPL 1
+
+#include "spinlock.h"
+
+static LPTOP_LEVEL_EXCEPTION_FILTER seh_prev_handler = NULL;
+
+static spinlock_t seh_lock = ZERO_INIT;
+
+static void seh_revert_handler(void)
+{
+    if (seh_prev_handler) {
+        SetUnhandledExceptionFilter(seh_prev_handler);
+        seh_prev_handler = NULL;
+    }
+}
+
+static LONG CALLBACK seh_handler(EXCEPTION_POINTERS* ptrs)
+{
+    LONG ret = 0;
+    scoped_spin_lock_slow (&seh_lock) {
+        if (ptrs->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
+            seh_revert_handler();
+            ret = -1;
+        } else if (seh_prev_handler) {
+            ret = seh_prev_handler(ptrs);
+        }
+    }
+    return ret;
+}
+
+// NOTE: Must be called under seh_lock!
+static void seh_suspend_access_violation(void)
+{
+    seh_prev_handler = SetUnhandledExceptionFilter(seh_handler);
+    DO_ONCE(call_at_deinit(seh_revert_handler));
+}
+
 #endif
 
-#elif defined(HOST_TARGET_POSIX)
+#elif defined(HOST_TARGET_POSIX) && HOST_TARGET_POSIX >= 199309L
 
-// POSIX VMA implementation using mmap(), munmap(), madvise(), etc
+// POSIX 1003.1b-1993 VMA implementation using mmap(), munmap(), madvise(), etc
 #include <fcntl.h>    // For open(), O_*
 #include <sys/mman.h> // For mmap(), munmap(), mprotect(), shm_open(), shm_unlink(), PROT_*, MAP_*, MFD_CLOEXEC
 #include <unistd.h>   // For sysconf(_SC_PAGESIZE), syscall(), close(), unlink(), ftruncate()
@@ -90,98 +166,9 @@ SOURCE_OPTIMIZATION_SIZE
 #define O_NOFOLLOW 0
 #endif
 
-#define VMA_MMAP_IMPL 1
-
-#else
-
-#include <stdlib.h>
-#warning No native VMA support!
-
+#ifndef PROT_NONE
+#define PROT_NONE 0
 #endif
-
-// Internal headers come after system headers because of safe_free()
-#include "utils.h"
-
-#if defined(VMA_WIN32_IMPL)
-
-static inline DWORD vma_native_prot(uint32_t flags)
-{
-    switch (flags & VMA_RWX) {
-        case VMA_EXEC:
-            return PAGE_EXECUTE;
-        case VMA_READ:
-            return PAGE_READONLY;
-        case VMA_RDEX:
-            return PAGE_EXECUTE_READ;
-        case VMA_WRITE:
-        case VMA_RDWR:
-            return PAGE_READWRITE;
-        case VMA_EXEC | VMA_WRITE:
-        case VMA_RWX:
-            return PAGE_EXECUTE_READWRITE;
-    }
-    return PAGE_NOACCESS;
-}
-
-static inline DWORD vma_native_view_prot(uint32_t flags)
-{
-    DWORD ret = 0;
-    if (!(flags & VMA_SHARED) && (flags & VMA_WRITE)) {
-        // Set FILE_MAP_COPY on private writable mappings
-        return FILE_MAP_COPY;
-    }
-    ret |= (flags & VMA_EXEC) ? FILE_MAP_EXECUTE : 0;
-    ret |= (flags & VMA_READ) ? FILE_MAP_READ : 0;
-    ret |= (flags & VMA_WRITE) ? FILE_MAP_WRITE : 0;
-    return ret;
-}
-
-#if defined(VMA_WIN32_SEH_IMPL)
-
-#include "spinlock.h"
-
-/*
- * Pause SEH access violation handling in all threads at own will
- * Prevents a crash when a thread accesses a VMA that's currently being zeroed by vma_clean()
- * Evil ideas require evil solutions...
- */
-
-static LPTOP_LEVEL_EXCEPTION_FILTER seh_prev_handler = NULL;
-
-static spinlock_t seh_lock = ZERO_INIT;
-
-static void seh_revert_handler(void)
-{
-    if (seh_prev_handler) {
-        SetUnhandledExceptionFilter(seh_prev_handler);
-        seh_prev_handler = NULL;
-    }
-}
-
-static LONG CALLBACK seh_handler(EXCEPTION_POINTERS* ptrs)
-{
-    LONG ret = 0;
-    scoped_spin_lock_slow (&seh_lock) {
-        if (ptrs->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
-            seh_revert_handler();
-            ret = -1;
-        } else if (seh_prev_handler) {
-            ret = seh_prev_handler(ptrs);
-        }
-    }
-    return ret;
-}
-
-// NOTE: Must be called under seh_lock!
-static void seh_suspend_access_violation(void)
-{
-    seh_prev_handler = SetUnhandledExceptionFilter(seh_handler);
-    DO_ONCE(call_at_deinit(seh_revert_handler));
-}
-
-#endif
-
-#elif defined(VMA_MMAP_IMPL)
 
 static inline int vma_native_prot(uint32_t flags)
 {
@@ -191,6 +178,12 @@ static inline int vma_native_prot(uint32_t flags)
     ret     |= (flags & VMA_WRITE) ? PROT_WRITE : 0;
     return ret ? ret : PROT_NONE;
 }
+
+#define VMA_MMAP_IMPL 1
+
+#else
+
+#warning No native VMA support!
 
 #endif
 
@@ -287,7 +280,7 @@ int vma_anon_memfd(size_t size)
         char path[256]         = {0};
         char random_suffix[32] = {0};
         rvvm_randomserial(random_suffix, 16);
-#if !defined(HOST_TARGET_ANDROID) && !defined(HOST_TARGET_SERENITY)
+#if HOST_TARGET_POSIX >= 199506L && !defined(HOST_TARGET_ANDROID) && !defined(HOST_TARGET_SERENITY)
         if (memfd < 0) {
             size_t off = rvvm_strlcpy(path, "/shm-vma-anon-", sizeof(path));
             rvvm_strlcpy(path + off, random_suffix, sizeof(path) - off);
@@ -577,21 +570,21 @@ void* vma_remap(void* addr, size_t old_size, size_t new_size, uint32_t flags)
     if (ret == MAP_FAILED) {
         ret = NULL;
     }
-#elif defined(VMA_MMAP_IMPL) || defined(VMA_WIN32_IMPL)
+#endif
 #if defined(VMA_MMAP_IMPL)
-    if (new_size < old_size) {
+    if (!ret && new_size < old_size) {
         // Shrink the mapping by unmapping at the end
-        if (!vma_free(((uint8_t*)addr) + new_size, old_size - new_size)) {
-            ret = NULL;
+        if (vma_free(((uint8_t*)addr) + new_size, old_size - new_size)) {
+            ret = addr;
         }
-    } else if (new_size > old_size) {
+    } else if (!ret && new_size > old_size) {
         // Grow the mapping by mapping additional pages at the end
-        if (!vma_alloc(((uint8_t*)addr) + old_size, new_size - old_size, flags | VMA_FIXED)) {
-            ret = NULL;
+        if (vma_alloc(((uint8_t*)addr) + old_size, new_size - old_size, flags | VMA_FIXED)) {
+            ret = addr;
         }
     }
 #endif
-    if (ret == NULL && !(flags & VMA_FIXED)) {
+    if (!ret && !(flags & VMA_FIXED)) {
         // Just copy the data into a completely new mapping
         ret = vma_alloc(NULL, new_size, flags);
         if (ret) {
@@ -599,15 +592,6 @@ void* vma_remap(void* addr, size_t old_size, size_t new_size, uint32_t flags)
             vma_free(addr, old_size);
         }
     }
-#else
-    if (flags & VMA_FIXED) {
-        if (new_size > old_size) {
-            ret = NULL;
-        }
-    } else {
-        ret = realloc(addr, new_size);
-    }
-#endif
 
     return ret ? (ret + ptr_diff) : NULL;
 }
