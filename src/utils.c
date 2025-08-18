@@ -14,10 +14,10 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "rvtimer.h"
 #include "spinlock.h"
 #include "stacktrace.h"
+#include "threading.h"
 #include "vector.h"
 
 #include <stdarg.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -598,9 +598,7 @@ PRINT_FORMAT void rvvm_fatal(const char* format_str, ...)
 slow_path void do_once_finalize(uint32_t* ticket)
 {
     while (atomic_load_uint32_ex(ticket, ATOMIC_ACQUIRE) != 2) {
-        // Yield this thread
-        // NOTE: Implementation of sleep_ms(0) mustn't use DO_ONCE!
-        sleep_ms(0);
+        thread_sched_yield();
     }
 }
 
