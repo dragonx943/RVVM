@@ -91,17 +91,6 @@ static inline bool spin_try_claim_lock(spinlock_t* lock, const char* location, b
     }
 }
 
-static inline void spin_pause_hint(void)
-{
-#if defined(GNU_EXTS) && defined(__x86_64__)
-    __asm__ volatile("pause" : : : "memory");
-#elif defined(GNU_EXTS) && defined(__aarch64__)
-    __asm__ volatile("isb sy" : : : "memory");
-#elif defined(GNU_EXTS) && defined(__riscv)
-    __asm__ volatile(".4byte 0x100000F" : : : "memory");
-#endif
-}
-
 static bool spin_lock_try_wait_user(spinlock_t* lock, const char* location, bool writer)
 {
     // Spin on a lock in userspace for a few times before using a heavyweight kernel futex
@@ -116,7 +105,7 @@ static bool spin_lock_try_wait_user(spinlock_t* lock, const char* location, bool
                 return false;
             }
         }
-        spin_pause_hint();
+        thread_cpu_relax();
     }
     return false;
 }
@@ -140,9 +129,9 @@ slow_path static void spin_lock_wait_internal(spinlock_t* lock, const char* loca
 
             // Contention is going on, retry
             reset_timer = true;
-            spin_pause_hint();
+            thread_sched_yield();
         } else if (flags & SPINLOCK_WAIT_BUSY_LOOP) {
-            spin_pause_hint();
+            thread_sched_yield();
         } else {
             if (reset_timer) {
                 reset_timer = false;
