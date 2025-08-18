@@ -193,7 +193,7 @@ slow_path void riscv_emulate_opc_misc_mem(rvvm_hart_t* vm, const uint32_t insn)
         case 0x0: // fence
             if (unlikely(insn == RISCV_INSN_PAUSE)) {
                 // Pause hint, yield the vCPU thread
-                sleep_ms(0);
+                thread_sched_yield();
             } else if (unlikely((insn & 0x05000000) && (insn & 0x00A00000))) {
                 // StoreLoad fence needed (SEQ_CST)
                 atomic_fence_ex(ATOMIC_SEQ_CST);
