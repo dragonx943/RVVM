@@ -7,18 +7,16 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-// Expose clock_gettime(), nanosleep(), sched_yield()
+// Expose clock_gettime(), nanosleep()
 #include "feature_test.h"
 
-#include "rvtimer.h"
 #include "atomics.h"
-#include "compiler.h"
+#include "rvtimer.h"
 
 // For nanosleep(), clock_gettime(), CLOCK_MONOTONIC, etc
 #include <time.h>
 
 #if defined(HOST_TARGET_WIN32)
-
 // Use QueryPerformanceCounter(), QueryPerformanceFrequency()
 #include <windows.h>
 
@@ -27,56 +25,43 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "spinlock.h"
 #include "utils.h"
 
-static spinlock_t qpc_lock = SPINLOCK_INIT;
-static uint64_t   qpc_last = 0, qpc_freq = 0, qpc_off = 0;
-static uint64_t   qpc_last_checked = 0, uit_last_checked = 0;
-
-static BOOL (*__stdcall query_uit)(PULONGLONG) = NULL;
-
+// Obtain a thread local waitable timer with a specified timeout
 HANDLE thread_local_waitable_timer(uint64_t ns);
 
-#define WIN32_CLOCKSOURCE_IMPL 1
+// Obtain imprecise monotonic time without time in suspend (NT 6.1+)
+static BOOL (*__stdcall query_uit)(PULONGLONG) = NULL;
 
-#else
+static spinlock_t qpc_lock = SPINLOCK_INIT;
+static uint64_t   qpc_last = 0, qpc_freq = 0;
+static uint64_t   qpc_prev = 0, uit_prev = 0, qpc_off = 0;
+#endif
 
-#if defined(__linux__) && defined(THREAD_LOCAL) && CHECK_INCLUDE(sys/prctl.h, 1)
+#if defined(HOST_TARGET_POSIX) && HOST_TARGET_POSIX >= 199506L
+// Use nanosleep()
+#define NANOSLEEP_IMPL 1
+#elif !defined(HOST_TARGET_WIN32)
+// Use thread_futex_wait()
+#include "threading.h"
+#endif
 
+#if defined(HOST_TARGET_LINUX) && defined(THREAD_LOCAL) && CHECK_INCLUDE(sys/prctl.h, 1)
 // For PR_SET_TIMERSLACK
 #include <sys/prctl.h>
-
 #if defined(PR_SET_TIMERSLACK)
-
 static THREAD_LOCAL bool timerslack_lowlatency = 0;
-
-#define TIMERSLACK_IMPL 1
-
+#define LINUX_TIMERSLACK_IMPL 1
+#endif
 #endif
 
-#endif
-
-#if CHECK_INCLUDE(sched.h, 1)
-
-// For sched_yield()
-#include <sched.h>
-
-#define SCHED_YIELD_IMPL 1
-
-#endif
-
-#if defined(__APPLE__)
-
+#if defined(HOST_TARGET_DARWIN) && CHECK_INCLUDE(mach/mach_time.h, 1)
 // Use mach_absolute_time()
-#include <mach/mach_time.h>
-
 #include "utils.h"
-
+#include <mach/mach_time.h>
 static uint64_t mach_clk_freq = 0;
-
 #define MACH_CLOCKSOURCE_IMPL 1
-
 #endif
 
-#if defined(__serenity__) && defined(CLOCK_MONOTONIC_COARSE)
+#if defined(HOST_TARGET_SERENITY) && defined(CLOCK_MONOTONIC_COARSE)
 // Use CLOCK_MONOTONIC_COARSE on Serenity for performance reasons
 #define POSIX_CLOCKSOURCE CLOCK_MONOTONIC_COARSE
 #elif defined(CLOCK_UPTIME)
@@ -95,62 +80,70 @@ static uint64_t mach_clk_freq = 0;
 #define C11_TIMESPEC_CLOCKSOURCE TIME_UTC
 #endif
 
+#if !defined(HOST_TARGET_WIN32) && !defined(MACH_CLOCKSOURCE_IMPL) /**/                                                \
+    && !defined(POSIX_CLOCKSOURCE) && !defined(C11_TIMESPEC_CLOCKSOURCE)
+#include <sys/time.h> // For gettimeofday()
 #endif
 
 uint64_t rvtimer_clocksource(uint64_t freq)
 {
-#if defined(WIN32_CLOCKSOURCE_IMPL)
+#if defined(HOST_TARGET_WIN32)
     // Read the latest cached timer value from userspace
     uint64_t qpc_val = atomic_load_uint64_relax(&qpc_last);
 
-    scoped_spin_try_lock (&qpc_lock) {
+    if (likely(spin_try_lock(&qpc_lock))) {
         // Claimed the QPC lock, obtain new clock timestamp
-        LARGE_INTEGER qpc = {0};
-
+        LARGE_INTEGER tmp = ZERO_INIT;
         if (unlikely(!qpc_freq)) {
             // Initialize the clock frequency once
-            LARGE_INTEGER tmp = {0};
             QueryPerformanceFrequency(&tmp);
             qpc_freq = tmp.QuadPart;
             if (!qpc_freq) {
                 rvvm_fatal("QueryPerformanceFrequency() failed!");
             }
-            // Initialize unbiased backup clock if present
+            // Initialize unbiased clock if present
             query_uit = dlib_get_symbol("kernel32.dll", "QueryUnbiasedInterruptTime");
         }
-
-        if (unlikely(!QueryPerformanceCounter(&qpc))) {
+        if (likely(QueryPerformanceCounter(&tmp))) {
+            uint64_t qpc_new = ((uint64_t)tmp.QuadPart) + qpc_off;
+            if (likely(qpc_new >= qpc_val)) {
+                if (likely(query_uit)) {
+                    // Check against unbiased clock to compensate for suspend & forward jumps
+                    uint64_t qpc_delta = qpc_new - qpc_prev;
+                    if (unlikely(qpc_delta > qpc_freq)) {
+                        ULONGLONG uit_new = 0;
+                        if (query_uit(&uit_new)) {
+                            uint64_t uit_delta = rvtimer_convert_freq(uit_new - uit_prev, 10000000ULL, qpc_freq);
+                            if (qpc_delta > uit_delta + qpc_freq) {
+                                uint64_t compensate = EVAL_MIN(qpc_delta - uit_delta, qpc_new - qpc_val);
+                                // Apply compensation when skew >1s
+                                qpc_off  -= compensate;
+                                qpc_new  -= compensate;
+                                qpc_prev  = qpc_new;
+                                uit_prev  = uit_new;
+                            }
+                        } else {
+                            rvvm_warn("QueryUnbiasedInterruptTime() failed!");
+                            query_uit = NULL;
+                        }
+                    }
+                }
+                // Cache the new timer value
+                qpc_val = qpc_new;
+                atomic_store_uint64_relax(&qpc_last, qpc_val);
+            } else {
+                // Sometimes TSC drifts back on obscure hardware, Windows doesn't fix this up
+                DO_ONCE(rvvm_warn("Unstable clocksource (Backward drift observed)"));
+            }
+        } else {
             rvvm_fatal("QueryPerformanceCounter() failed!");
         }
-
-        uint64_t qpc_new = ((uint64_t)qpc.QuadPart) + qpc_off;
-        if (qpc_new < qpc_val) {
-            // Sometimes TSC drifts back on obscure hardware, Windows doesn't fix this up
-            DO_ONCE(rvvm_warn("Unstable clocksource (backward drift observed)"));
-        } else {
-            if (query_uit) {
-                // Check unbiased backup clock to compensate for suspend & forward jumps
-                uint64_t qpc_delta = qpc_new - qpc_last_checked;
-                if (qpc_delta > qpc_freq) {
-                    ULONGLONG uit = 0;
-                    query_uit(&uit);
-                    uint64_t uit_new   = uit;
-                    uint64_t uit_delta = rvtimer_convert_freq(uit_new - uit_last_checked, 10000000ULL, qpc_freq);
-                    if (qpc_delta > uit_delta + qpc_freq && qpc_last_checked) {
-                        uint64_t compensate  = EVAL_MIN(qpc_delta - uit_delta, qpc_new - qpc_val);
-                        qpc_off             -= compensate;
-                        qpc_new             -= compensate;
-                    }
-
-                    qpc_last_checked = qpc_new;
-                    uit_last_checked = uit_new;
-                }
-            }
-
-            // Cache the new timer value
-            qpc_val = qpc_new;
-            atomic_store_uint64_relax(&qpc_last, qpc_val);
-        }
+        spin_unlock(&qpc_lock);
+    } else if (unlikely(!qpc_val)) {
+        // Wait for thread which got to initialize QPC first
+        spin_lock_busy_loop(&qpc_lock);
+        spin_unlock(&qpc_lock);
+        qpc_val = atomic_load_uint64_relax(&qpc_last);
     }
 
     return rvtimer_convert_freq(qpc_val, qpc_freq, freq);
@@ -159,40 +152,44 @@ uint64_t rvtimer_clocksource(uint64_t freq)
     // Use mach_absolute_time()
     DO_ONCE_SCOPED {
         // Calculate Mach timer frequency
-        mach_timebase_info_data_t mach_clk_info = {0};
+        mach_timebase_info_data_t mach_clk_info = ZERO_INIT;
         mach_timebase_info(&mach_clk_info);
-        if (!mach_clk_info.numer || !mach_clk_info.denom) {
+        if (mach_clk_info.numer && mach_clk_info.denom) {
+            mach_clk_freq = (mach_clk_info.denom * 1000000000ULL) / mach_clk_info.numer;
+        }
+        if (!mach_clk_freq) {
             rvvm_fatal("mach_timebase_info() failed!");
         }
-        mach_clk_freq = (mach_clk_info.denom * 1000000000ULL) / mach_clk_info.numer;
     };
     return rvtimer_convert_freq(mach_absolute_time(), mach_clk_freq, freq);
 
 #elif defined(POSIX_CLOCKSOURCE)
-    // Use POSIX 2008 clock_gettime()
-    struct timespec ts = {0};
+    // Use POSIX clock_gettime()
+    struct timespec ts = ZERO_INIT;
     clock_gettime(POSIX_CLOCKSOURCE, &ts);
     return (ts.tv_sec * freq) + (ts.tv_nsec * freq / 1000000000ULL);
 
 #elif defined(C11_TIMESPEC_CLOCKSOURCE)
     // Use C11 timespec_get()
-    struct timespec ts = {0};
+    struct timespec ts = ZERO_INIT;
     timespec_get(C11_TIMESPEC_CLOCKSOURCE, &ts);
     return (ts.tv_sec * freq) + (ts.tv_nsec * freq / 1000000000ULL);
 
 #else
-#warning Falling back to imprecise generic clocksource
-    // Use wall clock with no sub-second precision
-    return rvtimer_unixtime() * freq;
+#pragma message("Falling back to gettimeofday() clocksource")
+    // Use gettimeofday()
+    struct timeval tv = ZERO_INIT;
+    gettimeofday(&tv, NULL);
+    return (tv.tv_sec * freq) + (tv.tv_usec * freq / 1000000U);
 
 #endif
 }
 
 uint64_t rvtimer_unixtime(void)
 {
-#if defined(HOST_TARGET_WIN32) && !defined(HOST_TARGET_WINCE)
-    SYSTEMTIME st = {0};
-    FILETIME   ft = {0};
+#if defined(HOST_TARGET_WINNT)
+    SYSTEMTIME st = ZERO_INIT;
+    FILETIME   ft = ZERO_INIT;
     GetSystemTime(&st);
     if (SystemTimeToFileTime(&st, &ft)) {
         uint64_t wintime = ((uint64_t)(uint32_t)ft.dwLowDateTime) | (((uint64_t)(uint32_t)ft.dwHighDateTime) << 32);
@@ -260,7 +257,7 @@ uint64_t rvtimecmp_delay_ns(const rvtimecmp_t* cmp)
 
 void sleep_low_latency(bool enable)
 {
-#if defined(TIMERSLACK_IMPL)
+#if defined(LINUX_TIMERSLACK_IMPL)
     if (timerslack_lowlatency != enable) {
         timerslack_lowlatency = enable;
         prctl(PR_SET_TIMERSLACK, enable ? 1L : 0L);
@@ -272,32 +269,23 @@ void sleep_low_latency(bool enable)
 void sleep_ns(uint64_t ns)
 {
 #if defined(HOST_TARGET_WIN32)
-    if (ns) {
-        HANDLE timer = thread_local_waitable_timer(ns);
-        if (timer) {
-            WaitForSingleObject(timer, INFINITE);
-            return;
-        }
+    HANDLE timer = thread_local_waitable_timer(ns);
+    if (likely(timer)) {
+        WaitForSingleObject(timer, INFINITE);
+    } else {
+        Sleep(EVAL_MAX(ns / 1000000ULL, 1));
     }
-    Sleep(ns ? EVAL_MAX(ns / 1000000ULL, 1) : 0);
+#elif defined(NANOSLEEP_IMPL)
+    struct timespec ts = {
+        .tv_sec  = ns / 1000000000ULL,
+        .tv_nsec = ns % 1000000000ULL,
+    };
+    sleep_low_latency(true);
+    while (nanosleep(&ts, &ts) < 0) {
+    }
 #else
-    if (ns) {
-        struct timespec ts = {
-            .tv_sec  = ns / 1000000000ULL,
-            .tv_nsec = ns % 1000000000ULL,
-        };
-        sleep_low_latency(true);
-        while (nanosleep(&ts, &ts) < 0) {
-        }
-        return;
-    }
-#endif
-
-#if defined(SCHED_YIELD_IMPL)
-    if (!ns) {
-        // Yield this thread time slice, as does Win32 Sleep(0)
-        sched_yield();
-    }
+    uint32_t tmp = 0;
+    thread_futex_wait(&tmp, 0, ns);
 #endif
 }
 
