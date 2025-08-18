@@ -142,12 +142,14 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 /*
  * Never inline a function, consider it a slow path, and minimize pessimizations at the call site
  *
- * This is used to remove unnecessary register spills at the slow path call site. Requires
- * Clang 17+ for full effect, otherwise __cold__ attribute is used, which moves spills away.
+ * This is used to remove unnecessary register spills at the slow path call site.
+ * Requires Clang 17+ ideally, otherwise __cold__ attribute is used, which moves spills away.
+ * NOTE: __preserve_most__ is broken on Clang <17, and on Clang Windows ARM64!
  * Hopefully one day __preserve_most__ makes it's way into GCC.
  */
 #undef slow_path
-#if !defined(USE_NO_SLOW_PATH) && CLANG_CHECK_VER(17, 0) && (defined(__x86_64__) || defined(__aarch64__))
+#if !defined(USE_NO_SLOW_PATH) && CLANG_CHECK_VER(17, 0)                                                               \
+    && (defined(__x86_64__) || (defined(__aarch64__) && !defined(_WIN32)))
 #define slow_path __attribute__((__preserve_most__, __noinline__, __cold__))
 #elif !defined(USE_NO_SLOW_PATH) && (GCC_CHECK_VER(4, 4) || (GNU_ATTRIBUTE(__noinline__) && GNU_ATTRIBUTE(__cold__)))
 #define slow_path __attribute__((__noinline__, __cold__))
@@ -517,10 +519,10 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
         BREAKABLE_SCOPE (name)
 
 #undef SCOPED_COND
-#define SCOPED_COND(cond, expr_pre, expr_post) SCOPED_COND_NAMED(cond, expr_pre, expr_post, )
+#define SCOPED_COND(cond, expr_pre, expr_post) SCOPED_COND_NAMED (cond, expr_pre, expr_post, )
 
 #undef POST_COND
-#define POST_COND(cond, expr_post) POST_COND_NAMED(cond, expr_post, )
+#define POST_COND(cond, expr_post) POST_COND_NAMED (cond, expr_post, )
 
 #undef SCOPED_STMT
 #define SCOPED_STMT(cond, expr_pre, expr_post) SCOPED_STMT_NAMED (cond, expr_pre, expr_post, )
