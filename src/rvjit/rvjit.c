@@ -37,6 +37,10 @@ void sys_icache_invalidate(void* start, size_t len);
  */
 #define RVJIT_GLOBAL_ICACHE_FLUSH
 
+#elif defined(_WIN32) && !defined(RVJIT_X86)
+// For FlushInstructionCache()
+#include <windows.h>
+
 #elif defined(RVJIT_ARM64) && defined(GNU_EXTS)
 /*
  * Don't rely on GCC's __clear_cache implementation, as it may
@@ -65,10 +69,6 @@ static inline void rvjit_arm64_fluch_icache(const void* addr, size_t size)
     __asm__ volatile("isb" : : : "memory");
 }
 
-#elif defined(_WIN32) && !defined(RVJIT_X86) && !defined(GNU_EXTS)
-// FlushInstructionCache() might be used
-#include <windows.h>
-
 #endif
 
 static void rvjit_flush_icache(const void* addr, size_t size)
@@ -78,6 +78,9 @@ static void rvjit_flush_icache(const void* addr, size_t size)
     // x86 has coherent instruction caches
     UNUSED(start);
     UNUSED(size);
+#elif defined(_WIN32)
+    // NT disables `dc civac` / `dc cvau` for userspace, WinAPI must be used
+    FlushInstructionCache(GetCurrentProcess(), start, size);
 #elif defined(RVJIT_ARM64) && defined(GNU_EXTS)
     rvjit_arm64_fluch_icache(start, size);
 #elif defined(RVJIT_APPLE_SILICON)
@@ -89,9 +92,6 @@ static void rvjit_flush_icache(const void* addr, size_t size)
 #elif defined(GNU_EXTS)
     // Use legacy __clear_cache() on old GNU compilers
     __clear_cache(start, (start + size);
-#elif defined(_WIN32)
-    // This is probably MSVC on ARM
-    FlushInstructionCache(GetCurrentProcess(), start, size);
 #else
 #error No rvjit_flush_icache() support!
 #endif
