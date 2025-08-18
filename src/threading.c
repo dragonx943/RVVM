@@ -19,6 +19,10 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 SOURCE_OPTIMIZATION_SIZE
 
+#if defined(_MSC_VER)
+#include <intrin.h> // For _mm_pause()
+#endif
+
 #if defined(HOST_TARGET_WIN32)
 
 // Use Win32 threads & events
@@ -64,7 +68,7 @@ static DWORD fls_waitable_timer = 0;
 #define __NR_futex __NR_futex_time64
 #endif
 
-#if defined(__NR_futex) && CHECK_INCLUDE(linux/futex.h, 1)
+#if defined(__NR_epoll_create) && CHECK_INCLUDE(linux/futex.h, 1)
 #include <linux/futex.h> // For FUTEX_WAIT_PRIVATE, FUTEX_WAKE_PRIVATE
 #endif
 
@@ -111,13 +115,24 @@ static int (*ulock_wake)(uint32_t op, void* ptr, uint64_t unused)           = NU
 
 #endif
 
-#if !defined(PTHREAD_COND_TIMEDWAIT_RELATIVE_IMPL) && defined(CLOCK_REALTIME) && defined(CLOCK_MONOTONIC)              \
-    && defined(HOST_TARGET_POSIX) && HOST_TARGET_POSIX >= 200809L
-// Use pthread_condattr_setclock(CLOCK_MONOTONIC), fallback to CLOCK_REALTIME
-#define PTHREAD_COND_ATTR_MONOTONIC_IMPL 1
+#if defined(HOST_TARGET_POSIX) && HOST_TARGET_POSIX >= 199506L && CHECK_INCLUDE(sched.h, 1)
+// Use sched_yield()
+#include <sched.h>
+#define SCHED_YIELD_IMPL 1
+#endif
+
+#if defined(CLOCK_REALTIME) && defined(CLOCK_MONOTONIC)
+// Use clock_gettime()
+#define CLOCK_GETTIME_IMPL 1
 #elif !defined(PTHREAD_COND_TIMEDWAIT_RELATIVE_IMPL)
 // Use gettimeofday()
 #include <sys/time.h>
+#endif
+
+#if !defined(PTHREAD_COND_TIMEDWAIT_RELATIVE_IMPL) && defined(CLOCK_GETTIME_IMPL) /**/                                 \
+    && defined(HOST_TARGET_POSIX) && HOST_TARGET_POSIX >= 200809L
+// Use pthread_condattr_setclock(CLOCK_MONOTONIC), fallback to CLOCK_REALTIME
+#define PTHREAD_COND_ATTR_MONOTONIC_IMPL 1
 #endif
 
 #endif
@@ -265,6 +280,8 @@ static int pthread_cond_timedwait_ns_internal(pthread_cond_t* cond, pthread_mute
             // Fallback to CLOCK_REALTIME (Possibly a very old Linux kernel)
             clock_gettime(CLOCK_REALTIME, &ts);
         }
+#elif defined(CLOCK_GETTIME_IMPL)
+        clock_gettime(CLOCK_REALTIME, &ts);
 #else
         // Some targets lack clock_gettime(), use gettimeofday()
         struct timeval tv = {0};
@@ -384,6 +401,32 @@ bool thread_detach(thread_ctx_t* thread)
         return true;
     }
     return false;
+}
+
+/*
+ * Thread yielding, CPU relax hints
+ */
+
+void thread_sched_yield(void)
+{
+#if defined(HOST_TARGET_WIN32)
+    Sleep(0);
+#elif defined(SCHED_YIELD_IMPL)
+    sched_yield();
+#endif
+}
+
+void thread_cpu_relax(void)
+{
+#if defined(GNU_EXTS) && defined(__x86_64__)
+    __asm__ volatile("pause" : : : "memory");
+#elif defined(GNU_EXTS) && defined(__aarch64__)
+    __asm__ volatile("isb sy" : : : "memory");
+#elif defined(GNU_EXTS) && defined(__riscv)
+    __asm__ volatile(".4byte 0x100000F" : : : "memory");
+#elif defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64))
+    _mm_pause();
+#endif
 }
 
 /*
@@ -848,8 +891,7 @@ static bool workqueue_try_perform(work_queue_t* wq)
             tail = atomic_load_uint32_ex(&wq->tail, ATOMIC_RELAXED);
         }
 
-        // Yield this thread timeslice
-        sleep_ms(0);
+        thread_sched_yield();
     }
 }
 
@@ -881,8 +923,7 @@ static bool workqueue_submit(work_queue_t* wq, thread_func_t func, void** arg, u
             head = atomic_load_uint32_ex(&wq->head, ATOMIC_RELAXED);
         }
 
-        // Yield this thread timeslice
-        sleep_ms(0);
+        thread_sched_yield();
     }
     return false;
 }
@@ -893,7 +934,7 @@ static void thread_workers_terminate(void)
     // Wake & shut down all threads properly
     while (atomic_load_uint32(&pool_shut) != WORKER_THREADS) {
         condvar_wake_all(pool_cond);
-        sleep_ms(1);
+        thread_sched_yield();
     }
     for (size_t i = 0; i < WORKER_THREADS; ++i) {
         thread_join(pool_threads[i]);
