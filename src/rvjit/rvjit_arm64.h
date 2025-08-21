@@ -583,7 +583,7 @@ static inline branch_t rvjit_a64_bcc(rvjit_block_t* block, uint32_t opcode, bran
             return block->size;
         } else {
             // We have an instruction handle - this is a forward jump, relocate the address.
-            rvjit_a64_b_cond_reloc(block->code + handle, read_uint32_le_m(block->code + handle) & 0xFF00000F, block->size - handle);
+            rvjit_a64_b_cond_reloc(block->code + handle, read_uint32_le_m(block->code + handle) & 0xFF00001F, block->size - handle);
             return BRANCH_NEW;
         }
     } else {
