@@ -16,20 +16,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef RVJIT_ARM64_H
 #define RVJIT_ARM64_H
 
-/*
- * Special registers
- */
-
-// Frame Pointer
-#define ARM64_REG_FP                29
-
-// Link Register (Return address)
-#define ARM64_REG_LR                30
-
-// Zero Register (For most instructions), SP for Load/Stores and immediate arithmetics
-#define ARM64_REG_X31               31
-#define ARM64_REG_ZERO              ARM64_REG_X31
-#define ARM64_REG_SP                ARM64_REG_X31
+#define RVJIT_HOST_TARGET_ARM64     1
 
 /*
  * Backend target features
@@ -83,15 +70,15 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
 #define RVJIT_HOST_REGS_VOLATILE    0x0003FFFFU
-#define RVJIT_HOST_REGS_CALLSAVE    0x0FF80000U
+#define RVJIT_HOST_REGS_CALLSAVE    0x3FF80000U
 
 #define RVJIT_HOST_FP_REGS_VOLATILE 0xFFFF00FFU
 #define RVJIT_HOST_FP_REGS_CALLSAVE 0x0000FF00U
 
-#define RVJIT_HOST_REG_ZERO         ARM64_REG_ZERO
-#define RVJIT_HOST_REG_SP           ARM64_REG_SP
-#define RVJIT_HOST_REG_RA           ARM64_REG_LR
-#define RVJIT_HOST_REG_FP           ARM64_REG_FP
+#define RVJIT_HOST_REG_FP           29
+#define RVJIT_HOST_REG_RA           30
+#define RVJIT_HOST_REG_SP           31
+#define RVJIT_HOST_REG_ZERO         31
 
 #define RVJIT_HOST_REG_ARG0         0
 #define RVJIT_HOST_REG_ARG1         1
@@ -132,7 +119,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 /******************************************************************************
 
     NOTE: Interaction with X31 as SP or XZR differs by instruction
-    TLDR: 2-operand instructions with immediate are NOT XZR-safe!
+    TLDR: Immediate / extended register instructions are NOT XZR-safe!
 
 # ADRP takes XZR as destination
 adrp xzr, 0
@@ -152,6 +139,16 @@ rorv x0, xzr, x0
 csel xzr, x0, x0, eq
 smulh x0, x0, xzr
 extr x0, xzr, x0, 63
+
+# ADDE, SUBE take SP as rd/rs1, but not as rs2; Useful for rvjit_host_addisp() lowering
+add sp, sp, xzr, uxtx
+add x0, sp, x0, uxtx
+sub sp, x0, x0, uxtx
+
+# ADDSE, SUBSE take XZR as rd/rs2, SP as rs1; I guess for SP comparisons?
+adds xzr, sp, xzr, uxtx
+adds xzr, sp, x0, uxtx
+subs xzr, sp, xzr, uxtx
 
 # ADDI, SUBI move SP<->GPR freely and lack XZR
 add x0, sp, #0
@@ -290,6 +287,11 @@ static inline void rvjit_arm64_insn_mov(rvjit_block_t* block, uint32_t insn, uin
 #define ARM64_INSN_SUBW  0x4B000000U // Sub w[4:0] = w[9:5] - (w[20:16] << imm6[15:10] sh[23:22])
 #define ARM64_INSN_SUBS  0xEB000000U // Sub x[4:0] = x[9:5] - (x[20:16] << imm6[15:10] sh[23:22]), set flags
 #define ARM64_INSN_SUBSW 0x6B000000U // Sub w[4:0] = w[9:5] - (w[20:16] << imm6[15:10] sh[23:22]), set flags
+
+// Integer arithmetic with extended and scaled register
+// NOTE: Those may take SP as x[4:0] or x[9:5], but XZR as x[20:16]
+#define ARM64_INSN_ADDE  0x8B206000U
+#define ARM64_INSN_SUBE  0xCB206000U
 
 // Integer logical with optional shift/rotation immediate
 #define ARM64_INSN_AND   0x8A000000U // AND  x[4:0] = x[9:5] & (x[20:16] << imm6[15:10] sh[23:22])
@@ -436,8 +438,15 @@ static inline uint32_t rvjit_arm64_arith_imm_to_reg(uint32_t insn)
     return insn - 0x06000000U;
 }
 
-// Convert ADDI->SUBI, SUBSI->ADDSI, etc
-static inline uint32_t rvjit_arm64_arith_imm_invert(uint32_t insn)
+// Convert ADDI->ADDE, SUBI->SUBE, etc
+// NOTE: Those instruction access X31 as SP!
+static inline uint32_t rvjit_arm64_arith_imm_to_reg_ext(uint32_t insn)
+{
+    return insn - 0x05DFA000U;
+}
+
+// Convert ADDI->SUBI, SUBSI->ADDSI, ADDW->SUBW, SUBE->ADDE etc
+static inline uint32_t rvjit_arm64_arith_invert(uint32_t insn)
 {
     return insn ^ 0x40000000U;
 }
@@ -617,8 +626,8 @@ static inline void rvjit_arm64_insn_reg4(rvjit_block_t* block, uint32_t insn, ui
 #define ARM64_INSN_LDRFD 0xFD400000U // Load d[4:0] = ((f64*)x[9:5])[imm12[21:10]]
 
 // Load / store with a scaled unsigned imm12 offset
-static inline void rvjit_arm64_insn_loadstore(rvjit_block_t* block, uint32_t insn, uint32_t rd, //
-                                              uint32_t base, uint32_t imm12)
+static inline void rvjit_arm64_insn_ldst(rvjit_block_t* block, uint32_t insn, uint32_t rd, //
+                                         uint32_t base, uint32_t imm12)
 {
     rvjit_arm64_emit_insn(block, insn | (rd & 31) | ((base & 31) << 5) | ((imm12 & 0xFFFU) << 10));
 }
@@ -655,10 +664,16 @@ static inline bool rvjit_arm64_ldst_is_fp(uint32_t insn)
 #define ARM64_INSN_LDURFS 0xBC400000U // Load s[4:0] = *(f32*)(x[9:5] + simm9[20:12])
 #define ARM64_INSN_LDURFD 0xFC400000U // Load d[4:0] = *(f64*)(x[9:5] + simm9[20:12])
 
+// Convert STRB->STURB, LDRFD->LDURFD, etc
+static inline uint32_t rvjit_arm64_ldst_to_unscaled(uint32_t insn)
+{
+    return insn - 0x09000000U;
+}
+
 // Load/store with an unscaled signed imm9 offset
-// NOTE: This is known to cause illegal instruction exception on some CPUs!
-static inline void rvjit_arm64_insn_loadstore_unscaled(rvjit_block_t* block, uint32_t insn, uint32_t rd, //
-                                                       uint32_t base, uint32_t imm9)
+// NOTE: This never worked correctly for me, I am not sure why
+static inline void rvjit_arm64_insn_ldst_unscaled(rvjit_block_t* block, uint32_t insn, uint32_t rd, //
+                                                  uint32_t base, uint32_t imm9)
 {
     rvjit_arm64_emit_insn(block, insn | (rd & 31) | ((base & 31) << 5) | ((imm9 & 0x1FFU) << 12));
 }
@@ -858,7 +873,7 @@ static void rvjit_arm64_load_imm_slow(rvjit_block_t* block, uint32_t reg, uint64
     uint32_t immr = 0, imms = 0;
     if (rvjit_arm64_logic_gen_immr_imms(imm, true, &immr, &imms)) {
         // Logical immediate encodes the imm
-        rvjit_arm64_insn_logic_reg2_immx(block, ARM64_INSN_ORRI, reg, ARM64_REG_ZERO, immr, imms);
+        rvjit_arm64_insn_logic_reg2_immx(block, ARM64_INSN_ORRI, reg, RVJIT_HOST_REG_ZERO, immr, imms);
     } else if ((((int64_t)(imm << 16)) >> 16) == (int64_t)imm) {
         // Negative value with at least one top halfword 0xFFFF
         rvjit_arm64_insn_mov(block, ARM64_INSN_MOVN, reg, ~imm, 0);
@@ -883,7 +898,7 @@ static void rvjit_arm64_load_imm_slow(rvjit_block_t* block, uint32_t reg, uint64
 // Load imm64 (Fast path, no-op for XZR)
 static inline void rvjit_arm64_load_imm(rvjit_block_t* block, uint32_t reg, uint64_t imm)
 {
-    if (likely(reg != ARM64_REG_ZERO)) {
+    if (likely(reg != RVJIT_HOST_REG_ZERO)) {
         if (likely(!(imm >> 16))) {
             rvjit_arm64_insn_mov(block, ARM64_INSN_MOVZ, reg, imm, 0);
         } else {
@@ -892,10 +907,10 @@ static inline void rvjit_arm64_load_imm(rvjit_block_t* block, uint32_t reg, uint
     }
 }
 
-// Emit lowering of immediate instruction into register-register instruction, with second operand loaded from imm
+// Emit lowering of immediate instruction as register-register instruction, with second operand loaded from imm
 static void rvjit_arm64_lower_reg2_imm(rvjit_block_t* block, uint32_t insn, uint32_t rd, uint32_t rs, int64_t imm)
 {
-    if (likely(rd != ARM64_REG_ZERO)) {
+    if (likely(rd != RVJIT_HOST_REG_ZERO)) {
         if (rd != rs) {
             rvjit_arm64_load_imm(block, rd, imm);
             rvjit_arm64_insn_reg3(block, insn, rd, rs, rd);
@@ -913,7 +928,7 @@ static void rvjit_arm64_arith_cmp_imm_slow(rvjit_block_t* block, uint32_t insn, 
 {
     regid_t tmp = rvjit_claim_hreg(block);
     rvjit_arm64_load_imm(block, tmp, imm);
-    rvjit_arm64_insn_reg3(block, rvjit_arm64_arith_imm_to_reg(insn), ARM64_REG_ZERO, reg, tmp);
+    rvjit_arm64_insn_reg3(block, rvjit_arm64_arith_imm_to_reg(insn), RVJIT_HOST_REG_ZERO, reg, tmp);
     rvjit_free_hreg(block, tmp);
 }
 
@@ -923,45 +938,23 @@ static inline void rvjit_arm64_cmp_imm(rvjit_block_t* block, uint32_t insn, uint
     if (imm < 0) {
         // Invert imm and instruction
         imm  = -imm;
-        insn = rvjit_arm64_arith_imm_invert(insn);
+        insn = rvjit_arm64_arith_invert(insn);
     }
     if (!imm) {
-        rvjit_arm64_insn_reg3(block, rvjit_arm64_arith_imm_to_reg(insn), ARM64_REG_ZERO, reg, ARM64_REG_ZERO);
-    } else if (likely(!(imm >> 12) && reg != ARM64_REG_ZERO)) {
-        rvjit_arm64_insn_arith_reg2_imm(block, insn, ARM64_REG_ZERO, reg, imm, 0);
-    } else if (!(imm >> 24) && reg != ARM64_REG_ZERO) {
-        rvjit_arm64_insn_arith_reg2_imm(block, insn, ARM64_REG_ZERO, reg, imm >> 12, 1);
+        rvjit_arm64_insn_reg3(block, rvjit_arm64_arith_imm_to_reg(insn), RVJIT_HOST_REG_ZERO, reg, RVJIT_HOST_REG_ZERO);
+    } else if (likely(!(imm >> 12) && reg != RVJIT_HOST_REG_ZERO)) {
+        rvjit_arm64_insn_arith_reg2_imm(block, insn, RVJIT_HOST_REG_ZERO, reg, imm, 0);
+    } else if (!(imm >> 24) && reg != RVJIT_HOST_REG_ZERO) {
+        rvjit_arm64_insn_arith_reg2_imm(block, insn, RVJIT_HOST_REG_ZERO, reg, imm >> 12, 1);
     } else {
         rvjit_arm64_arith_cmp_imm_slow(block, insn, reg, imm);
     }
 }
 
-// Emit arithmetic with imm64, allowing SP access (Slow path)
-static void rvjit_arm64_arith_imm_sp_slow(rvjit_block_t* block, uint32_t insn, uint32_t rd, uint32_t rs, int64_t imm)
+// Check whether imm fits into unsigned imm24
+static inline bool rvjit_arm64_is_imm24(uint64_t imm)
 {
-    regid_t tmp = rd;
-    regid_t trs = rs;
-    regid_t trd = rd;
-    if (rd == ARM64_REG_SP || rs == ARM64_REG_SP) {
-        tmp = rvjit_claim_hreg(block);
-    }
-    if (rs == ARM64_REG_SP) {
-        // Move SP to temporary register, since register-register instructions can't access SP
-        trs = tmp;
-        rvjit_arm64_insn_arith_reg2_imm(block, insn, trs, rs, 0, 0);
-    }
-    if (rd == ARM64_REG_SP) {
-        trd = tmp;
-    }
-    // Perform addition via register-register instruction lowering
-    rvjit_arm64_lower_reg2_imm(block, rvjit_arm64_arith_imm_to_reg(insn), trd, trs, imm);
-    if (rd == ARM64_REG_SP) {
-        // Move temporary register to SP, since register-register instructions can't access SP
-        rvjit_arm64_insn_arith_reg2_imm(block, insn, rd, trd, 0, 0);
-    }
-    if (rd == ARM64_REG_SP || rs == ARM64_REG_SP) {
-        rvjit_free_hreg(block, tmp);
-    }
+    return !(imm >> 24);
 }
 
 // Emit arithmetic with unsigned imm24, treating X31 as SP
@@ -980,17 +973,17 @@ static inline void rvjit_arm64_arith_imm24(rvjit_block_t* block, uint32_t insn, 
 // Emit arithmetic with imm64, treating X31 as XZR (Fast path)
 static inline void rvjit_arm64_arith_imm(rvjit_block_t* block, uint32_t insn, uint32_t rd, uint32_t rs, int64_t imm)
 {
-    if (likely(rd != ARM64_REG_ZERO)) {
+    if (likely(rd != RVJIT_HOST_REG_ZERO)) {
         if (imm < 0) {
             // Invert imm and instruction
             imm  = -imm;
-            insn = rvjit_arm64_arith_imm_invert(insn);
+            insn = rvjit_arm64_arith_invert(insn);
         }
         if (!imm) {
-            rvjit_arm64_insn_reg3(block, ARM64_INSN_ORR, rd, rs, ARM64_REG_ZERO);
-        } else if (likely((!(imm >> 24) && (rs != ARM64_REG_ZERO)))) {
+            rvjit_arm64_insn_reg3(block, ARM64_INSN_ORR, rd, rs, RVJIT_HOST_REG_ZERO);
+        } else if (likely(rvjit_arm64_is_imm24(imm) && (rs != RVJIT_HOST_REG_ZERO))) {
             rvjit_arm64_arith_imm24(block, insn, rd, rs, imm);
-        } else if (rs == ARM64_REG_ZERO) {
+        } else if (rs == RVJIT_HOST_REG_ZERO) {
             rvjit_arm64_load_imm(block, rd, imm);
         } else {
             rvjit_arm64_lower_reg2_imm(block, rvjit_arm64_arith_imm_to_reg(insn), rd, rs, imm);
@@ -998,18 +991,32 @@ static inline void rvjit_arm64_arith_imm(rvjit_block_t* block, uint32_t insn, ui
     }
 }
 
-// Emit arithmetic with imm64, allowing SP access (Fast path)
-static inline void rvjit_arm64_arith_imm_sp(rvjit_block_t* block, uint32_t insn, uint32_t rd, uint32_t rs, int64_t imm)
+// Emit addi with imm64, allowing SP access (Slow path)
+static void rvjit_arm64_addisp_slow(rvjit_block_t* block, uint32_t insn, uint32_t rd, uint32_t rs, int64_t imm)
 {
+    if (rd == RVJIT_HOST_REG_SP || rs == RVJIT_HOST_REG_SP) {
+        regid_t tmp = rvjit_claim_hreg(block);
+        rvjit_arm64_load_imm(block, tmp, imm);
+        rvjit_arm64_insn_reg3(block, rvjit_arm64_arith_imm_to_reg_ext(insn), rd, rs, tmp);
+        rvjit_free_hreg(block, tmp);
+    } else {
+        rvjit_arm64_lower_reg2_imm(block, rvjit_arm64_arith_imm_to_reg(insn), rd, rs, imm);
+    }
+}
+
+// Emit arithmetic with imm64, allowing SP access (Fast path)
+static void rvjit_arm64_addisp(rvjit_block_t* block, uint32_t rd, uint32_t rs, int64_t imm)
+{
+    uint32_t insn = ARM64_INSN_ADDI;
     if (imm < 0) {
         // Invert imm and instruction
         imm  = -imm;
-        insn = rvjit_arm64_arith_imm_invert(insn);
+        insn = rvjit_arm64_arith_invert(insn);
     }
-    if (likely((!(imm >> 24)))) {
+    if (likely(rvjit_arm64_is_imm24(imm))) {
         rvjit_arm64_arith_imm24(block, insn, rd, rs, imm);
     } else {
-        rvjit_arm64_arith_imm_sp_slow(block, insn, rd, rs, imm);
+        rvjit_arm64_addisp_slow(block, insn, rd, rs, imm);
     }
 }
 
@@ -1028,8 +1035,8 @@ static void rvjit_arm64_prepare_jump_slow(rvjit_block_t* block, uint32_t reg, in
 static void rvjit_arm64_jump_slow(rvjit_block_t* block, int64_t off, bool call, bool absolute)
 {
     if (call) {
-        rvjit_arm64_prepare_jump_slow(block, ARM64_REG_LR, off, absolute);
-        rvjit_arm64_insn_br(block, ARM64_INSN_BR, ARM64_REG_LR);
+        rvjit_arm64_prepare_jump_slow(block, RVJIT_HOST_REG_RA, off, absolute);
+        rvjit_arm64_insn_br(block, ARM64_INSN_BR, RVJIT_HOST_REG_RA);
     } else {
         regid_t tmp = rvjit_claim_hreg(block);
         rvjit_arm64_prepare_jump_slow(block, tmp, off, absolute);
@@ -1104,13 +1111,13 @@ static inline void rvjit_host_jump(rvjit_block_t* block, int64_t off, bool absol
 // Emit absolute / relative 64-bit call
 static inline void rvjit_host_call(rvjit_block_t* block, int64_t off, bool absolute)
 {
-    rvjit_arm64_insn_reg(block, ARM64_INSN_PUSH, ARM64_REG_LR);
+    rvjit_arm64_insn_reg(block, ARM64_INSN_PUSH, RVJIT_HOST_REG_RA);
     if (!absolute && rvjit_arm64_valid_b(off)) {
         rvjit_arm64_insn_b(block, ARM64_INSN_BL, off);
     } else {
         rvjit_arm64_jump_slow(block, off, true, absolute);
     }
-    rvjit_arm64_insn_reg(block, ARM64_INSN_POP, ARM64_REG_LR);
+    rvjit_arm64_insn_reg(block, ARM64_INSN_POP, RVJIT_HOST_REG_RA);
 }
 
 // Emit jump to address in register
@@ -1122,9 +1129,9 @@ static inline void rvjit_host_jump_reg(rvjit_block_t* block, uint32_t reg)
 // Emit call to address in register
 static inline void rvjit_host_call_reg(rvjit_block_t* block, uint32_t reg)
 {
-    rvjit_arm64_insn_reg(block, ARM64_INSN_PUSH, ARM64_REG_LR);
+    rvjit_arm64_insn_reg(block, ARM64_INSN_PUSH, RVJIT_HOST_REG_RA);
     rvjit_arm64_insn_br(block, ARM64_INSN_BLR, reg);
-    rvjit_arm64_insn_reg(block, ARM64_INSN_POP, ARM64_REG_LR);
+    rvjit_arm64_insn_reg(block, ARM64_INSN_POP, RVJIT_HOST_REG_RA);
 }
 
 // Return to caller via link address
@@ -1199,7 +1206,7 @@ static inline void rvjit_host_addi(rvjit_block_t* block, uint32_t insn, uint32_t
 // Emit addi instruction with signed imm64, may operate on SP!
 static inline void rvjit_host_addisp(rvjit_block_t* block, uint32_t rd, uint32_t rs, int64_t imm)
 {
-    rvjit_arm64_arith_imm_sp(block, RVJIT_INSN_ADDI, rd, rs, imm);
+    rvjit_arm64_addisp(block, rd, rs, imm);
 }
 
 #define RVJIT_INSN_ANDI  ARM64_INSN_ANDI
@@ -1213,7 +1220,7 @@ static inline void rvjit_host_addisp(rvjit_block_t* block, uint32_t rd, uint32_t
 static inline void rvjit_host_logic_imm(rvjit_block_t* block, uint32_t insn, uint32_t rd, uint32_t rs, int64_t imm)
 {
     uint32_t immr = 0, imms = 0;
-    if (likely(rd != ARM64_REG_ZERO)) {
+    if (likely(rd != RVJIT_HOST_REG_ZERO)) {
         bool wide = rvjit_arm64_insn_is_wide(insn);
         if (rvjit_arm64_logic_gen_immr_imms(imm, wide, &immr, &imms)) {
             // Encode immediate directly into the instruction
@@ -1240,7 +1247,7 @@ static inline void rvjit_host_logic_imm(rvjit_block_t* block, uint32_t insn, uin
 
 static inline void rvjit_host_shift_imm(rvjit_block_t* block, uint32_t insn, uint32_t rd, uint32_t rs, uint32_t imm)
 {
-    if (likely(rd != ARM64_REG_ZERO)) {
+    if (likely(rd != RVJIT_HOST_REG_ZERO)) {
         uint32_t wide = rvjit_arm64_insn_is_wide(insn);
         uint32_t imms = wide ? 63 : 31;
         if (insn & SLLI_MASK_INTERNAL) {
@@ -1265,7 +1272,7 @@ static inline void rvjit_host_shift_imm(rvjit_block_t* block, uint32_t insn, uin
 static inline void rvjit_host_cmp_reg(rvjit_block_t* block, uint32_t insn, uint32_t rd, uint32_t rs1, uint32_t rs2)
 {
     rvjit_arm64_insn_cmp_reg(block, ARM64_INSN_CMPW | (insn & ARM64_WIDE_MASK), rs1, rs2);
-    rvjit_arm64_insn_csel(block, ARM64_INSN_CSINCW, rd, ARM64_REG_ZERO, ARM64_REG_ZERO, insn);
+    rvjit_arm64_insn_csel(block, ARM64_INSN_CSINCW, rd, RVJIT_HOST_REG_ZERO, RVJIT_HOST_REG_ZERO, insn);
 }
 
 #define RVJIT_INSN_SLTI   RVJIT_INSN_SLT
@@ -1277,7 +1284,7 @@ static inline void rvjit_host_cmp_reg(rvjit_block_t* block, uint32_t insn, uint3
 static inline void rvjit_host_cmp_imm(rvjit_block_t* block, uint32_t insn, uint32_t rd, uint32_t rs1, int64_t imm)
 {
     rvjit_arm64_cmp_imm(block, ARM64_INSN_CMPIW | (insn & ARM64_WIDE_MASK), rs1, imm);
-    rvjit_arm64_insn_csel(block, ARM64_INSN_CSINCW, rd, ARM64_REG_ZERO, ARM64_REG_ZERO, insn);
+    rvjit_arm64_insn_csel(block, ARM64_INSN_CSINCW, rd, RVJIT_HOST_REG_ZERO, RVJIT_HOST_REG_ZERO, insn);
 }
 
 #define RVJIT_INSN_LB  ARM64_INSN_LDRSB
@@ -1304,21 +1311,23 @@ static inline void rvjit_host_cmp_imm(rvjit_block_t* block, uint32_t insn, uint3
 static inline void rvjit_host_loadstore(rvjit_block_t* block, uint32_t insn, uint32_t rd, uint32_t base, int64_t off)
 {
     uint32_t shift = insn >> 30;
-    if (off & (0xFFFU << shift)) {
+    uint32_t off_i = (off >> shift) & 0xFFFU;
+    uint32_t off_s = off_i << shift;
+    if (!(off - off_s)) {
         // Encode scaled positive offset directly into the instruction
-        rvjit_arm64_insn_loadstore(block, insn, rd, base, off >> shift);
+        rvjit_arm64_insn_ldst(block, insn, rd, base, off_i);
+    } else if (rvjit_arm64_ldst_is_load(insn) && !rvjit_arm64_ldst_is_fp(insn)) {
+        // This is a scalar load with large offset that clobbers rd
+        // Lower to adding base with offset into rd, then overwriting rd with the load result
+        rvjit_host_addisp(block, rd, base, off - off_s);
+        rvjit_arm64_insn_ldst(block, insn, rd, rd, off_i);
     } else {
-        // Lower to adding base + offset in temporary base register
-        // If rd != base, we may use rd as temporary base for scalar loads
-        regid_t tmp = rd;
-        if (tmp == base || !rvjit_arm64_ldst_is_load(insn) || rvjit_arm64_ldst_is_fp(insn)) {
-            tmp = rvjit_claim_hreg(block);
-        }
-        rvjit_arm64_lower_reg2_imm(block, ARM64_INSN_ADD, tmp, base, off);
-        rvjit_arm64_insn_loadstore(block, insn, rd, tmp, 0);
-        if (tmp != rd) {
-            rvjit_free_hreg(block, tmp);
-        }
+        // This is a load/store with large offset which doesn't clobber rd
+        // Lower to adding base with offset into temporary register
+        regid_t tmp = rvjit_claim_hreg(block);
+        rvjit_host_addisp(block, tmp, base, off - off_s);
+        rvjit_arm64_insn_ldst(block, insn, rd, tmp, off_i);
+        rvjit_free_hreg(block, tmp);
     }
 }
 
@@ -1477,13 +1486,13 @@ static inline void rvjit_host_mul(rvjit_block_t* block, uint32_t insn, uint32_t 
 {
     if ((insn | ARM64_WIDE_MASK) == RVJIT_INSN_MUL) {
         // Simple mul / mulw
-        rvjit_arm64_insn_reg4(block, insn, rd, rs1, rs2, ARM64_REG_ZERO);
+        rvjit_arm64_insn_reg4(block, insn, rd, rs1, rs2, RVJIT_HOST_REG_ZERO);
     } else if (insn == RVJIT_INSN_MULH || insn == RVJIT_INSN_MULHU) {
         // Simple mulh / mulhu
         rvjit_arm64_insn_reg3(block, insn, rd, rs1, rs2);
     } else if (insn == RVJIT_INSN_MULHW || insn == RVJIT_INSN_MULHUW) {
         // Simple mulhw / mulhuw
-        rvjit_arm64_insn_reg4(block, insn, rd, rs1, rs2, ARM64_REG_ZERO);
+        rvjit_arm64_insn_reg4(block, insn, rd, rs1, rs2, RVJIT_HOST_REG_ZERO);
         rvjit_host_shift_imm(block, RVJIT_INSN_SRLI, rd, rd, 32);
     } else if (insn == RVJIT_INSN_MULHSU) {
         regid_t sign = rvjit_claim_hreg(block);
@@ -1498,7 +1507,7 @@ static inline void rvjit_host_mul(rvjit_block_t* block, uint32_t insn, uint32_t 
         regid_t urs2 = rvjit_claim_hreg(block);
         rvjit_host_sext32(block, srs1, rs1);
         rvjit_host_logic_imm(block, RVJIT_INSN_ANDI, urs2, rs2, 0xFFFFFFFF);
-        rvjit_arm64_insn_reg4(block, ARM64_INSN_MADD, rd, srs1, urs2, ARM64_REG_ZERO);
+        rvjit_arm64_insn_reg4(block, ARM64_INSN_MADD, rd, srs1, urs2, RVJIT_HOST_REG_ZERO);
         rvjit_host_shift_imm(block, RVJIT_INSN_SRLI, rd, rd, 32);
         rvjit_free_hreg(block, srs1);
         rvjit_free_hreg(block, urs2);
