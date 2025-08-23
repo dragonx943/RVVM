@@ -176,13 +176,13 @@ static void net_init_once(void)
 #endif
 #if defined(HOST_TARGET_POSIX) && defined(RLIMIT_NOFILE)
     struct rlimit rlim = {0};
-    if (!getrlimit(RLIMIT_NOFILE, &rlim)) {
+    if (!getrlimit(RLIMIT_NOFILE, (void*)&rlim)) {
         if (rlim.rlim_max < 2048) {
             rlim.rlim_max = 8192;
         }
         if (rlim.rlim_cur < rlim.rlim_max) {
             rlim.rlim_cur = rlim.rlim_max;
-            if (!setrlimit(RLIMIT_NOFILE, &rlim)) {
+            if (!setrlimit(RLIMIT_NOFILE, (void*)&rlim)) {
                 rvvm_info("Raising RLIMIT_NOFILE to %u", (uint32_t)rlim.rlim_cur);
             }
         }
