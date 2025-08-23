@@ -198,7 +198,9 @@ TypenameMacros: [vector_t]
 # Do not mess up my string-handling macros!
 WhitespaceSensitiveMacros: [CHECK_INCLUDE, MACRO_TOSTRING, MACRO_CONCAT]
 
-# Attribute-like macros
-StatementAttributeLikeMacros: [forceinline, no_inline, slow_path, flatten_calls, align_cacheline,
-                               randomize_layout, safe_aliasing, warn_unused_ret, deallocate_with,
-                               TSAN_SUPPRESS, MSAN_SUPPRESS, GNU_DESTRUCTOR, GNU_CONSTRUCTOR]
+# Type attribute macros
+AttributeMacros: [safe_aliasing, align_type, randomize_layout]
+
+# Function attribute macros
+StatementAttributeLikeMacros: [forceinline, no_inline, slow_path, flatten_calls, warn_unused_ret, deallocate_with,
+                               THREAD_LOCAL, TSAN_SUPPRESS, MSAN_SUPPRESS, GNU_DESTRUCTOR, GNU_CONSTRUCTOR]
