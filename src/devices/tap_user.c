@@ -316,7 +316,8 @@ static void handle_icmp(tap_dev_t* tap, const uint8_t* buffer, size_t size, net_
                 } else {
                     icmp_sock_available = false;
                     spin_unlock(&tap->lock);
-                    return emulate_icmp(tap, buffer, size, dst, src);
+                    emulate_icmp(tap, buffer, size, dst, src);
+                    return;
                 }
             }
             if (ts->timeout != BOUND_INF) ts->timeout = 0;
