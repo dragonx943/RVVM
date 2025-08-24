@@ -272,7 +272,8 @@ static inline bitcnt_t bit_popcnt64(uint64_t val)
 static inline uint64_t bit_orc_b(uint64_t val)
 {
 #if defined(GNU_EXTS) && (defined(__i386__) || defined(__x86_64__)) && defined(__SSE2__)
-    __asm__("pcmpeqb %1, %0\n\t"
+    __asm__(".att_syntax\n\t"
+            "pcmpeqb %1, %0\n\t"
             "pcmpeqb %1, %0\n\t"
             : "+x"(val)
             : "x"(0));
