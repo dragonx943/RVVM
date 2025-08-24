@@ -67,7 +67,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #endif
 
 #undef FPU_LIB_KNOWN_NICE_PLATFORM
-#if !defined(USE_SOFT_FPU_FENV) && (GCC_CHECK_VER(8, 1) || CLANG_CHECK_VER(10, 0)) /**/                                                               \
+#if !defined(USE_SOFT_FPU_FENV) && (GCC_CHECK_VER(8, 1) || CLANG_CHECK_VER(10, 0)) /**/                                \
     && (defined(__x86_64__) || defined(__aarch64__) || defined(__riscv))
 #define FPU_LIB_KNOWN_NICE_PLATFORM 1
 #endif
@@ -490,7 +490,10 @@ static forceinline fpu_f64_t fpu_fcvt_i32_to_f64(int32_t i)
 static forceinline fpu_f32_t fpu_fcvt_u64_to_f32(uint64_t u)
 {
 #if !defined(FPU_LIB_KNOWN_NICE_PLATFORM)
-    if (u <= 4294967295) {
+    if (u >= 0x8000000000000000ULL) {
+        // Maximum value for fp32 clamps at 9223372036854775808.f
+        return fpu_bit_u32_to_f32(0x5F800000U);
+    } else if (u <= 0xFFFFFFFFU) {
         return fpu_wrap_f32((actual_float_t)(uint32_t)u);
     }
 #endif
@@ -500,7 +503,7 @@ static forceinline fpu_f32_t fpu_fcvt_u64_to_f32(uint64_t u)
 static forceinline fpu_f64_t fpu_fcvt_u64_to_f64(uint64_t u)
 {
 #if !defined(FPU_LIB_KNOWN_NICE_PLATFORM)
-    if (u <= 4294967295) {
+    if (u <= 0xFFFFFFFFU) {
         return fpu_wrap_f64((actual_double_t)(uint32_t)u);
     }
 #endif
@@ -935,9 +938,9 @@ static forceinline bool fpu_is_fle64_sig(fpu_f64_t a, fpu_f64_t b)
 
 static forceinline fpu_f32_t fpu_min32(fpu_f32_t a, fpu_f32_t b)
 {
-#if defined(FPU_LIB_KNOWN_NICE_PLATFORM) && defined(__riscv_f)
+#if defined(FPU_LIB_KNOWN_NICE_PLATFORM) && defined(__riscv_f) && GNU_BUILTIN(__builtin_fminf)
     // On RISC-V, fminf() actually behaves the way we need
-    return fminf(a, b);
+    return fpu_wrap_f32(__builtin_fminf(fpu_raw_f32(a), fpu_raw_f32(b)));
 #else
     if (unlikely(fpu_is_nan32(a))) {
         return b;
@@ -955,8 +958,8 @@ static forceinline fpu_f32_t fpu_min32(fpu_f32_t a, fpu_f32_t b)
 
 static forceinline fpu_f32_t fpu_max32(fpu_f32_t a, fpu_f32_t b)
 {
-#if defined(FPU_LIB_KNOWN_NICE_PLATFORM) && defined(__riscv_f)
-    return fmaxf(a, b);
+#if defined(FPU_LIB_KNOWN_NICE_PLATFORM) && defined(__riscv_f) && GNU_BUILTIN(__builtin_fmaxf)
+    return fpu_wrap_f32(__builtin_fmaxf(fpu_raw_f32(a), fpu_raw_f32(b)));
 #else
     if (unlikely(fpu_is_nan32(a))) {
         return b;
@@ -974,8 +977,8 @@ static forceinline fpu_f32_t fpu_max32(fpu_f32_t a, fpu_f32_t b)
 
 static forceinline fpu_f64_t fpu_min64(fpu_f64_t a, fpu_f64_t b)
 {
-#if defined(FPU_LIB_KNOWN_NICE_PLATFORM) && defined(__riscv_d)
-    return fmin(a, b);
+#if defined(FPU_LIB_KNOWN_NICE_PLATFORM) && defined(__riscv_d) && GNU_BUILTIN(__builtin_fmin)
+    return fpu_wrap_f64(__builtin_fmin(fpu_raw_f64(a), fpu_raw_f64(b)));
 #else
     if (unlikely(fpu_is_nan64(a))) {
         return b;
@@ -993,8 +996,8 @@ static forceinline fpu_f64_t fpu_min64(fpu_f64_t a, fpu_f64_t b)
 
 static forceinline fpu_f64_t fpu_max64(fpu_f64_t a, fpu_f64_t b)
 {
-#if defined(FPU_LIB_KNOWN_NICE_PLATFORM) && defined(__riscv_d)
-    return fmax(a, b);
+#if defined(FPU_LIB_KNOWN_NICE_PLATFORM) && defined(__riscv_d) && GNU_BUILTIN(__builtin_fmax)
+    return fpu_wrap_f64(__builtin_fmax(fpu_raw_f64(a), fpu_raw_f64(b)));
 #else
     if (unlikely(fpu_is_nan64(a))) {
         return b;
