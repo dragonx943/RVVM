@@ -10,10 +10,13 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef RVVM_RISCV_MMU_H
 #define RVVM_RISCV_MMU_H
 
-#include "fpu_lib.h"
 #include "mem_ops.h"
 #include "riscv_csr.h"
 #include "rvvm.h"
+
+#if defined(USE_FPU)
+#include "fpu_lib.h"
+#endif
 
 // MMU page access bits
 #define RISCV_MMU_READ     0x2

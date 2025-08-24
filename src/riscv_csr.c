@@ -11,11 +11,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "riscv_csr.h"
 #include "riscv_hart.h"
 #include "riscv_mmu.h"
-#include "riscv_cpu.h"
 
-#ifdef USE_FPU
-// For host FPU exception manipulation
-#include "fpu_ops.h"
+#if defined(USE_FPU)
+#include "fpu_lib.h"
 #endif
 
 // Get RVVM commit in a mimpid hex form
@@ -375,37 +373,6 @@ static bool riscv_csr_satp(rvvm_hart_t* vm, rvvm_uxlen_t* dest, uint8_t op)
 
 #ifdef USE_FPU
 
-static inline uint32_t fpu_get_exceptions(void)
-{
-    uint32_t ret = 0;
-    uint32_t exc = fetestexcept(FE_ALL_EXCEPT);
-    if (exc & FE_INEXACT)   ret |= FFLAG_NX;
-    if (exc & FE_UNDERFLOW) ret |= FFLAG_UF;
-    if (exc & FE_OVERFLOW)  ret |= FFLAG_OF;
-    if (exc & FE_DIVBYZERO) ret |= FFLAG_DZ;
-    if (exc & FE_INVALID)   ret |= FFLAG_NV;
-    return ret;
-}
-
-static inline void fpu_set_rm(uint8_t newrm)
-{
-    switch (newrm) {
-        case RM_RNE:
-        case RM_RMM:
-            fesetround(FE_TONEAREST);
-            break;
-        case RM_RTZ:
-            fesetround(FE_TOWARDZERO);
-            break;
-        case RM_RDN:
-            fesetround(FE_DOWNWARD);
-            break;
-        case RM_RUP:
-            fesetround(FE_UPWARD);
-            break;
-    }
-}
-
 static inline void riscv_update_fflags(rvvm_hart_t* vm)
 {
     vm->csr.fcsr |= fpu_get_exceptions();
@@ -424,13 +391,13 @@ static void riscv_update_fcsr(rvvm_hart_t* vm, uint32_t old_fcsr, uint32_t new_f
                 return;
             } else {
                 // Set host rounding mode
-                fpu_set_rm(new_frm);
+                fpu_set_rounding_mode(new_frm);
             }
         }
         if (unlikely(~new_fflags & old_fflags)) {
             if (~new_fflags & fpu_get_exceptions()) {
                 // Clear host-set FPU exceptions, anything needed is left in fcsr
-                feclearexcept(FE_ALL_EXCEPT);
+                fpu_set_exceptions(0);
             }
         }
         vm->csr.fcsr = new_fcsr;
