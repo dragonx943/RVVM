@@ -10,8 +10,19 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "fpu_lib.h"
 
 #if !defined(USE_SOFT_FPU_FENV)
-#if CHECK_INCLUDE(fenv.h, 1)
+
 #include <fenv.h>
+
+// Check presence of FE_ALL_EXCEPT and at least one exception bit flag
+#if defined(FE_ALL_EXCEPT)                                                                                             \
+    && (defined(FE_INEXACT) || defined(FE_UNDERFLOW) /**/                                                              \
+        || defined(FE_OVERFLOW) || defined(FE_DIVBYZERO) || defined(FE_INVALID))
+#define FENV_EXCEPTIONS_IMPL 1
+#endif
+
+// Check presence and at least one rounding mode other than FE_TONEAREST
+#if defined(FE_DOWNWARD) || defined(FE_UPWARD) || defined(FE_TOWARDZERO)
+#define FENV_ROUNDING_IMPL 1
 #endif
 
 // Speed up FENV handling on x86_64; Prevent SIGILL on old x86 without SSE
@@ -20,48 +31,17 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #elif defined(GNU_EXTS) && defined(__x86_64__) && defined(__SSE2__) && defined(__SSE2_MATH__)
 #define FENV_SSE2_IMPL 1
 #endif
+
 #endif
 
 // Thread-local raised exceptions flags for fenv access acceleration
-// TODO: There are claims that TLS is broken on Win <Vista, this should be checked
-// under MinGW / LLVM-MinGW / MSVC
+// TODO: There are claims that TLS is broken on Win <Vista, this should be checked under MinGW / LLVM-MinGW / MSVC
 #if defined(THREAD_LOCAL) && !defined(_WIN32)
 #define FENV_TLS_IMPL 1
 #endif
 
 #if defined(FENV_TLS_IMPL)
 static THREAD_LOCAL uint32_t tls_fpu_exceptions = 0;
-#endif
-
-#ifndef FE_ALL_EXCEPT
-#define FE_ALL_EXCEPT 0
-#endif
-#ifndef FE_INEXACT
-#define FE_INEXACT 0
-#endif
-#ifndef FE_UNDERFLOW
-#define FE_UNDERFLOW 0
-#endif
-#ifndef FE_OVERFLOW
-#define FE_OVERFLOW 0
-#endif
-#ifndef FE_DIVBYZERO
-#define FE_DIVBYZERO 0
-#endif
-#ifndef FE_INVALID
-#define FE_INVALID 0
-#endif
-#ifndef FE_TONEAREST
-#define FE_TONEAREST 0
-#endif
-#ifndef FE_TOWARDZERO
-#define FE_TOWARDZERO 0
-#endif
-#ifndef FE_DOWNWARD
-#define FE_DOWNWARD 0
-#endif
-#ifndef FE_UPWARD
-#define FE_UPWARD 0
 #endif
 
 static uint32_t fpu_get_exceptions_internal(void)
@@ -92,24 +72,34 @@ static uint32_t fpu_get_exceptions_internal(void)
             ret |= FPU_ENV_FLAG_NX;
         }
     }
-#elif !defined(USE_SOFT_FPU_FENV)
+#elif defined(FENV_EXCEPTIONS_IMPL)
     uint32_t fenv = fetestexcept(FE_ALL_EXCEPT);
     if (unlikely(fenv)) {
+#if defined(FE_INEXACT)
         if (fenv & FE_INEXACT) {
             ret |= FPU_ENV_FLAG_NX;
         }
+#endif
+#if defined(FE_UNDERFLOW)
         if (fenv & FE_UNDERFLOW) {
             ret |= FPU_ENV_FLAG_UF;
         }
+#endif
+#if defined(FE_OVERFLOW)
         if (fenv & FE_OVERFLOW) {
             ret |= FPU_ENV_FLAG_OF;
         }
+#endif
+#if defined(FE_DIVBYZERO)
         if (fenv & FE_DIVBYZERO) {
             ret |= FPU_ENV_FLAG_DZ;
         }
+#endif
+#if defined(FE_INVALID)
         if (fenv & FE_INVALID) {
             ret |= FPU_ENV_FLAG_NV;
         }
+#endif
     }
 #endif
     return ret;
@@ -150,25 +140,35 @@ static void fpu_set_exceptions_internal(uint32_t exceptions)
     fenv_8087[2] = stsw;
     __asm__ volatile("fldenv %0" : : "m"(*&fenv_8087) : "memory");
 #endif
-#elif !defined(USE_SOFT_FPU_FENV)
+#elif defined(FENV_EXCEPTIONS_IMPL)
     uint32_t fenv = 0;
     feclearexcept(FE_ALL_EXCEPT);
     if (unlikely(exceptions)) {
+#if defined(FE_INEXACT)
         if (exceptions & FPU_ENV_FLAG_NX) {
             fenv |= FE_INEXACT;
         }
+#endif
+#if defined(FE_UNDERFLOW)
         if (exceptions & FPU_ENV_FLAG_UF) {
             fenv |= FE_UNDERFLOW;
         }
+#endif
+#if defined(FE_OVERFLOW)
         if (exceptions & FPU_ENV_FLAG_OF) {
             fenv |= FE_OVERFLOW;
         }
+#endif
+#if defined(FE_DIVBYZERO)
         if (exceptions & FPU_ENV_FLAG_DZ) {
             fenv |= FE_DIVBYZERO;
         }
+#endif
+#if defined(FE_DIVBYZERO)
         if (exceptions & FPU_ENV_FLAG_NV) {
             fenv |= FE_INVALID;
         }
+#endif
         if (fenv) {
             feraiseexcept(fenv);
         }
@@ -235,15 +235,21 @@ void fpu_clear_exceptions(uint32_t exceptions)
 
 uint32_t fpu_get_rounding_mode(void)
 {
-#if !defined(USE_SOFT_FPU_FENV)
+#if defined(FENV_ROUNDING_IMPL)
     uint32_t frm = fegetround();
     switch (frm) {
+#if defined(FE_DOWNWARD)
         case FE_DOWNWARD:
             return FPU_ENV_ROUND_DN;
+#endif
+#if defined(FE_UPWARD)
         case FE_UPWARD:
             return FPU_ENV_ROUND_UP;
+#endif
+#if defined(FE_TOWARDZERO)
         case FE_TOWARDZERO:
             return FPU_ENV_ROUND_TZ;
+#endif
     }
 #endif
     return FPU_ENV_ROUND_NE;
@@ -252,20 +258,28 @@ uint32_t fpu_get_rounding_mode(void)
 void fpu_set_rounding_mode(uint32_t mode)
 {
     UNUSED(mode);
-#if !defined(USE_SOFT_FPU_FENV)
+#if defined(FENV_ROUNDING_IMPL)
     switch (mode) {
+#if defined(FE_DOWNWARD)
         case FPU_ENV_ROUND_DN:
             fesetround(FE_DOWNWARD);
             break;
+#endif
+#if defined(FE_UPWARD)
         case FPU_ENV_ROUND_UP:
             fesetround(FE_UPWARD);
             break;
+#endif
+#if defined(FE_TOWARDZERO)
         case FPU_ENV_ROUND_TZ:
             fesetround(FE_TOWARDZERO);
             break;
+#endif
+#if defined(FE_TONEAREST)
         default:
             fesetround(FE_TONEAREST);
             break;
+#endif
     }
 #endif
 }

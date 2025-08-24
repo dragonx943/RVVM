@@ -14,32 +14,68 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include <stddef.h>
 #include <stdint.h>
 
+#include "compiler.h"
+
 #if (defined(__i386__) && !defined(__SSE2_MATH__)) || defined(_M_IX86)
+
 /*
  * i386 without SSE2 (8087 FPU) implicitly converts sNaN into qNaN.
  * FP type wrapping is needed for IEEE 754 conformance.
  */
+
 #undef USE_SOFT_FPU_WRAP
 #define USE_SOFT_FPU_WRAP 1
+
+#endif
+
+#if defined(USE_SOFT_FPU_WRAP) || GCC_CHECK_VER(10, 0) || CLANG_CHECK_VER(10, 0)
+
+/*
+ * Floating-point types encapsulation for compile-time type checking
+ */
+#undef USE_SOFT_FPU_ENCAP
+#define USE_SOFT_FPU_ENCAP 1
+
 #endif
 
 /*
+ * Native host floating-point types
  * NOTE: Only use if you know what you're doing
  */
+
 typedef float  actual_float_t;
 typedef double actual_double_t;
 
 /*
- * Use fpu_f32_t instead of float
- * Use fpu_f64_t instead of double
+ * Scalar floating-point storage typedefs
  */
 
 #if defined(USE_SOFT_FPU_WRAP)
-typedef uint32_t fpu_f32_t;
-typedef uint64_t fpu_f64_t;
+typedef uint32_t fpu_scalar_f32_t;
+typedef uint64_t fpu_scalar_f64_t;
 #else
-typedef actual_float_t  fpu_f32_t;
-typedef actual_double_t fpu_f64_t;
+typedef actual_float_t  fpu_scalar_f32_t;
+typedef actual_double_t fpu_scalar_f64_t;
 #endif
+
+/*
+ * Encapsulated floating-point typedefs
+ */
+
+#if defined(USE_SOFT_FPU_ENCAP)
+typedef struct {
+    fpu_scalar_f32_t scalar;
+} fpu_f32_t;
+
+typedef struct {
+    fpu_scalar_f64_t scalar;
+} fpu_f64_t;
+#else
+typedef fpu_scalar_f32_t fpu_f32_t;
+typedef fpu_scalar_f64_t fpu_f64_t;
+#endif
+
+BUILD_ASSERT(sizeof(fpu_f32_t) == sizeof(actual_float_t));
+BUILD_ASSERT(sizeof(fpu_f64_t) == sizeof(actual_double_t));
 
 #endif
