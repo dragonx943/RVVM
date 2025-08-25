@@ -17,66 +17,98 @@ override define LOGO
                ░        ░
 endef
 
-ifneq (,$(filter linux,$(OS)))
-# Enable Wayland on Linux by default
-USE_WAYLAND ?= 1
-endif
+#
+# Platform-dependent default project configuration
+#
 
+ifneq (,$(filter linux,$(OS)))
+# TODO: Enable Wayland on Linux by default (Event thread sometimes hangs)
+#USE_WAYLAND ?= 1
+endif
 ifneq (,$(filter linux %bsd sunos,$(OS)))
 # Enable X11 on Linux, *BSD, Solaris by default
 USE_X11 ?= 1
 endif
-
 ifneq (,$(filter windows,$(OS)))
 USE_WIN32_GUI ?= 1
 endif
-
 ifneq (,$(filter haiku,$(OS)))
 USE_HAIKU_GUI ?= 1
 endif
-
 ifneq (,$(filter darwin serenity,$(OS)))
 # Enable SDL2 on Darwin, Serenity by default
 USE_SDL ?= 2
 endif
-
 ifneq (,$(filter redox,$(OS)))
 # Enable SDL1 and disable networking on Redox by default
 USE_SDL ?= 1
 USE_NET ?= 0
 USE_LIB ?= 0
 endif
-
 ifneq (,$(filter emscripten,$(OS)))
 # Enable SDL2 on Emscripten by default
 USE_SDL ?= 2
 endif
 
-# Infrastructure
-USE_SPINLOCK_DEBUG ?= 1
-USE_ISOLATION      ?= 1
-USE_JNI            ?= 1
-
-# Acceleration
-USE_JIT ?= 1
-USE_KVM ?= 0
+#
+# Default project build configuration
+#
 
 # CPU features
-USE_RV32 ?= 1
-USE_RV64 ?= 1
-USE_FPU  ?= 1
-USE_RVV  ?= 0
+USE_RV32 ?= 1 # Support riscv32imacb guests
+USE_RV64 ?= 1 # Support riscv64imacb guests
+USE_FPU  ?= 1 # Support FPU extensions
+USE_RVV  ?= 0 # Support Vector extension
 
-# User features
-USE_GUI     ?= 1
-USE_SDL     ?= 0
-USE_NET     ?= 1
-USE_SOUND   ?= 0
-USE_GDBSTUB ?= 1
+# Usability features
+USE_GUI     ?= 1          # Enable guest display GUI
+USE_SDL     ?= 0          # Enable SDL as GUI backend - usually picked on per-platform basis
+USE_NET     ?= 1          # Enable networking support
+USE_SOUND   ?= 0          # Enable sound support
+USE_GDBSTUB ?= $(USE_NET) # Support debugging the guest via GDB remote protocol
 
 # Board features
-USE_FDT  ?= 1
-USE_VFIO ?= 1
+USE_FDT  ?= 1 # Enable Flattened Device Tree automatic generation
+USE_VFIO ?= 1 # Support PCIe VFIO pass-through on Linux hosts
+
+# Infrastructure
+USE_INFRA_TESTS ?= 0 # Build infrastructure tests
+USE_LOCK_DEBUG  ?= 1 # Runtime lock debugging & locking debug info
+USE_ISOLATION   ?= 1 # Process isolation via seccomp/pledge
+USE_JNI         ?= 1 # Enable JNI support in librvvm
+
+# Acceleration
+# Enable JIT by default on x86_64, arm64, riscv64
+USE_JIT ?= $(if $(filter x86_64 arm64 riscv64,$(ARCH)),1,0)
+USE_KVM ?= 0
+
+# Misc toggles for debugging host platform/compiler issues
+USE_NO_STACKTRACE ?= 0 # Disable post-mortem crash stacktraces
+USE_NO_DLIB       ?= 0 # Disable dynamic library/symbol probing via dlsym()/GetProcAddress()
+USE_FULL_LINKING  ?= 0 # Actually link to used libraries instead of dlib probing
+USE_STDIO         ?= 0 # Use non-threaded stdio fallback IO backend (Instead of Win32/POSIX)
+USE_SELECT        ?= 0 # Use select() event interface fallback for networking (Instead of epoll/kqueue)
+
+USE_SOFT_FPU_WRAP ?= 0 # Wrap native floating-point types into bitcasted representation (Fixes 8087 FPU)
+USE_SOFT_FPU_FENV ?= 0 # Emulate FPU exceptions (Note this isn't soft-fp, and still fairly fast)
+
+USE_NO_THREAD_LOCAL ?= 0 # Disable and undefine THREAD_LOCAL attribute
+USE_NO_BUILD_ASSERT ?= 0 # Disable build-time assertions
+USE_NO_RANDSTRUCT   ?= 0 # Disable struct randomization via randomize_layout
+USE_NO_ALIGN_TYPE   ?= 0 # Disable type alignment where it's optional
+USE_NO_SOURCE_OPT   ?= 0 # Disable per-source manual optimization level
+USE_NO_PREFETCH     ?= 0 # Disable use of __builtin_prefetch()
+USE_NO_LIKELY       ?= 0 # Disable use of __builtin_expect()
+USE_NO_FORCEINLINE  ?= 0 # Disable force inlining
+USE_NO_NOINLINE     ?= 0 # Disable force un-inlining
+USE_NO_SLOW_PATH    ?= 0 # Disable slow_path attribute
+USE_NO_FLATTEN      ?= 0 # Disable flatten_calls attribute
+
+USE_NO_C11_ATOMICS   ?= 0 # Disable C11 <stdatomic.h>, even if determined to be supported
+USE_NO_GNU_ATOMICS   ?= 0 # Disable GNU __atomic, even if determined to be supported
+USE_NO_SYNC_ATOMICS  ?= 0 # Disable GNU __sync, even if determined to be supported
+USE_NO_WIN32_ATOMICS ?= 0 # Disable Win32 Interlocked atomics, even if determined to be supported
+USE_NO_LIBATOMIC     ?= 0 # Disable libatomic fallback, falling back to global-lock atomics then...
 
 ifneq (,$(call var_use,USE_TAP_LINUX))
 $(call log_warn,Linux TAP is deprecated in favor of USE_NET due to checksum issues)
@@ -120,7 +152,7 @@ override LIBS_USE_X11     := x11 xext
 override LIBS_USE_WAYLAND := wayland-client xkbcommon
 
 #
-# Prepare targets
+# Prepare build targets
 #
 
 override BIN_TARGETS := rvvm
@@ -143,6 +175,8 @@ override TEST_DATA_TAR_LINK := https://github.com/LekKit/riscv-tests/releases/do
 override TEST_DATA_TAR_FILE := $(lastword $(subst /,$(SPACE),$(TEST_DATA_TAR_LINK)))
 
 override test_result = $(call println,$(TEXT)[$(if $(filter 0,$1),$(GREEN)PASS,$(RED)FAIL: $1)$(TEXT)] $2)$(if $(filter 0,$1),,fail)
+override invoke_rvvm = $(call test_result,$(lastword $(call shell_ex,$(RVVM) $1 -nonet -nogui -nosound $(NULL_STDERR))),$(firstword $1))
+override filter_test = $(filter-out $(foreach isa,$2,$(BUILDDIR)/riscv-tests/$(isa)%),$(call recursive_wildcard,$(BUILDDIR)/riscv-tests/$1*))
 
 test:
 	$(if $(call paths_exist,$(BUILDDIR)/riscv-tests),,$(call shell_ex,cd $(BUILDDIR) && curl -LO $(TEST_DATA_TAR_LINK) && tar xzf $(TEST_DATA_TAR_FILE)))
@@ -150,12 +184,12 @@ ifneq (,$(call var_use,USE_RV32))
 	$(call println,)
 	$(call log_info,Running RISC-V Tests (riscv32))
 	$(call println,)
-	@$(if $(strip $(foreach test,$(call recursive_wildcard,$(BUILDDIR)/riscv-tests/rv32*),$(call test_result,$(lastword $(call shell_ex,$(RVVM) $(test) -nonet -nogui -rv32 $(NULL_STDERR))),$(test)))),exit 1)
+	@$(if $(strip $(foreach test,$(call filter_test,rv32,$(if $(call var_use,USE_FPU),,rv32uf rv32ud rv32uzfh)),$(call invoke_rvvm,$(test) -rv32))),exit 1)
 endif
 ifneq (,$(call var_use,USE_RV64))
 	$(call println,)
-	$(call log_info,Running RISC-V Tests (riscv32))
+	$(call log_info,Running RISC-V Tests (riscv64))
 	$(call println,)
-	@$(if $(strip $(foreach test,$(call recursive_wildcard,$(BUILDDIR)/riscv-tests/rv64*),$(call test_result,$(lastword $(call shell_ex,$(RVVM) $(test) -nonet -nogui -rv64 $(NULL_STDERR))),$(test)))),exit 1)
+	@$(if $(strip $(foreach test,$(call filter_test,rv64,$(if $(call var_use,USE_FPU),,rv64uf rv64ud rv64uzfh)),$(call invoke_rvvm,$(test) -rv64))),exit 1)
 endif
 	@:
