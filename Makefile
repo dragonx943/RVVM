@@ -844,6 +844,7 @@ endif
 # Enable -frounding-math on Clang 4.0+
 #
 # Enable -Bsymbolic-functions on GCC/Clang 4.0+
+# Default to -march=i586 for 32-bit x86
 override OPTIMIZE_OPTS := $(strip $(OPTIMIZE_OPTS) \
 $(if $(LTO_SUPPORTED),$(if $(call gcc_min_ver,5.0),-flto=auto) $(if $(call gcc_min_ver,15.0),$(if $(filter-out windows,$(OS)),-flto-incremental=$(OBJDIR)))) \
 $(if $(call gcc_min_ver,4.0),-fvisibility=hidden -fno-math-errno -frounding-math) \
@@ -852,7 +853,7 @@ $(if $(call var_use,USE_ANALYZER),$(if $(call gcc_min_ver,10.1),-fanalyzer)) \
 $(if $(LTO_SUPPORTED),$(if $(call clang_min_ver,5.0),-flto)) \
 $(if $(call clang_min_ver,3.0),-fvisibility=hidden -fno-math-errno) \
 $(if $(call clang_min_ver,4.0),-frounding-math) \
-$(if $(call gnuc_min_ver,4.0),-pipe -Bsymbolic-functions))
+$(if $(call gnuc_min_ver,4.0),-pipe -Bsymbolic-functions) $(if $(filter i386,$(ARCH)),$(if $(filter -march% -msse% -mfpmath%,$(CFLAGS)),,-march=i586))) \
 
 # Set compiler-specific warning & suppression options
 #
