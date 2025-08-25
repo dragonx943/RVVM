@@ -17,7 +17,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 // Lock structure
 typedef struct {
     uint32_t flag;
-#if defined(USE_SPINLOCK_DEBUG)
+#if defined(USE_LOCK_DEBUG)
     const char* location;
 #endif
 } spinlock_t;
@@ -29,7 +29,7 @@ typedef struct {
 static inline void spin_init(spinlock_t* lock)
 {
     lock->flag = 0x0;
-#if defined(USE_SPINLOCK_DEBUG)
+#if defined(USE_LOCK_DEBUG)
     lock->location = NULL;
 #endif
 }
@@ -55,7 +55,7 @@ slow_path void spin_lock_wake(spinlock_t* lock, uint32_t prev);
 slow_path void spin_read_lock_wait(spinlock_t* lock, const char* location, uint8_t flags);
 slow_path void spin_read_lock_wake(spinlock_t* lock, uint32_t prev);
 
-#if defined(USE_SPINLOCK_DEBUG)
+#if defined(USE_LOCK_DEBUG)
 
 #define SPINLOCK_DEBUG_LOCATION SOURCE_LINE
 #define SPINLOCK_MARK_LOCATION(lock, location)                                                                         \

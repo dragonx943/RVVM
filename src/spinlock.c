@@ -26,10 +26,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 static slow_path void spin_lock_debug_report(spinlock_t* lock, bool crash)
 {
-#if defined(USE_SPINLOCK_DEBUG)
-    rvvm_warn("The lock was last exclusively held at %s", lock->location);
-#else
     UNUSED(lock);
+#if defined(USE_LOCK_DEBUG)
+    rvvm_warn("The lock was last exclusively held at %s", lock->location);
 #endif
 #if defined(RVVM_VERSION)
     rvvm_warn("Version: RVVM " RVVM_VERSION);
