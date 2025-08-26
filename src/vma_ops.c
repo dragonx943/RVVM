@@ -16,7 +16,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "utils.h"
 #include "vma_ops.h"
 
-SOURCE_OPTIMIZATION_SIZE
+PUSH_OPTIMIZATION_SIZE
 
 #if defined(HOST_TARGET_WIN32)
 
@@ -712,3 +712,5 @@ bool vma_free(void* addr, size_t size)
     }
     return false;
 }
+
+POP_OPTIMIZATION_SIZE
