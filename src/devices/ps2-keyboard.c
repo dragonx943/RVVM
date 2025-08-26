@@ -8,56 +8,57 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#include "ps2-altera.h"
 #include "hid_api.h"
+#include "mem_ops.h"
+#include "ps2-altera.h"
 #include "ringbuf.h"
 #include "rvtimer.h"
 #include "spinlock.h"
-#include "mem_ops.h"
 #include "utils.h"
 
-SOURCE_OPTIMIZATION_SIZE
+PUSH_OPTIMIZATION_SIZE
 
-#define PS2_CMD_RESET 0xFF
-#define PS2_CMD_RESEND 0xFE
-#define PS2_CMD_SET_DEFAULTS 0xF6
+#define PS2_CMD_RESET                  0xFF
+#define PS2_CMD_RESEND                 0xFE
+#define PS2_CMD_SET_DEFAULTS           0xF6
 #define PS2_CMD_DISABLE_DATA_REPORTING 0xF5
-#define PS2_CMD_ENABLE_DATA_REPORTING 0xF4
-#define PS2_CMD_SET_SAMPLE_RATE 0xF3
-#define PS2_CMD_GET_DEV_ID 0xF2
-#define PS2_CMD_SET_SCAN_CODE_SET 0xF0
-#define PS2_CMD_ECHO 0xEE
-#define PS2_CMD_LEDS 0xED
+#define PS2_CMD_ENABLE_DATA_REPORTING  0xF4
+#define PS2_CMD_SET_SAMPLE_RATE        0xF3
+#define PS2_CMD_GET_DEV_ID             0xF2
+#define PS2_CMD_SET_SCAN_CODE_SET      0xF0
+#define PS2_CMD_ECHO                   0xEE
+#define PS2_CMD_LEDS                   0xED
 
-#define PS2_RSP_ACK 0xFA
-#define PS2_RSP_NAK 0xFE
+#define PS2_RSP_ACK                    0xFA
+#define PS2_RSP_NAK                    0xFE
 
-#define PS2_STATE_CMD               0x0
-#define PS2_STATE_SET_SAMPLE_RATE   0x1
-#define PS2_STATE_SET_SCAN_CODE_SET 0x2
-#define PS2_STATE_SET_LEDS          0x3
+#define PS2_STATE_CMD                  0x00
+#define PS2_STATE_SET_SAMPLE_RATE      0x01
+#define PS2_STATE_SET_SCAN_CODE_SET    0x02
+#define PS2_STATE_SET_LEDS             0x03
 
 struct hid_keyboard {
-    chardev_t chardev;
+    chardev_t  chardev;
     spinlock_t lock;
-    uint8_t key_state[32]; // State of all keys to prevent spurious repeat
+    uint8_t    key_state[32]; // State of all keys to prevent spurious repeat
 
-    uint8_t state;  // The keyboard is a state machine
-    uint8_t rate;   // Typematic rate in command encoding
-    uint8_t delay;  // Typematic delay in command encoding (0.25sec * (delay + 1))
-    bool reporting; // Data reporting enabled; needed for STATUS command
+    uint8_t state;     // The keyboard is a state machine
+    uint8_t rate;      // Typematic rate in command encoding
+    uint8_t delay;     // Typematic delay in command encoding (0.25sec * (delay + 1))
+    bool    reporting; // Data reporting enabled; needed for STATUS command
 
     // Last key pressed, used for typematic input
     const uint8_t* lastkey;
-    size_t lastkey_size;
+    size_t         lastkey_size;
 
     // Used in IRQ handling for typematic (repeated) input
     rvtimer_t sample_timer;
-    uint64_t sample_timecmp;
+    uint64_t  sample_timecmp;
 
     ringbuf_t cmdbuf;
 };
 
+// clang-format off
 static const uint8_t hid_to_ps2_byte_map[] = {
     [HID_KEY_A] = 0x1C,
     [HID_KEY_B] = 0x32,
@@ -151,10 +152,11 @@ static const uint8_t hid_to_ps2_byte_map[] = {
     [HID_KEY_KP0] = 0x70,
     [HID_KEY_KPDOT] = 0x71,
 };
+// clang-format on
 
 static void ps2_keyboard_set_rate(hid_keyboard_t* kb, uint8_t rate)
 {
-    kb->rate = rate & 0x1f;
+    kb->rate  = rate & 0x1f;
     kb->delay = rate & 3;
 
     rvtimer_init(&kb->sample_timer, 1000);
@@ -165,7 +167,7 @@ static void ps2_keyboard_defaults(hid_keyboard_t* kb)
 {
     memset(&kb->key_state, 0, sizeof(kb->key_state));
     kb->state = PS2_STATE_CMD;
-    kb->rate = 20;
+    kb->rate  = 20;
     kb->delay = 1;
 }
 
@@ -232,7 +234,7 @@ static size_t ps2_keyboard_write(chardev_t* dev, const void* buf, size_t size)
 {
     hid_keyboard_t* kb = dev->data;
     spin_lock(&kb->lock);
-    for (size_t i=0; i<size; ++i) {
+    for (size_t i = 0; i < size; ++i) {
         uint8_t val = ((const uint8_t*)buf)[i];
 
         switch (kb->state) {
@@ -276,38 +278,10 @@ static void ps2_keyboard_remove(chardev_t* dev)
 }
 
 static const uint16_t ps2kb_rate2realrate[32] = {
-    [0]  = 300,
-    [1]  = 267,
-    [2]  = 240,
-    [3]  = 218,
-    [4]  = 200,
-    [5]  = 185,
-    [6]  = 171,
-    [7]  = 160,
-    [8]  = 150,
-    [9]  = 133,
-    [10] = 120,
-    [11] = 109,
-    [12] = 100,
-    [13] = 92,
-    [14] = 86,
-    [15] = 80,
-    [16] = 75,
-    [17] = 67,
-    [18] = 60,
-    [19] = 55,
-    [20] = 50,
-    [21] = 46,
-    [22] = 43,
-    [23] = 40,
-    [24] = 37,
-    [25] = 33,
-    [26] = 30,
-    [27] = 28,
-    [28] = 25,
-    [29] = 23,
-    [30] = 21,
-    [31] = 20,
+    [0] = 300, [1] = 267, [2] = 240,  [3] = 218,  [4] = 200,  [5] = 185, [6] = 171, [7] = 160,
+    [8] = 150, [9] = 133, [10] = 120, [11] = 109, [12] = 100, [13] = 92, [14] = 86, [15] = 80,
+    [16] = 75, [17] = 67, [18] = 60,  [19] = 55,  [20] = 50,  [21] = 46, [22] = 43, [23] = 40,
+    [24] = 37, [25] = 33, [26] = 30,  [27] = 28,  [28] = 25,  [29] = 23, [30] = 21, [31] = 20,
 };
 
 static void ps2_keyboard_update(chardev_t* dev)
@@ -328,11 +302,11 @@ PUBLIC hid_keyboard_t* hid_keyboard_init_auto_ps2(rvvm_machine_t* machine)
 {
     hid_keyboard_t* kb = safe_new_obj(hid_keyboard_t);
 
-    kb->chardev.read = ps2_keyboard_read;
-    kb->chardev.write = ps2_keyboard_write;
+    kb->chardev.read   = ps2_keyboard_read;
+    kb->chardev.write  = ps2_keyboard_write;
     kb->chardev.remove = ps2_keyboard_remove;
     kb->chardev.update = ps2_keyboard_update;
-    kb->chardev.data = kb;
+    kb->chardev.data   = kb;
 
     ringbuf_create(&kb->cmdbuf, 1024);
     ringbuf_put_u8(&kb->cmdbuf, 0xAA);
@@ -418,34 +392,36 @@ static void ps2_handle_keyboard(hid_keyboard_t* kb, hid_key_t key, bool pressed)
     // Ignore repeated press/release events
     bool key_state = !!(kb->key_state[key >> 3] & (1 << (key & 0x7)));
     if (key != HID_KEY_NONE && key_state != pressed && kb->reporting) {
-        size_t keycode_size = 0;
-        const uint8_t* keycode = hid_to_ps2_keycode(key, &keycode_size);
+        size_t         keycode_size = 0;
+        const uint8_t* keycode      = hid_to_ps2_keycode(key, &keycode_size);
 
         if (keycode) {
             // Send key event to the guest
             if (pressed) {
                 kb->key_state[key >> 3] |= (1 << (key & 0x7));
-                kb->lastkey = keycode;
-                kb->lastkey_size = keycode_size;
+                kb->lastkey              = keycode;
+                kb->lastkey_size         = keycode_size;
 
                 ringbuf_put(&kb->cmdbuf, keycode, keycode_size);
                 rvtimer_init(&kb->sample_timer, 1000);
                 kb->sample_timecmp = (kb->delay + 1) * 250;
             } else {
                 uint8_t keycmd[8];
-                uint8_t keylen = 0;
+                uint8_t keylen           = 0;
                 kb->key_state[key >> 3] &= ~(1 << (key & 0x7));
-                if (kb->lastkey == keycode) kb->lastkey_size = 0;
+                if (kb->lastkey == keycode) {
+                    kb->lastkey_size = 0;
+                }
 
                 if (keycode_size == 1) {
                     keycmd[0] = 0xF0;
                     keycmd[1] = keycode[0];
-                    keylen = 2;
+                    keylen    = 2;
                 } else if (keycode_size == 2 && keycode[0] == 0xE0) {
                     keycmd[0] = 0xE0;
                     keycmd[1] = 0xF0;
                     keycmd[2] = keycode[1];
-                    keylen = 3;
+                    keylen    = 3;
                 } else if (keycode_size == 4 && keycode[0] == 0xE0 && keycode[2] == 0xE0) {
                     // Print screen is special
                     keycmd[0] = 0xE0;
@@ -454,7 +430,7 @@ static void ps2_handle_keyboard(hid_keyboard_t* kb, hid_key_t key, bool pressed)
                     keycmd[3] = 0xE0;
                     keycmd[4] = 0xF0;
                     keycmd[5] = keycode[1];
-                    keylen = 6;
+                    keylen    = 6;
                 }
                 ringbuf_put(&kb->cmdbuf, keycmd, keylen);
             }
@@ -473,3 +449,5 @@ PUBLIC void hid_keyboard_release_ps2(hid_keyboard_t* kb, hid_key_t key)
 {
     ps2_handle_keyboard(kb, key, false);
 }
+
+POP_OPTIMIZATION_SIZE
