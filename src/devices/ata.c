@@ -9,13 +9,15 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
 #include "ata.h"
-#include "blk_io.h"
 #include "bit_ops.h"
+#include "blk_io.h"
+#include "fdtlib.h"
 #include "mem_ops.h"
 #include "spinlock.h"
-#include "utils.h"
 #include "threading.h"
-#include "fdtlib.h"
+#include "utils.h"
+
+PUSH_OPTIMIZATION_SIZE
 
 /*
  * Useful resources:
@@ -26,59 +28,59 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
 // Data registers
-#define ATA_REG_DATA    0x00 // PIO Data Register
-#define ATA_REG_ERROR   0x01 // Error Register (RO)
-#define ATA_REG_NSECT   0x02 // Number of sectors to read/write (0 means 256)
-#define ATA_REG_LBAL    0x03 // LBAlow
-#define ATA_REG_LBAM    0x04 // LBAmid
-#define ATA_REG_LBAH    0x05 // LBAhigh
-#define ATA_REG_DEVICE  0x06 // Device control register
-#define ATA_REG_STATUS  0x07 // Status (RO)
-#define ATA_REG_COMMAND 0x07 // Command (WO)
+#define ATA_REG_DATA             0x00 // PIO Data Register
+#define ATA_REG_ERROR            0x01 // Error Register (RO)
+#define ATA_REG_NSECT            0x02 // Number of sectors to read/write (0 means 256)
+#define ATA_REG_LBAL             0x03 // LBAlow
+#define ATA_REG_LBAM             0x04 // LBAmid
+#define ATA_REG_LBAH             0x05 // LBAhigh
+#define ATA_REG_DEVICE           0x06 // Device control register
+#define ATA_REG_STATUS           0x07 // Status (RO)
+#define ATA_REG_COMMAND          0x07 // Command (WO)
 
 // Control registers
-#define ATA_REG_ALT_STATUS 0x00 // Alternate Status (RO)
-#define ATA_REG_CONTROL    0x00 // Control (WO)
+#define ATA_REG_ALT_STATUS       0x00 // Alternate Status (RO)
+#define ATA_REG_CONTROL          0x00 // Control (WO)
 
 // Slave drive selection bit (Slave drives not supported!)
-#define ATA_DEVICE_SLAVE 0x10
+#define ATA_DEVICE_SLAVE         0x10
 
 // Error flags for ERR register
-#define ATA_ERROR_AMNF  0x01 // Address mark not found (Actually used to detect drive after soft reset)
-#define ATA_ERROR_ABRT  0x04 // Aborted command
-#define ATA_ERROR_UNC   0x40 // Uncorrectable data error
+#define ATA_ERROR_AMNF           0x01 // Address mark not found (Actually used to detect drive after soft reset)
+#define ATA_ERROR_ABRT           0x04 // Aborted command
+#define ATA_ERROR_UNC            0x40 // Uncorrectable data error
 
 // Flags for STATUS register
-#define ATA_STATUS_ERR  0x01 // Error occured
-#define ATA_STATUS_DRQ  0x08 // Data ready
-#define ATA_STATUS_SRV  0x10 // Overlapped Service Request
-#define ATA_STATUS_RDY  0x40 // Always set, except after an error
+#define ATA_STATUS_ERR           0x01 // Error occured
+#define ATA_STATUS_DRQ           0x08 // Data ready
+#define ATA_STATUS_SRV           0x10 // Overlapped Service Request
+#define ATA_STATUS_RDY           0x40 // Always set, except after an error
 
 // Commands
-#define ATA_CMD_NOP               0x00 // No operation
-#define ATA_CMD_READ_SECTORS      0x20 // Read Sectors (PIO)
-#define ATA_CMD_WRITE_SECTORS     0x30 // Write Sectors (PIO)
-#define ATA_CMD_INIT_DEV_PARAMS   0x91 // Set CHS addressing options, CHS not supported!
-#define ATA_CMD_READ_DMA          0xC8 // Prepare to read DMA (Actually just seek)
-#define ATA_CMD_WRITE_DMA         0xCA // Prepare to write DMA (Actually just seek)
-#define ATA_CMD_CHECK_POWER_MODE  0xE4 // Check power mode
-#define ATA_CMD_IDENTIFY          0xEC // Identify drive
+#define ATA_CMD_NOP              0x00 // No operation
+#define ATA_CMD_READ_SECTORS     0x20 // Read Sectors (PIO)
+#define ATA_CMD_WRITE_SECTORS    0x30 // Write Sectors (PIO)
+#define ATA_CMD_INIT_DEV_PARAMS  0x91 // Set CHS addressing options, CHS not supported!
+#define ATA_CMD_READ_DMA         0xC8 // Prepare to read DMA (Actually just seek)
+#define ATA_CMD_WRITE_DMA        0xCA // Prepare to write DMA (Actually just seek)
+#define ATA_CMD_CHECK_POWER_MODE 0xE4 // Check power mode
+#define ATA_CMD_IDENTIFY         0xEC // Identify drive
 
 // ATA BMDMA registers
-#define ATA_BMDMA_COMMAND 0x0
-#define ATA_BMDMA_STATUS  0x2
-#define ATA_BMDMA_PRDT    0x4
+#define ATA_BMDMA_COMMAND        0x0
+#define ATA_BMDMA_STATUS         0x2
+#define ATA_BMDMA_PRDT           0x4
 
 // ATA BMDMA flags
-#define ATA_BMDMA_COMMAND_DMA  0x01 // Enable DMA mode
-#define ATA_BMDMA_COMMAND_READ 0x08 // Perform DMA read
+#define ATA_BMDMA_COMMAND_DMA    0x01 // Enable DMA mode
+#define ATA_BMDMA_COMMAND_READ   0x08 // Perform DMA read
 
-#define ATA_BMDMA_STATUS_IRQ 0x04 // DMA mode exited
-#define ATA_BMDMA_STATUS_ERR 0x02 // DMA operation failed
-#define ATA_BMDMA_STATUS_DMA 0x01 // DMA mode enabled
+#define ATA_BMDMA_STATUS_IRQ     0x04 // DMA mode exited
+#define ATA_BMDMA_STATUS_ERR     0x02 // DMA operation failed
+#define ATA_BMDMA_STATUS_DMA     0x01 // DMA mode enabled
 
-#define ATA_SECTOR_SHIFT 9
-#define ATA_SECTOR_SIZE  512
+#define ATA_SECTOR_SHIFT         9
+#define ATA_SECTOR_SIZE          512
 
 SOURCE_OPTIMIZATION_SIZE
 
@@ -99,12 +101,12 @@ typedef struct {
     // ATA generic
     uint16_t bytes_to_rw;
     uint16_t sectcount;
-    uint8_t drive;
-    uint8_t error;
-    uint8_t status;
+    uint8_t  drive;
+    uint8_t  error;
+    uint8_t  status;
 
     uint8_t buf[ATA_SECTOR_SIZE];
-    char serial[16];
+    char    serial[16];
 } ata_dev_t;
 
 static inline bool ata_drive_valid(ata_dev_t* ata)
@@ -112,15 +114,16 @@ static inline bool ata_drive_valid(ata_dev_t* ata)
     return !(ata->drive & ATA_DEVICE_SLAVE) && ata->blk;
 }
 
-static inline void ata_send_interrupt(ata_dev_t* ata) {
+static inline void ata_send_interrupt(ata_dev_t* ata)
+{
     pci_send_irq(ata->pci_func, 0);
 }
 
 static inline void ata_report_error(ata_dev_t* ata, uint8_t error)
 {
     // No interrupt on error
-    ata->error |= error;
-    ata->status = ATA_STATUS_ERR;
+    ata->error  |= error;
+    ata->status  = ATA_STATUS_ERR;
 }
 
 static inline uint64_t ata_get_seek(ata_dev_t* ata)
@@ -143,12 +146,12 @@ static void ata_cmd_identify(ata_dev_t* ata)
     uint8_t* id_buf = ata->buf;
     memset(id_buf, 0, ATA_SECTOR_SIZE);
 
-    write_uint16_le(id_buf,       0x40);   // Non-removable, ATA device
-    write_uint16_le(id_buf + 2,   0xFFFF); // Logical cylinders
-    write_uint16_le(id_buf + 6,   0x10);   // Sectors per track
-    write_uint16_le(id_buf + 12,  0x3F);   // Logical heads
-    write_uint16_le(id_buf + 44,  0x4);    // Number of bytes available in READ/WRITE LONG cmds
-    write_uint16_le(id_buf + 98,  0x300);  // Capabilities - LBA supported, DMA supported
+    write_uint16_le(id_buf, 0x40);         // Non-removable, ATA device
+    write_uint16_le(id_buf + 2, 0xFFFF);   // Logical cylinders
+    write_uint16_le(id_buf + 6, 0x10);     // Sectors per track
+    write_uint16_le(id_buf + 12, 0x3F);    // Logical heads
+    write_uint16_le(id_buf + 44, 0x4);     // Number of bytes available in READ/WRITE LONG cmds
+    write_uint16_le(id_buf + 98, 0x300);   // Capabilities - LBA supported, DMA supported
     write_uint16_le(id_buf + 100, 0x4000); // Capabilities - bit 14 needs to be set as required by ATA/ATAPI-5 spec
     write_uint16_le(id_buf + 102, 0x400);  // PIO data transfer cycle timing mode
     write_uint16_le(id_buf + 106, 0x7);    // Fields 54-58, 64-70 and 88 are valid
@@ -176,8 +179,8 @@ static void ata_cmd_identify(ata_dev_t* ata)
     ata_copy_id_string(id_buf + 54, "SATA HDD", 40);
 
     ata->bytes_to_rw = ATA_SECTOR_SIZE;
-    ata->status = ATA_STATUS_RDY | ATA_STATUS_SRV | ATA_STATUS_DRQ;
-    ata->sectcount = 1;
+    ata->status      = ATA_STATUS_RDY | ATA_STATUS_SRV | ATA_STATUS_DRQ;
+    ata->sectcount   = 1;
     ata_send_interrupt(ata);
 }
 
@@ -185,7 +188,7 @@ static void ata_read_sector(ata_dev_t* ata)
 {
     if (blk_read(ata->blk, ata->buf, ATA_SECTOR_SIZE, BLKDEV_CUR)) {
         ata->bytes_to_rw = ATA_SECTOR_SIZE;
-        ata->status = ATA_STATUS_RDY | ATA_STATUS_DRQ;
+        ata->status      = ATA_STATUS_RDY | ATA_STATUS_DRQ;
         ata_send_interrupt(ata);
     } else {
         // IO failed
@@ -327,7 +330,7 @@ static bool ata_data_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint
                         // Finished writing a sector
                         if (--ata->sectcount) {
                             // Prepare for writing next sector
-                            ata->status = ATA_STATUS_RDY | ATA_STATUS_DRQ;
+                            ata->status      = ATA_STATUS_RDY | ATA_STATUS_DRQ;
                             ata->bytes_to_rw = ATA_SECTOR_SIZE;
                         }
 
@@ -345,21 +348,21 @@ static bool ata_data_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint
             }
             break;
         case ATA_REG_LBAL:
-            ata->lba = bit_replace(ata->lba, 0,  8, read_uint8(data));
+            ata->lba = bit_replace(ata->lba, 0, 8, read_uint8(data));
             break;
         case ATA_REG_LBAM:
-            ata->lba = bit_replace(ata->lba, 8,  8, read_uint8(data));
+            ata->lba = bit_replace(ata->lba, 8, 8, read_uint8(data));
             break;
         case ATA_REG_LBAH:
             ata->lba = bit_replace(ata->lba, 16, 8, read_uint8(data));
             break;
         case ATA_REG_DEVICE:
             ata->drive = read_uint8(data) & ATA_DEVICE_SLAVE;
-            ata->lba = bit_replace(ata->lba, 24, 4, read_uint8(data) & 0xF);
+            ata->lba   = bit_replace(ata->lba, 24, 4, read_uint8(data) & 0xF);
             break;
         case ATA_REG_COMMAND:
             if (ata_drive_valid(ata)) {
-                ata->error = 0;
+                ata->error  = 0;
                 ata->status = ATA_STATUS_RDY;
                 ata_handle_cmd(ata, read_uint8(data));
             }
@@ -400,11 +403,11 @@ static bool ata_ctl_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint8
                 if (bit_check(read_uint8(data), 2)) {
                     // Soft reset
                     ata->bytes_to_rw = 0;
-                    ata->lba = 1; // Sectors start from 1
-                    ata->sectcount = 1;
-                    ata->drive = 0;
-                    ata->error = ATA_ERROR_AMNF; // AMNF means OK here...
-                    ata->status = ATA_STATUS_RDY | ATA_STATUS_SRV;
+                    ata->lba         = 1; // Sectors start from 1
+                    ata->sectcount   = 1;
+                    ata->drive       = 0;
+                    ata->error       = ATA_ERROR_AMNF; // AMNF means OK here...
+                    ata->status      = ATA_STATUS_RDY | ATA_STATUS_SRV;
                 }
             }
             break;
@@ -426,7 +429,7 @@ static void ata_data_remove(rvvm_mmio_dev_t* dev)
 }
 
 static rvvm_mmio_type_t ata_data_dev_type = {
-    .name = "ata_data",
+    .name   = "ata_data",
     .remove = ata_data_remove,
 };
 
@@ -437,7 +440,7 @@ static void ata_remove_dummy(rvvm_mmio_dev_t* device)
 }
 
 static rvvm_mmio_type_t ata_ctl_dev_type = {
-    .name = "ata_ctl",
+    .name   = "ata_ctl",
     .remove = ata_remove_dummy,
 };
 
@@ -457,7 +460,8 @@ static ata_dev_t* ata_create(const char* image, bool rw)
     return ata;
 }
 
-PUBLIC bool ata_pio_init(rvvm_machine_t* machine, rvvm_addr_t ata_data_addr, rvvm_addr_t ata_ctl_addr, const char* image, bool rw)
+PUBLIC bool ata_pio_init(rvvm_machine_t* machine, rvvm_addr_t ata_data_addr, rvvm_addr_t ata_ctl_addr,
+                         const char* image, bool rw)
 {
     ata_dev_t* ata = ata_create(image, rw);
     if (!ata) {
@@ -465,12 +469,12 @@ PUBLIC bool ata_pio_init(rvvm_machine_t* machine, rvvm_addr_t ata_data_addr, rvv
     }
 
     rvvm_mmio_dev_t ata_data = {
-        .addr = ata_data_addr,
-        .size = 0x1000,
-        .data = ata,
-        .read = ata_data_read,
-        .write = ata_data_write,
-        .type = &ata_data_dev_type,
+        .addr        = ata_data_addr,
+        .size        = 0x1000,
+        .data        = ata,
+        .read        = ata_data_read,
+        .write       = ata_data_write,
+        .type        = &ata_data_dev_type,
         .min_op_size = 1,
         .max_op_size = 4,
     };
@@ -479,12 +483,12 @@ PUBLIC bool ata_pio_init(rvvm_machine_t* machine, rvvm_addr_t ata_data_addr, rvv
     }
 
     rvvm_mmio_dev_t ata_ctl = {
-        .addr = ata_ctl_addr,
-        .size = 0x1000,
-        .data = ata,
-        .read = ata_ctl_read,
-        .write = ata_ctl_write,
-        .type = &ata_ctl_dev_type,
+        .addr        = ata_ctl_addr,
+        .size        = 0x1000,
+        .data        = ata,
+        .read        = ata_ctl_read,
+        .write       = ata_ctl_write,
+        .type        = &ata_ctl_dev_type,
         .min_op_size = 1,
         .max_op_size = 1,
     };
@@ -494,14 +498,7 @@ PUBLIC bool ata_pio_init(rvvm_machine_t* machine, rvvm_addr_t ata_data_addr, rvv
 
 #ifdef USE_FDT
     uint32_t reg_cells[8] = {
-        ata_data_addr >> 32,
-        ata_data_addr,
-        0x0,
-        0x1000,
-        ata_ctl_addr >> 32,
-        ata_ctl_addr,
-        0x0,
-        0x1000,
+        ata_data_addr >> 32, ata_data_addr, 0x0, 0x1000, ata_ctl_addr >> 32, ata_ctl_addr, 0x0, 0x1000,
     };
 
     struct fdt_node* ata_fdt = fdt_node_create_reg("ata", ata_data_addr);
@@ -522,16 +519,16 @@ PUBLIC bool ata_pio_init_auto(rvvm_machine_t* machine, const char* image, bool r
 }
 
 static rvvm_mmio_type_t ata_bmdma_dev_type = {
-    .name = "ata_bmdma",
+    .name   = "ata_bmdma",
     .remove = ata_remove_dummy,
 };
 
 static void ata_process_prdt(ata_dev_t* ata)
 {
-    rvvm_addr_t prdt_addr = atomic_load_uint32(&ata->prdt_addr);
-    bool is_read = !!(atomic_load_uint32(&ata->bmdma_command) & ATA_BMDMA_COMMAND_READ);
-    size_t to_process = ata->sectcount << ATA_SECTOR_SHIFT;
-    size_t processed = 0;
+    rvvm_addr_t prdt_addr  = atomic_load_uint32(&ata->prdt_addr);
+    bool        is_read    = !!(atomic_load_uint32(&ata->bmdma_command) & ATA_BMDMA_COMMAND_READ);
+    size_t      to_process = ata->sectcount << ATA_SECTOR_SHIFT;
+    size_t      processed  = 0;
 
     // According to spec, maximum amount of PRDT entries is 64k
     // This should prevent malicious guests from hanging up the thread
@@ -542,7 +539,7 @@ static void ata_process_prdt(ata_dev_t* ata)
             // DMA error
             break;
         }
-        uint32_t prd_physaddr = read_uint32_le_m(prd);
+        uint32_t prd_physaddr  = read_uint32_le_m(prd);
         uint32_t prd_sectcount = read_uint32_le_m(prd + 4);
 
         uint32_t buf_size = prd_sectcount & 0xFFFF;
@@ -752,3 +749,5 @@ PUBLIC bool ata_init_auto(rvvm_machine_t* machine, const char* image, bool rw)
 {
     return ata_pci_init_auto(machine, image, rw) || ata_pio_init_auto(machine, image, rw);
 }
+
+POP_OPTIMIZATION_SIZE
