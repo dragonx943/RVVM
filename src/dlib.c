@@ -14,7 +14,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "dlib.h"
 #include "utils.h"
 
-SOURCE_OPTIMIZATION_SIZE
+PUSH_OPTIMIZATION_SIZE
 
 #if !defined(USE_NO_DLIB) && defined(HOST_TARGET_WIN32)
 
@@ -198,3 +198,5 @@ void* dlib_get_symbol(const char* lib_name, const char* symbol_name)
     return NULL;
 #endif
 }
+
+POP_OPTIMIZATION_SIZE
