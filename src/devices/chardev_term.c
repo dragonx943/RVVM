@@ -18,7 +18,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #include <stdio.h> // For fputs(), setvbuf()
 
-SOURCE_OPTIMIZATION_SIZE
+PUSH_OPTIMIZATION_SIZE
 
 #if defined(HOST_TARGET_POSIX) && !defined(HOST_TARGET_VMS)
 
@@ -460,3 +460,5 @@ PUBLIC chardev_t* chardev_pty_create(const char* path)
 #endif
     return NULL;
 }
+
+POP_OPTIMIZATION_SIZE
