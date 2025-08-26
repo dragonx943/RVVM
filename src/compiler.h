@@ -294,6 +294,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #undef func_opt_cold
 #if !defined(USE_NO_FUNC_OPT) && GCC_CHECK_VER(4, 5)
 #define func_opt_cold func_opt_size __attribute__((__cold__, __noclone__))
+#elif !defined(USE_NO_FUNC_OPT) && GNU_ATTRIBUTE(__cold__)
+#define func_opt_cold func_opt_size __attribute__((__cold__))
 #else
 #define func_opt_cold func_opt_size
 #endif
@@ -357,8 +359,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #undef PUSH_OPTIMIZATION_SIZE
 #undef POP_OPTIMIZATION_SIZE
 #if !defined(USE_NO_SOURCE_OPT) && CLANG_CHECK_VER(12, 0)
-#define PUSH_OPTIMIZATION_SIZE _Pragma("clang attribute push (__attribute__((__minsize__)), apply_to=function)")
-#define POP_OPTIMIZATION_SIZE  _Pragma("clang attribute pop")
+#define PUSH_OPTIMIZATION_SIZE                                                                                         \
+    _Pragma("clang attribute push (__attribute__((__cold__,__minsize__)), apply_to=function)")
+#define POP_OPTIMIZATION_SIZE _Pragma("clang attribute pop")
 #elif !defined(USE_NO_SOURCE_OPT) && GCC_CHECK_VER(4, 4)
 #define PUSH_OPTIMIZATION_SIZE _Pragma("GCC push_options") SOURCE_OPTIMIZATION_SIZE
 #define POP_OPTIMIZATION_SIZE  _Pragma("GCC pop_options")
