@@ -11,7 +11,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "mem_ops.h"
 #include "utils.h"
 
-SOURCE_OPTIMIZATION_SIZE
+PUSH_OPTIMIZATION_SIZE
 
 #ifdef USE_GUI
 
@@ -337,3 +337,5 @@ PUBLIC bool gui_window_init_auto(rvvm_machine_t* machine, uint32_t width, uint32
 }
 
 #endif
+
+POP_OPTIMIZATION_SIZE
