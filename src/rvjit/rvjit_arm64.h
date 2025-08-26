@@ -1548,6 +1548,8 @@ static inline void rvjit_host_div_rem(rvjit_block_t* block, uint32_t insn, uint3
     branch_t exit_ovf  = 0;
     branch_t exit_zero = 0;
 
+    rvjit_free_hreg(block, rvjit_claim_hreg(block));
+
     if (sign) {
         // Signed division / remainder
         uint64_t ovf = wide ? 0x8000000000000000ULL : 0x80000000U;
