@@ -12,72 +12,72 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #include "eth-oc.h"
 #include "fdtlib.h"
+#include "mem_ops.h"
 #include "spinlock.h"
 #include "utils.h"
-#include "mem_ops.h"
 
-SOURCE_OPTIMIZATION_SIZE
+PUSH_OPTIMIZATION_SIZE
 
 // Device registers
-#define ETHOC_MODER         0x00 // Mode
-#define ETHOC_INT_SRC       0x04 // Interrupt Source
-#define ETHOC_INT_MASK      0x08 // Interrupt Mask
-#define ETHOC_IPGT          0x0C // Inter-packet Gap
-#define ETHOC_IPGR1         0x10
-#define ETHOC_IPGR2         0x14
-#define ETHOC_PACKETLEN     0x18 // Min/Max Packet Length
-#define ETHOC_COLLCONF      0x1C // Collision & Retry Configuration
-#define ETHOC_TX_BD_NUM     0x20 // Number of TX BD (Max 0x80)
-#define ETHOC_CTRLMODER     0x24 // Control Module Mode
-#define ETHOC_MIIMODER      0x28 // MII Mode
-#define ETHOC_MIICOMMAND    0x2C // MII Command
-#define ETHOC_MIIADDRESS    0x30 // MII Address
-#define ETHOC_MIITX_DATA    0x34 // MII TX Data
-#define ETHOC_MIIRX_DATA    0x38 // MII RX Data
-#define ETHOC_MIISTATUS     0x3C // MII Status
-#define ETHOC_MAC_ADDR0     0x40 // Four LSB bytes of MAC Address
-#define ETHOC_MAC_ADDR1     0x44 // Two MSB bytes of MAC Address
-#define ETHOC_ETH_HASH0_ADR 0x48
-#define ETHOC_ETH_HASH1_ADR 0x4C
-#define ETHOC_TXCTRL        0x50
+#define ETHOC_MODER                0x00 // Mode
+#define ETHOC_INT_SRC              0x04 // Interrupt Source
+#define ETHOC_INT_MASK             0x08 // Interrupt Mask
+#define ETHOC_IPGT                 0x0C // Inter-packet Gap
+#define ETHOC_IPGR1                0x10
+#define ETHOC_IPGR2                0x14
+#define ETHOC_PACKETLEN            0x18 // Min/Max Packet Length
+#define ETHOC_COLLCONF             0x1C // Collision & Retry Configuration
+#define ETHOC_TX_BD_NUM            0x20 // Number of TX BD (Max 0x80)
+#define ETHOC_CTRLMODER            0x24 // Control Module Mode
+#define ETHOC_MIIMODER             0x28 // MII Mode
+#define ETHOC_MIICOMMAND           0x2C // MII Command
+#define ETHOC_MIIADDRESS           0x30 // MII Address
+#define ETHOC_MIITX_DATA           0x34 // MII TX Data
+#define ETHOC_MIIRX_DATA           0x38 // MII RX Data
+#define ETHOC_MIISTATUS            0x3C // MII Status
+#define ETHOC_MAC_ADDR0            0x40 // Four LSB bytes of MAC Address
+#define ETHOC_MAC_ADDR1            0x44 // Two MSB bytes of MAC Address
+#define ETHOC_ETH_HASH0_ADR        0x48
+#define ETHOC_ETH_HASH1_ADR        0x4C
+#define ETHOC_TXCTRL               0x50
 
 // MODER fields
-#define ETHOC_MODER_DMAEN    (1 << 17) // DMA Enable
-#define ETHOC_MODER_RECSMALL (1 << 16) // Receive Small Packets (<MINFL)
-#define ETHOC_MODER_PAD      (1 << 15) // Padding enabled
-#define ETHOC_MODER_HUGEN    (1 << 14) // Huge Packets Enable (<=64kB)
-#define ETHOC_MODER_CRCEN    (1 << 13) // TX appends CRC to every frame
-#define ETHOC_MODER_DLYCRCEN (1 << 12) // CRC calculation starts 4 bytes after the SFD
-#define ETHOC_MODER_RST      (1 << 11) // Reset MAC
-#define ETHOC_MODER_FULLD    (1 << 10) // Full Duplex
-#define ETHOC_MODER_EXDFREN  (1 << 9)  // MAC waits for the carrier indefinitely
-#define ETHOC_MODER_NOBCKOF  (1 << 8)  // No Backoff
-#define ETHOC_MODER_LOOPBCK  (1 << 7)  // Loopback (TX is looped back to the RX)
-#define ETHOC_MODER_IFG      (1 << 6)  // Interframe Gap
-#define ETHOC_MODER_PRO      (1 << 5)  // Promiscuous (Receive any fram)
-#define ETHOC_MODER_IAM      (1 << 4)  // IAM (Use hashtable to check address)
-#define ETHOC_MODER_BRO      (1 << 3)  // Reject all broadcast frames
-#define ETHOC_MODER_NOPRE    (1 << 2)  // No Preamble
-#define ETHOC_MODER_TXEN     (1 << 1)  // Transmit Enable
-#define ETHOC_MODER_RXEN     (1 << 0)  // Receive Enable
+#define ETHOC_MODER_DMAEN          (1 << 17) // DMA Enable
+#define ETHOC_MODER_RECSMALL       (1 << 16) // Receive Small Packets (<MINFL)
+#define ETHOC_MODER_PAD            (1 << 15) // Padding enabled
+#define ETHOC_MODER_HUGEN          (1 << 14) // Huge Packets Enable (<=64kB)
+#define ETHOC_MODER_CRCEN          (1 << 13) // TX appends CRC to every frame
+#define ETHOC_MODER_DLYCRCEN       (1 << 12) // CRC calculation starts 4 bytes after the SFD
+#define ETHOC_MODER_RST            (1 << 11) // Reset MAC
+#define ETHOC_MODER_FULLD          (1 << 10) // Full Duplex
+#define ETHOC_MODER_EXDFREN        (1 << 9)  // MAC waits for the carrier indefinitely
+#define ETHOC_MODER_NOBCKOF        (1 << 8)  // No Backoff
+#define ETHOC_MODER_LOOPBCK        (1 << 7)  // Loopback (TX is looped back to the RX)
+#define ETHOC_MODER_IFG            (1 << 6)  // Interframe Gap
+#define ETHOC_MODER_PRO            (1 << 5)  // Promiscuous (Receive any fram)
+#define ETHOC_MODER_IAM            (1 << 4)  // IAM (Use hashtable to check address)
+#define ETHOC_MODER_BRO            (1 << 3)  // Reject all broadcast frames
+#define ETHOC_MODER_NOPRE          (1 << 2)  // No Preamble
+#define ETHOC_MODER_TXEN           (1 << 1)  // Transmit Enable
+#define ETHOC_MODER_RXEN           (1 << 0)  // Receive Enable
 
 // Interrupt numbers
-#define ETHOC_INT_RXC  0x6 // Control frame received
-#define ETHOC_INT_TXC  0x5 // control frame transmitted
-#define ETHOC_INT_BUSY 0x4 // Buffer received and discarded
-#define ETHOC_INT_RXE  0x3 // Receive error
-#define ETHOC_INT_RXB  0x2 // Frame received
-#define ETHOC_INT_TXE  0x1 // Transmit error
-#define ETHOC_INT_TXB  0x0 // Frame transmitted
+#define ETHOC_INT_RXC              0x6 // Control frame received
+#define ETHOC_INT_TXC              0x5 // control frame transmitted
+#define ETHOC_INT_BUSY             0x4 // Buffer received and discarded
+#define ETHOC_INT_RXE              0x3 // Receive error
+#define ETHOC_INT_RXB              0x2 // Frame received
+#define ETHOC_INT_TXE              0x1 // Transmit error
+#define ETHOC_INT_TXB              0x0 // Frame transmitted
 
 // CTRLMODER fields
-#define ETHOC_CTRLMODER_TXFLOW  (1 << 2) // Transmit Flow Control (Allow PAUSE)
-#define ETHOC_CTRLMODER_RXFLOW  (1 << 1) // Receive Flow Control (Block on PAUSE)
-#define ETHOC_CTRLMODER_PASSALL (1 << 0) // Pass all receive frames
+#define ETHOC_CTRLMODER_TXFLOW     (1 << 2) // Transmit Flow Control (Allow PAUSE)
+#define ETHOC_CTRLMODER_RXFLOW     (1 << 1) // Receive Flow Control (Block on PAUSE)
+#define ETHOC_CTRLMODER_PASSALL    (1 << 0) // Pass all receive frames
 
 // MIIMODER fields
-#define ETHOC_MIIMODER_MIIMRST  (1 << 10) // Reset MIIM Module
-#define ETHOC_MIIMODER_MIINOPRE (1 << 8)  // No Preamble
+#define ETHOC_MIIMODER_MIIMRST     (1 << 10) // Reset MIIM Module
+#define ETHOC_MIIMODER_MIINOPRE    (1 << 8)  // No Preamble
 // CLKDIV in the lower 8 bits
 
 // MIICOMMAND fields
@@ -86,49 +86,49 @@ SOURCE_OPTIMIZATION_SIZE
 #define ETHOC_MIICOMMAND_SCANSTAT  (1 << 0) // Scan status
 
 // MIISTATUS fields
-#define ETHOC_MIISTATUS_NVALID   (1 << 2)
-#define ETHOC_MIISTATUS_BUSY     (1 << 1)
-#define ETHOC_MIISTATUS_LINKFAIL (1 << 0)
+#define ETHOC_MIISTATUS_NVALID     (1 << 2)
+#define ETHOC_MIISTATUS_BUSY       (1 << 1)
+#define ETHOC_MIISTATUS_LINKFAIL   (1 << 0)
 
 // TXCTRL field
-#define ETHOC_TXCTRL_TXPAUSERQ (1 << 16)
+#define ETHOC_TXCTRL_TXPAUSERQ     (1 << 16)
 
 // Generic BD fields
-#define ETHOC_BD_IRQ   (1 << 14) // Send IRQ after BD operation
-#define ETHOC_BD_WRAP  (1 << 13) // This is the last BD in table
+#define ETHOC_BD_IRQ               (1 << 14) // Send IRQ after BD operation
+#define ETHOC_BD_WRAP              (1 << 13) // This is the last BD in table
 
 // Transmit BD fields
-#define ETHOC_TXBD_RD  (1 << 15) // TX BD Ready
-#define ETHOC_TXBD_PAD (1 << 12) // Pad short packets
-#define ETHOC_TXBD_CRC (1 << 11) // Add CRC at the end of packet
-#define ETHOC_TXBD_UR  (1 << 8)
-#define ETHOC_TXBD_RL  (1 << 3)
-#define ETHOC_TXBD_LC  (1 << 2)
-#define ETHOC_TXBD_DF  (1 << 1)
-#define ETHOC_TXBD_CS  (1 << 0)
+#define ETHOC_TXBD_RD              (1 << 15) // TX BD Ready
+#define ETHOC_TXBD_PAD             (1 << 12) // Pad short packets
+#define ETHOC_TXBD_CRC             (1 << 11) // Add CRC at the end of packet
+#define ETHOC_TXBD_UR              (1 << 8)
+#define ETHOC_TXBD_RL              (1 << 3)
+#define ETHOC_TXBD_LC              (1 << 2)
+#define ETHOC_TXBD_DF              (1 << 1)
+#define ETHOC_TXBD_CS              (1 << 0)
 
 // Receive BD fields
-#define ETHOC_RXBD_E   (1 << 15) // RX BD Empty
-#define ETHOC_RXBD_M   (1 << 7)
-#define ETHOC_RXBD_OR  (1 << 6)  // Memory Overrun
-#define ETHOC_RXBD_IS  (1 << 5)
-#define ETHOC_RXBD_DN  (1 << 4)
-#define ETHOC_RXBD_TL  (1 << 3)
-#define ETHOC_RXBD_SF  (1 << 2)
-#define ETHOC_RXBD_CRC (1 << 1)
-#define ETHOC_RXBD_LC  (1 << 0)
+#define ETHOC_RXBD_E               (1 << 15) // RX BD Empty
+#define ETHOC_RXBD_M               (1 << 7)
+#define ETHOC_RXBD_OR              (1 << 6) // Memory Overrun
+#define ETHOC_RXBD_IS              (1 << 5)
+#define ETHOC_RXBD_DN              (1 << 4)
+#define ETHOC_RXBD_TL              (1 << 3)
+#define ETHOC_RXBD_SF              (1 << 2)
+#define ETHOC_RXBD_CRC             (1 << 1)
+#define ETHOC_RXBD_LC              (1 << 0)
 
 // Max BD count
-#define ETHOC_BD_COUNT  0x80
-#define ETHOC_BD_BUFSIZ 0x400
+#define ETHOC_BD_COUNT             0x80
+#define ETHOC_BD_BUFSIZ            0x400
 
 // BD register start address
-#define ETHOC_BD_ADDR   0x400
+#define ETHOC_BD_ADDR              0x400
 
-#define MII_REG_BMCR    0
-#define MII_REG_BMSR    1
-#define MII_REG_PHYIDR1 2
-#define MII_REG_PHYIDR2 3
+#define MII_REG_BMCR               0
+#define MII_REG_BMSR               1
+#define MII_REG_PHYIDR1            2
+#define MII_REG_PHYIDR2            3
 
 // Buffer Descriptor
 typedef struct {
@@ -143,8 +143,8 @@ typedef struct {
     spinlock_t rx_lock;
 
     rvvm_machine_t* machine;
-    rvvm_intc_t* intc;
-    rvvm_irq_t irq;
+    rvvm_intc_t*    intc;
+    rvvm_irq_t      irq;
 
     uint32_t cur_txbd;
     uint32_t cur_rxbd;
@@ -165,7 +165,7 @@ typedef struct {
     // Judging from Linux driver source, they're used with multicast filtering
     uint32_t hash[2];
     uint32_t txctrl;
-    uint8_t macaddr[6];
+    uint8_t  macaddr[6];
 } ethoc_dev_t;
 
 static void ethoc_interrupt(ethoc_dev_t* eth, uint8_t int_num)
@@ -188,13 +188,15 @@ static void ethoc_process_tx(ethoc_dev_t* eth)
         }
 
         size_t size = (txbd->data >> 16) & 0xFFFF;
-        void* dma = rvvm_get_dma_ptr(eth->machine, txbd->ptr, size);
+        void*  dma  = rvvm_get_dma_ptr(eth->machine, txbd->ptr, size);
         if (dma) {
             int ret = tap_send(eth->tap, dma, size);
             if (ret > 0) {
                 // Success
                 txbd->data &= ~ETHOC_TXBD_RD;
-                if (txbd->data & ETHOC_BD_IRQ) ethoc_interrupt(eth, ETHOC_INT_TXB);
+                if (txbd->data & ETHOC_BD_IRQ) {
+                    ethoc_interrupt(eth, ETHOC_INT_TXB);
+                }
             } else {
                 // Transmit error
                 txbd->data = (txbd->data & ~ETHOC_TXBD_RD) | ETHOC_TXBD_RL;
@@ -219,11 +221,13 @@ static bool ethoc_feed_rx(void* net_dev, const void* data, size_t size)
     ethoc_dev_t* eth = net_dev;
 
     // Receiver disabled
-    if (!(atomic_load_uint32(&eth->moder) & ETHOC_MODER_RXEN)) return false;
+    if (!(atomic_load_uint32(&eth->moder) & ETHOC_MODER_RXEN)) {
+        return false;
+    }
 
     spin_lock(&eth->rx_lock);
-    ethoc_bd_t* rxbd = &eth->bdbuf[eth->cur_rxbd];
-    uint32_t flags = atomic_load_uint32(&rxbd->data);
+    ethoc_bd_t* rxbd  = &eth->bdbuf[eth->cur_rxbd];
+    uint32_t    flags = atomic_load_uint32(&rxbd->data);
     if (!(flags & ETHOC_RXBD_E)) {
         // Ring overrun
         spin_unlock(&eth->rx_lock);
@@ -231,9 +235,9 @@ static bool ethoc_feed_rx(void* net_dev, const void* data, size_t size)
     }
     flags &= ~ETHOC_RXBD_E;
 
-    size_t f_size = size + 4;
+    size_t   f_size   = size + 4;
     uint32_t size_lim = atomic_load_uint32(&eth->packetlen);
-    uint8_t* dma = rvvm_get_dma_ptr(eth->machine, atomic_load_uint32(&rxbd->ptr), f_size);
+    uint8_t* dma      = rvvm_get_dma_ptr(eth->machine, atomic_load_uint32(&rxbd->ptr), f_size);
     if (dma == NULL || f_size > (size_lim & 0xFFFF)) {
         // DMA Error
         atomic_store_uint32(&rxbd->data, flags | ETHOC_RXBD_OR);
@@ -262,7 +266,7 @@ static bool ethoc_feed_rx(void* net_dev, const void* data, size_t size)
 static bool ethoc_data_mmio_read(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint8_t size)
 {
     ethoc_dev_t* eth = dev->data;
-    uint32_t val = 0;
+    uint32_t     val = 0;
     UNUSED(size);
 
     spin_lock(&eth->lock);
@@ -322,8 +326,8 @@ static bool ethoc_data_mmio_read(rvvm_mmio_dev_t* dev, void* data, size_t offset
             break;
         default:
             if (offset >= ETHOC_BD_ADDR && offset < ETHOC_BD_ADDR + ETHOC_BD_BUFSIZ) {
-                size_t bdid = (offset - ETHOC_BD_ADDR) >> 3;
-                ethoc_bd_t* bd = &eth->bdbuf[bdid];
+                size_t      bdid = (offset - ETHOC_BD_ADDR) >> 3;
+                ethoc_bd_t* bd   = &eth->bdbuf[bdid];
                 if (offset & 4) {
                     val = atomic_load_uint32_relax(&bd->ptr);
                 } else {
@@ -341,33 +345,33 @@ static bool ethoc_data_mmio_read(rvvm_mmio_dev_t* dev, void* data, size_t offset
 static bool ethoc_data_mmio_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint8_t size)
 {
     ethoc_dev_t* eth = dev->data;
-    uint32_t val = read_uint32_le(data);
+    uint32_t     val = read_uint32_le(data);
     UNUSED(size);
 
     spin_lock(&eth->lock);
     switch (offset) {
         case ETHOC_MODER: {
-                if (eth->tx_bd_num == 0) {
-                    val &= ~ETHOC_MODER_TXEN;
-                }
-                if (eth->tx_bd_num >= ETHOC_BD_COUNT) {
-                    val &= ~ETHOC_MODER_RXEN;
-                }
-                uint32_t prev_moder = atomic_swap_uint32(&eth->moder, val);
-                if ((prev_moder ^ val) & ETHOC_MODER_RXEN) {
-                    // Toggled RX
-                    spin_lock(&eth->rx_lock);
-                    eth->cur_rxbd = eth->tx_bd_num;
-                    spin_unlock(&eth->rx_lock);
-                }
-
-                if ((prev_moder ^ val) & ETHOC_MODER_TXEN) {
-                    // Toggled TX
-                    eth->cur_txbd = 0;
-                    ethoc_process_tx(eth);
-                }
-                break;
+            if (eth->tx_bd_num == 0) {
+                val &= ~ETHOC_MODER_TXEN;
             }
+            if (eth->tx_bd_num >= ETHOC_BD_COUNT) {
+                val &= ~ETHOC_MODER_RXEN;
+            }
+            uint32_t prev_moder = atomic_swap_uint32(&eth->moder, val);
+            if ((prev_moder ^ val) & ETHOC_MODER_RXEN) {
+                // Toggled RX
+                spin_lock(&eth->rx_lock);
+                eth->cur_rxbd = eth->tx_bd_num;
+                spin_unlock(&eth->rx_lock);
+            }
+
+            if ((prev_moder ^ val) & ETHOC_MODER_TXEN) {
+                // Toggled TX
+                eth->cur_txbd = 0;
+                ethoc_process_tx(eth);
+            }
+            break;
+        }
         case ETHOC_INT_SRC:
             // Bits are cleared by writing 1 to them
             atomic_and_uint32(&eth->int_src, ~val);
@@ -396,8 +400,8 @@ static bool ethoc_data_mmio_write(rvvm_mmio_dev_t* dev, void* data, size_t offse
             break;
         case ETHOC_MIICOMMAND:
             if (val & ETHOC_MIICOMMAND_RSTAT) {
-                if ((eth->miiaddress & 0x1f) == 0                     // PHY id 0
-                && ((eth->miiaddress >> 8) & 0x1f) == MII_REG_BMSR) { // Link is up
+                if ((eth->miiaddress & 0x1f) == 0                         // PHY id 0
+                    && ((eth->miiaddress >> 8) & 0x1f) == MII_REG_BMSR) { // Link is up
                     eth->miirx_data = (1 << 2);
                 } else {
                     eth->miirx_data = 0;
@@ -432,8 +436,8 @@ static bool ethoc_data_mmio_write(rvvm_mmio_dev_t* dev, void* data, size_t offse
             break;
         default:
             if (offset >= ETHOC_BD_ADDR && offset < ETHOC_BD_ADDR + ETHOC_BD_BUFSIZ) {
-                size_t bdid = (offset - ETHOC_BD_ADDR) >> 3;
-                ethoc_bd_t* bd = &eth->bdbuf[bdid];
+                size_t      bdid = (offset - ETHOC_BD_ADDR) >> 3;
+                ethoc_bd_t* bd   = &eth->bdbuf[bdid];
                 if (offset & 4) {
                     atomic_store_uint32_relax(&bd->ptr, val);
                 } else {
@@ -457,22 +461,22 @@ static void ethoc_reset(rvvm_mmio_dev_t* dev)
     ethoc_dev_t* eth = dev->data;
     spin_lock(&eth->lock);
     memset(&eth->bdbuf, 0, sizeof(eth->bdbuf));
-    eth->moder = ETHOC_MODER_PAD | ETHOC_MODER_CRCEN;
-    eth->int_src = 0;
-    eth->int_mask = 0;
-    eth->packetlen = 0x3C0600;
-    eth->collconf = 0xf003f;
-    eth->tx_bd_num = 0x40;
-    eth->ctrlmoder = 0;
-    eth->miimoder = 0x64;
+    eth->moder      = ETHOC_MODER_PAD | ETHOC_MODER_CRCEN;
+    eth->int_src    = 0;
+    eth->int_mask   = 0;
+    eth->packetlen  = 0x3C0600;
+    eth->collconf   = 0xf003f;
+    eth->tx_bd_num  = 0x40;
+    eth->ctrlmoder  = 0;
+    eth->miimoder   = 0x64;
     eth->miiaddress = 0;
     eth->miitx_data = 0;
     eth->miirx_data = 0;
-    eth->miistatus = 0;
+    eth->miistatus  = 0;
     memset(eth->macaddr, 0, sizeof(eth->macaddr));
     eth->hash[0] = 0;
     eth->hash[1] = 0;
-    eth->txctrl = 0;
+    eth->txctrl  = 0;
     spin_unlock(&eth->lock);
 }
 
@@ -484,39 +488,41 @@ static void ethoc_remove(rvvm_mmio_dev_t* dev)
 }
 
 static rvvm_mmio_type_t ethoc_dev_type = {
-    .name = "ethernet_oc",
+    .name   = "ethernet_oc",
     .remove = ethoc_remove,
-    .reset = ethoc_reset,
+    .reset  = ethoc_reset,
 };
 
-PUBLIC rvvm_mmio_dev_t* ethoc_init(rvvm_machine_t* machine, tap_dev_t* tap,
-                                   rvvm_addr_t base_addr, rvvm_intc_t* intc, rvvm_irq_t irq)
+PUBLIC rvvm_mmio_dev_t* ethoc_init(rvvm_machine_t* machine, tap_dev_t* tap, rvvm_addr_t base_addr, rvvm_intc_t* intc,
+                                   rvvm_irq_t irq)
 {
-    ethoc_dev_t* eth = safe_new_obj(ethoc_dev_t);
+    ethoc_dev_t*  eth = safe_new_obj(ethoc_dev_t);
     tap_net_dev_t nic = {
         .net_dev = eth,
         .feed_rx = ethoc_feed_rx,
     };
 
     eth->machine = machine;
-    eth->intc = intc;
-    eth->irq = irq;
+    eth->intc    = intc;
+    eth->irq     = irq;
 
     eth->tap = tap;
     tap_attach(tap, &nic);
 
     rvvm_mmio_dev_t ethoc_dev = {
-        .addr = base_addr,
-        .size = 0x800,
-        .data = eth,
-        .type = &ethoc_dev_type,
-        .read = ethoc_data_mmio_read,
-        .write = ethoc_data_mmio_write,
+        .addr        = base_addr,
+        .size        = 0x800,
+        .data        = eth,
+        .type        = &ethoc_dev_type,
+        .read        = ethoc_data_mmio_read,
+        .write       = ethoc_data_mmio_write,
         .min_op_size = 4,
         .max_op_size = 4,
     };
     rvvm_mmio_dev_t* mmio = rvvm_attach_mmio(machine, &ethoc_dev);
-    if (mmio == NULL) return mmio;
+    if (mmio == NULL) {
+        return mmio;
+    }
 #ifdef USE_FDT
     struct fdt_node* ethoc = fdt_node_create_reg("ethernet", base_addr);
     fdt_node_add_prop_reg(ethoc, "reg", base_addr, 0x800);
@@ -535,8 +541,10 @@ PUBLIC rvvm_mmio_dev_t* ethoc_init_auto(rvvm_machine_t* machine)
         return NULL;
     }
     rvvm_intc_t* intc = rvvm_get_intc(machine);
-    rvvm_addr_t addr = rvvm_mmio_zone_auto(machine, ETH_OC_ADDR_DEFAULT, 0x800);
+    rvvm_addr_t  addr = rvvm_mmio_zone_auto(machine, ETH_OC_ADDR_DEFAULT, 0x800);
     return ethoc_init(machine, tap, addr, intc, rvvm_alloc_irq(intc));
 }
 
 #endif
+
+POP_OPTIMIZATION_SIZE
