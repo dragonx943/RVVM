@@ -73,10 +73,12 @@ typedef socklen_t net_addrlen_t;
 
 #endif
 
-// Internal headers come after system headers because of safe_free() and winsock
+// Internal headers come after system headers because of winsock
 #include "mem_ops.h"
 #include "networking.h"
 #include "utils.h"
+
+PUSH_OPTIMIZATION_SIZE
 
 #if !(defined(EPOLL_NET_IMPL) || defined(KQUEUE_NET_IMPL))
 // Use select() for net_poll when neither epoll/kqueue are supported
@@ -1425,3 +1427,5 @@ void net_poll_close(net_poll_t* poll)
         safe_free(poll);
     }
 }
+
+POP_OPTIMIZATION_SIZE
