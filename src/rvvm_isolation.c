@@ -12,6 +12,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #include "compiler.h"
 #include "rvvm_isolation.h"
+#include "utils.h"
+
+PUSH_OPTIMIZATION_SIZE
 
 // Do not isolate under sanitizers to prevent breakage
 #if !defined(SANITIZERS_ENABLED)
@@ -59,11 +62,6 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #endif
 
 #endif
-
-// Internal headers come after system headers because of safe_free()
-#include "utils.h"
-
-SOURCE_OPTIMIZATION_SIZE
 
 #if defined(ISOLATION_DROP_ROOT_IMPL)
 
@@ -957,3 +955,5 @@ PUBLIC void rvvm_restrict_process(void)
 {
     DO_ONCE(restrict_process_once());
 }
+
+POP_OPTIMIZATION_SIZE
