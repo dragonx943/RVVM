@@ -17,11 +17,11 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "riscv_hart.h"
 #include "riscv_mmu.h"
 
+PUSH_OPTIMIZATION_SIZE
+
 #ifdef USE_GDBSTUB
 
 #define GDB_MAX_PKTSIZE 1024
-
-SOURCE_OPTIMIZATION_SIZE
 
 typedef struct {
     gdb_server_t* server;
@@ -660,3 +660,5 @@ bool gdbstub_halt(gdb_server_t* server)
 }
 
 #endif
+
+POP_OPTIMIZATION_SIZE
