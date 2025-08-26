@@ -12,10 +12,10 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "compiler.h"
 #include "stacktrace.h"
 
-SOURCE_OPTIMIZATION_SIZE
+PUSH_OPTIMIZATION_SIZE
 
 // Do not set signal handlers under sanitizers to prevent breakage
-#if !defined(USE_NO_STACKTRACE) && (defined(USE_NO_DLIB) || defined(__SANITIZE_ADDRESS__))
+#if !defined(USE_NO_STACKTRACE) && (defined(USE_NO_DLIB) || defined(SANITIZERS_ENABLED))
 #define USE_NO_STACKTRACE 1
 #endif
 
@@ -126,8 +126,8 @@ static void bt_signal_handler(int sig)
             rvvm_warn("Fatal signal %d", sig);
             break;
     }
-    stacktrace_print();
     rvvm_warn("Halting - Please attach a debugger");
+    stacktrace_print();
     while (true) {
         sleep_ms(1000);
     }
@@ -180,6 +180,8 @@ static LONG CALLBACK bt_seh_handler(EXCEPTION_POINTERS* ptrs)
     }
     switch (ptrs->ExceptionRecord->ExceptionCode) {
         case EXCEPTION_STACK_OVERFLOW:
+            rvvm_warn("Fatal signal: Stack overflow!");
+            break;
         case EXCEPTION_ACCESS_VIOLATION:
         case EXCEPTION_ARRAY_BOUNDS_EXCEEDED:
             rvvm_warn("Fatal signal: Segmentation fault!");
@@ -197,8 +199,8 @@ static LONG CALLBACK bt_seh_handler(EXCEPTION_POINTERS* ptrs)
             rvvm_warn("Fatal signal: Arithmetic exception!");
             break;
     }
+    rvvm_warn("Halting - Please attach a debugger");
     stacktrace_print();
-    rvvm_warn("Halting at PC %p - Please attach a debugger", ptrs->ExceptionRecord->ExceptionAddress);
     while (true) {
         sleep_ms(1000);
     }
@@ -275,3 +277,5 @@ void stacktrace_init(void) {}
 void stacktrace_print(void) {}
 
 #endif
+
+POP_OPTIMIZATION_SIZE
