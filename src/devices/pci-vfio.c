@@ -17,6 +17,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "threading.h"
 #include "vector.h"
 
+PUSH_OPTIMIZATION_SIZE
+
 // Check that <linux/vfio.h> include is available
 #if defined(__linux__) && defined(USE_VFIO) && !CHECK_INCLUDE(linux/vfio.h, 0)
 #warning Disabling USE_VFIO as <linux/vfio.h> is unavailable
@@ -45,8 +47,6 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef MAP_ANON
 #define MAP_ANON MAP_ANONYMOUS
 #endif
-
-SOURCE_OPTIMIZATION_SIZE
 
 /*
  * Helper code to unbind a device from host driver and bind to vfio_pci driver
@@ -537,3 +537,5 @@ PUBLIC bool pci_vfio_init_auto(rvvm_machine_t* machine, const char* pci_id)
 }
 
 #endif
+
+POP_OPTIMIZATION_SIZE
