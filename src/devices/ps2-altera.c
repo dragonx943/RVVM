@@ -9,30 +9,30 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
 #include "ps2-altera.h"
-#include "mem_ops.h"
 #include "atomics.h"
-#include "utils.h"
 #include "fdtlib.h"
+#include "mem_ops.h"
+#include "utils.h"
 
-SOURCE_OPTIMIZATION_SIZE
+PUSH_OPTIMIZATION_SIZE
 
-#define PS2_ALTERA_REG_DATA 0x0
-#define PS2_ALTERA_REG_CTRL 0x4
+#define PS2_ALTERA_REG_DATA    0x00
+#define PS2_ALTERA_REG_CTRL    0x04
 
-#define PS2_ALTERA_CTRL_RE 0x1   // IRQ Enabled
-#define PS2_ALTERA_CTRL_RI 0x100 // IRQ Pending
-#define PS2_ALTERA_CTRL_CE 0x400 // Controller Error
+#define PS2_ALTERA_CTRL_RE     0x0001 // IRQ Enabled
+#define PS2_ALTERA_CTRL_RI     0x0100 // IRQ Pending
+#define PS2_ALTERA_CTRL_CE     0x0400 // Controller Error
 
 #define PS2_ALTERA_DATA_RVALID 0x8000
 
-#define PS2_ALTERA_REG_SIZE 0x1000
+#define PS2_ALTERA_REG_SIZE    0x1000
 
 typedef struct {
     chardev_t* chardev;
 
     // IRQ data
     rvvm_intc_t* intc;
-    rvvm_irq_t irq;
+    rvvm_irq_t   irq;
 
     // Controller registers
     uint32_t ctrl;
@@ -51,14 +51,14 @@ static void ps2_altera_notify(void* io_dev, uint32_t flags)
 static bool ps2_altera_read(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint8_t size)
 {
     ps2_altera_dev_t* ps2 = dev->data;
-    uint32_t val = 0;
+    uint32_t          val = 0;
     UNUSED(size);
 
     switch (offset) {
         case PS2_ALTERA_REG_DATA: {
-            uint8_t byte = 0;
+            uint8_t  byte  = 0;
             uint32_t avail = chardev_read(ps2->chardev, &byte, sizeof(byte));
-            val = byte | (avail ? PS2_ALTERA_DATA_RVALID : 0) | (avail << 16);
+            val            = byte | (avail ? PS2_ALTERA_DATA_RVALID : 0) | (avail << 16);
             break;
         }
         case PS2_ALTERA_REG_CTRL:
@@ -73,17 +73,16 @@ static bool ps2_altera_read(rvvm_mmio_dev_t* dev, void* data, size_t offset, uin
 static bool ps2_altera_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint8_t size)
 {
     ps2_altera_dev_t* ps2 = dev->data;
-    uint32_t val = read_uint32_le(data);
+    uint32_t          val = read_uint32_le(data);
     UNUSED(size);
 
     switch (offset) {
         case PS2_ALTERA_REG_DATA: {
-                uint8_t byte = val;
-                if (!chardev_write(ps2->chardev, &byte, sizeof(byte))) {
-                    atomic_or_uint32(&ps2->ctrl, PS2_ALTERA_CTRL_CE);
-                }
+            uint8_t byte = val;
+            if (!chardev_write(ps2->chardev, &byte, sizeof(byte))) {
+                atomic_or_uint32(&ps2->ctrl, PS2_ALTERA_CTRL_CE);
             }
-            break;
+        } break;
         case PS2_ALTERA_REG_CTRL:
             atomic_or_uint32(&ps2->ctrl, val & PS2_ALTERA_CTRL_RE);
             atomic_and_uint32(&ps2->ctrl, PS2_ALTERA_CTRL_RI | (val & (PS2_ALTERA_CTRL_RE | PS2_ALTERA_CTRL_CE)));
@@ -107,7 +106,7 @@ static void ps2_altera_remove(rvvm_mmio_dev_t* dev)
 }
 
 static rvvm_mmio_type_t ps2_altera_dev_type = {
-    .name = "ps2_altera",
+    .name   = "ps2_altera",
     .update = ps2_altera_update,
     .remove = ps2_altera_remove,
 };
@@ -115,9 +114,9 @@ static rvvm_mmio_type_t ps2_altera_dev_type = {
 void ps2_altera_init(rvvm_machine_t* machine, chardev_t* chardev, rvvm_addr_t addr, rvvm_intc_t* intc, rvvm_irq_t irq)
 {
     ps2_altera_dev_t* ps2 = safe_new_obj(ps2_altera_dev_t);
-    ps2->chardev = chardev;
-    ps2->intc = intc;
-    ps2->irq = irq;
+    ps2->chardev          = chardev;
+    ps2->intc             = intc;
+    ps2->irq              = irq;
 
     if (chardev) {
         chardev->io_dev = ps2;
@@ -125,12 +124,12 @@ void ps2_altera_init(rvvm_machine_t* machine, chardev_t* chardev, rvvm_addr_t ad
     }
 
     rvvm_mmio_dev_t ps2_mmio = {
-        .addr = addr,
-        .size = PS2_ALTERA_REG_SIZE,
-        .data = ps2,
-        .type = &ps2_altera_dev_type,
-        .read = ps2_altera_read,
-        .write = ps2_altera_write,
+        .addr        = addr,
+        .size        = PS2_ALTERA_REG_SIZE,
+        .data        = ps2,
+        .type        = &ps2_altera_dev_type,
+        .read        = ps2_altera_read,
+        .write       = ps2_altera_write,
         .min_op_size = 4,
         .max_op_size = 4,
     };
@@ -151,6 +150,8 @@ void ps2_altera_init(rvvm_machine_t* machine, chardev_t* chardev, rvvm_addr_t ad
 void ps2_altera_init_auto(rvvm_machine_t* machine, chardev_t* chardev)
 {
     rvvm_intc_t* intc = rvvm_get_intc(machine);
-    rvvm_addr_t addr = rvvm_mmio_zone_auto(machine, PS2_ALTERA_ADDR_DEFAULT, PS2_ALTERA_REG_SIZE);
+    rvvm_addr_t  addr = rvvm_mmio_zone_auto(machine, PS2_ALTERA_ADDR_DEFAULT, PS2_ALTERA_REG_SIZE);
     ps2_altera_init(machine, chardev, addr, intc, rvvm_alloc_irq(intc));
 }
+
+POP_OPTIMIZATION_SIZE
