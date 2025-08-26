@@ -8,20 +8,20 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
 #include "ns16550a.h"
-#include "fdtlib.h"
 #include "chardev.h"
+#include "fdtlib.h"
+#include "mem_ops.h"
 #include "spinlock.h"
 #include "utils.h"
-#include "mem_ops.h"
 
-SOURCE_OPTIMIZATION_SIZE
+PUSH_OPTIMIZATION_SIZE
 
 #define NS16550A_MMIO_SIZE 0x1000
 
 typedef struct {
-    chardev_t* chardev;
+    chardev_t*   chardev;
     rvvm_intc_t* intc;
-    rvvm_irq_t irq;
+    rvvm_irq_t   irq;
 
     uint32_t flags;
     uint32_t ier;
@@ -67,9 +67,8 @@ typedef struct {
 static void ns16550a_update_irq(ns16550a_dev_t* uart)
 {
     uint32_t flags = atomic_load_uint32_relax(&uart->flags);
-    uint32_t ier = atomic_load_uint32_relax(&uart->ier);
-    if (((flags & CHARDEV_RX) && (ier & NS16550A_IER_RECV))
-     || ((flags & CHARDEV_TX) && (ier & NS16550A_IER_THR))) {
+    uint32_t ier   = atomic_load_uint32_relax(&uart->ier);
+    if (((flags & CHARDEV_RX) && (ier & NS16550A_IER_RECV)) || ((flags & CHARDEV_TX) && (ier & NS16550A_IER_THR))) {
         rvvm_raise_irq(uart->intc, uart->irq);
     } else {
         rvvm_lower_irq(uart->intc, uart->irq);
@@ -117,7 +116,7 @@ static bool ns16550a_mmio_read(rvvm_mmio_dev_t* dev, void* data, size_t offset, 
             break;
         case NS16550A_REG_IIR: {
             uint32_t flags = chardev_poll(uart->chardev);
-            uint32_t ier = atomic_load_uint32_relax(&uart->ier);
+            uint32_t ier   = atomic_load_uint32_relax(&uart->ier);
             if ((flags & CHARDEV_RX) && (ier & NS16550A_IER_RECV)) {
                 write_uint8(data, NS16550A_IIR_RECV | NS16550A_IIR_FIFO);
             } else if ((flags & CHARDEV_TX) && (ier & NS16550A_IER_THR)) {
@@ -135,8 +134,8 @@ static bool ns16550a_mmio_read(rvvm_mmio_dev_t* dev, void* data, size_t offset, 
             break;
         case NS16550A_REG_LSR: {
             uint32_t flags = chardev_poll(uart->chardev);
-            write_uint8(data, ((flags & CHARDEV_RX) ? NS16550A_LSR_RECV : 0)
-                            | ((flags & CHARDEV_TX) ? NS16550A_LSR_THR : 0));
+            write_uint8(data,
+                        ((flags & CHARDEV_RX) ? NS16550A_LSR_RECV : 0) | ((flags & CHARDEV_TX) ? NS16550A_LSR_THR : 0));
             break;
         }
         case NS16550A_REG_MSR:
@@ -198,18 +197,18 @@ static void ns16550a_remove(rvvm_mmio_dev_t* dev)
 }
 
 static const rvvm_mmio_type_t ns16550a_dev_type = {
-    .name = "ns16550a",
+    .name   = "ns16550a",
     .update = ns16550a_update,
     .remove = ns16550a_remove,
 };
 
-PUBLIC rvvm_mmio_dev_t* ns16550a_init(rvvm_machine_t* machine, chardev_t* chardev,
-                                      rvvm_addr_t addr, rvvm_intc_t* intc, rvvm_irq_t irq)
+PUBLIC rvvm_mmio_dev_t* ns16550a_init(rvvm_machine_t* machine, chardev_t* chardev, rvvm_addr_t addr, rvvm_intc_t* intc,
+                                      rvvm_irq_t irq)
 {
     ns16550a_dev_t* uart = safe_new_obj(ns16550a_dev_t);
-    uart->chardev = chardev;
-    uart->intc = intc;
-    uart->irq = irq;
+    uart->chardev        = chardev;
+    uart->intc           = intc;
+    uart->irq            = irq;
 
     if (chardev) {
         chardev->io_dev = uart;
@@ -217,18 +216,20 @@ PUBLIC rvvm_mmio_dev_t* ns16550a_init(rvvm_machine_t* machine, chardev_t* charde
     }
 
     rvvm_mmio_dev_t ns16550a = {
-        .addr = addr,
-        .size = NS16550A_MMIO_SIZE,
-        .data = uart,
-        .type = &ns16550a_dev_type,
-        .read = ns16550a_mmio_read,
-        .write = ns16550a_mmio_write,
+        .addr        = addr,
+        .size        = NS16550A_MMIO_SIZE,
+        .data        = uart,
+        .type        = &ns16550a_dev_type,
+        .read        = ns16550a_mmio_read,
+        .write       = ns16550a_mmio_write,
         .min_op_size = 1,
         .max_op_size = 1,
     };
 
     rvvm_mmio_dev_t* mmio = rvvm_attach_mmio(machine, &ns16550a);
-    if (mmio == NULL) return mmio;
+    if (mmio == NULL) {
+        return mmio;
+    }
 
 #ifdef USE_FDT
     struct fdt_node* uart_fdt = fdt_node_create_reg("uart", ns16550a.addr);
@@ -245,8 +246,8 @@ PUBLIC rvvm_mmio_dev_t* ns16550a_init(rvvm_machine_t* machine, chardev_t* charde
 
 PUBLIC rvvm_mmio_dev_t* ns16550a_init_auto(rvvm_machine_t* machine, chardev_t* chardev)
 {
-    rvvm_intc_t* intc = rvvm_get_intc(machine);
-    rvvm_addr_t addr = rvvm_mmio_zone_auto(machine, NS16550A_ADDR_DEFAULT, NS16550A_MMIO_SIZE);
+    rvvm_intc_t*     intc = rvvm_get_intc(machine);
+    rvvm_addr_t      addr = rvvm_mmio_zone_auto(machine, NS16550A_ADDR_DEFAULT, NS16550A_MMIO_SIZE);
     rvvm_mmio_dev_t* mmio = ns16550a_init(machine, chardev, addr, intc, rvvm_alloc_irq(intc));
     if (addr == NS16550A_ADDR_DEFAULT && mmio) {
         rvvm_append_cmdline(machine, "console=ttyS");
@@ -262,3 +263,5 @@ PUBLIC rvvm_mmio_dev_t* ns16550a_init_term_auto(rvvm_machine_t* machine)
 {
     return ns16550a_init_auto(machine, chardev_term_create());
 }
+
+POP_OPTIMIZATION_SIZE
