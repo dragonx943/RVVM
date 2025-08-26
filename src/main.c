@@ -46,6 +46,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include "devices/syscon.h"
 #include "devices/usb-xhci.h"
 
+PUSH_OPTIMIZATION_SIZE
+
 #if defined(HOST_TARGET_WINNT)
 #include <windows.h> // For WriteFile(), SetConsoleOutputCP(), SetConsoleCP(), GetCommandLineW(), CommandLineToArgvW()
 #else
@@ -358,3 +360,5 @@ int main(int argc, char** argv)
 #endif
     return rvvm_cli_main(argc, argv);
 }
+
+POP_OPTIMIZATION_SIZE
