@@ -18,7 +18,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "vector.h"
 #include "vma_ops.h"
 
-SOURCE_OPTIMIZATION_SIZE
+PUSH_OPTIMIZATION_SIZE
 
 #define USE_XSHM
 
@@ -939,3 +939,5 @@ bool x11_window_init(gui_window_t* win)
 }
 
 #endif
+
+POP_OPTIMIZATION_SIZE
