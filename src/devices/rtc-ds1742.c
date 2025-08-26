@@ -14,7 +14,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "spinlock.h"
 #include "utils.h"
 
-SOURCE_OPTIMIZATION_SIZE
+PUSH_OPTIMIZATION_SIZE
 
 #define DS1742_REG_CTL_CENT 0x0 // Control, Century
 #define DS1742_REG_SECONDS  0x1 // Seconds [0, 59]
@@ -151,3 +151,5 @@ PUBLIC rvvm_mmio_dev_t* rtc_ds1742_init_auto(rvvm_machine_t* machine)
     rvvm_addr_t addr = rvvm_mmio_zone_auto(machine, RTC_DS1742_DEFAULT_MMIO, DS1742_MMIO_SIZE);
     return rtc_ds1742_init(machine, addr);
 }
+
+POP_OPTIMIZATION_SIZE
