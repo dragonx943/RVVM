@@ -8,8 +8,10 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
 #include "syscon.h"
-#include "mem_ops.h"
 #include "fdtlib.h"
+#include "mem_ops.h"
+
+PUSH_OPTIMIZATION_SIZE
 
 #define SYSCON_POWEROFF 0x5555
 #define SYSCON_RESET    0x7777
@@ -18,12 +20,10 @@ static bool syscon_mmio_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, u
 {
     UNUSED(size);
     if (offset == 0) {
-        switch(read_uint16_le_m(data)) {
+        switch (read_uint16_le_m(data)) {
             case SYSCON_POWEROFF:
             case SYSCON_RESET:
                 rvvm_reset_machine(dev->machine, read_uint16_le_m(data) == SYSCON_RESET);
-                break;
-            default:
                 break;
         }
     }
@@ -37,16 +37,18 @@ static rvvm_mmio_type_t syscon_dev_type = {
 PUBLIC rvvm_mmio_dev_t* syscon_init(rvvm_machine_t* machine, rvvm_addr_t base_addr)
 {
     rvvm_mmio_dev_t syscon = {
-        .addr = base_addr,
-        .size = 0x1000,
-        .read = rvvm_mmio_none,
-        .write = syscon_mmio_write,
+        .addr        = base_addr,
+        .size        = 0x1000,
+        .type        = &syscon_dev_type,
+        .read        = rvvm_mmio_none,
+        .write       = syscon_mmio_write,
         .min_op_size = 2,
         .max_op_size = 2,
-        .type = &syscon_dev_type,
     };
     rvvm_mmio_dev_t* mmio = rvvm_attach_mmio(machine, &syscon);
-    if (mmio == NULL) return mmio;
+    if (mmio == NULL) {
+        return mmio;
+    }
 #ifdef USE_FDT
     struct fdt_node* test = fdt_node_create_reg("test", base_addr);
     fdt_node_add_prop_reg(test, "reg", base_addr, 0x1000);
@@ -75,3 +77,5 @@ PUBLIC rvvm_mmio_dev_t* syscon_init_auto(rvvm_machine_t* machine)
     rvvm_addr_t addr = rvvm_mmio_zone_auto(machine, SYSCON_DEFAULT_MMIO, 0x1000);
     return syscon_init(machine, addr);
 }
+
+POP_OPTIMIZATION_SIZE
