@@ -9,53 +9,53 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #include "i2c-oc.h"
 #include "fdtlib.h"
-#include "spinlock.h"
-#include "vector.h"
 #include "mem_ops.h"
+#include "spinlock.h"
 #include "utils.h"
+#include "vector.h"
 
-SOURCE_OPTIMIZATION_SIZE
+PUSH_OPTIMIZATION_SIZE
 
 struct rvvm_i2c_bus {
     vector_t(i2c_dev_t) devices;
-    struct fdt_node* fdt_node;
-    rvvm_intc_t* intc;
-    rvvm_irq_t irq;
-    spinlock_t lock;
-    uint16_t sel_addr;
-    uint16_t clock;
-    uint8_t  control;
-    uint8_t  status;
-    uint8_t  tx_byte;
-    uint8_t  rx_byte;
+    struct fdt_node*    fdt_node;
+    rvvm_intc_t*        intc;
+    rvvm_irq_t          irq;
+    spinlock_t          lock;
+    uint16_t            sel_addr;
+    uint16_t            clock;
+    uint8_t             control;
+    uint8_t             status;
+    uint8_t             tx_byte;
+    uint8_t             rx_byte;
 };
 
 #define I2C_OC_MMIO_SIZE 0x1000
 
 // OpenCores I2C registers
-#define I2C_OC_CLKLO    0x00 // Clock prescale low byte
-#define I2C_OC_CLKHI    0x04 // Clock prescale high byte
-#define I2C_OC_CTR      0x08 // Control register
-#define I2C_OC_TXRXR    0x0C // Transmit & Receive register (W/R)
-#define I2C_OC_CRSR     0x10 // Command & Status Register (W/R)
+#define I2C_OC_CLKLO     0x00 // Clock prescale low byte
+#define I2C_OC_CLKHI     0x04 // Clock prescale high byte
+#define I2C_OC_CTR       0x08 // Control register
+#define I2C_OC_TXRXR     0x0C // Transmit & Receive register (W/R)
+#define I2C_OC_CRSR      0x10 // Command & Status Register (W/R)
 
 // Register values
-#define I2C_OC_CTR_MASK 0xC0 // Mask of legal bits
-#define I2C_OC_CTR_EN   0x80 // Core enable bit
-#define I2C_OC_CTR_IEN  0x40 // Interrupt enable bit
+#define I2C_OC_CTR_MASK  0xC0 // Mask of legal bits
+#define I2C_OC_CTR_EN    0x80 // Core enable bit
+#define I2C_OC_CTR_IEN   0x40 // Interrupt enable bit
 
-#define I2C_OC_CR_STA   0x80 // Generate (repeated) start condition
-#define I2C_OC_CR_STO   0x40 // Generate stop condition
-#define I2C_OC_CR_RD    0x20 // Read from slave
-#define I2C_OC_CR_WR    0x10 // Write to slave
-#define I2C_OC_CR_ACK   0x08 // Send ACK (0) or NACK (1) to master
-#define I2C_OC_CR_IACK  0x01 // Interrupt acknowledge, clear a pending IRQ
+#define I2C_OC_CR_STA    0x80 // Generate (repeated) start condition
+#define I2C_OC_CR_STO    0x40 // Generate stop condition
+#define I2C_OC_CR_RD     0x20 // Read from slave
+#define I2C_OC_CR_WR     0x10 // Write to slave
+#define I2C_OC_CR_ACK    0x08 // Send ACK (0) or NACK (1) to master
+#define I2C_OC_CR_IACK   0x01 // Interrupt acknowledge, clear a pending IRQ
 
-#define I2C_OC_SR_ACK   0x80 // Received ACK from slave (0), NACK is 1
-#define I2C_OC_SR_BSY   0x40 // I2C bus busy
-#define I2C_OC_SR_AL    0x20 // Arbitration lost
-#define I2C_OC_SR_TIP   0x02 // Transfer in progress
-#define I2C_OC_SR_IF    0x01 // Interrupt flag
+#define I2C_OC_SR_ACK    0x80 // Received ACK from slave (0), NACK is 1
+#define I2C_OC_SR_BSY    0x40 // I2C bus busy
+#define I2C_OC_SR_AL     0x20 // Arbitration lost
+#define I2C_OC_SR_TIP    0x02 // Transfer in progress
+#define I2C_OC_SR_IF     0x01 // Interrupt flag
 
 static void i2c_oc_interrupt(i2c_bus_t* bus)
 {
@@ -67,9 +67,11 @@ static void i2c_oc_interrupt(i2c_bus_t* bus)
 
 static i2c_dev_t* i2c_oc_get_dev(i2c_bus_t* bus, uint16_t addr)
 {
-    vector_foreach(bus->devices, i) {
+    vector_foreach (bus->devices, i) {
         i2c_dev_t* i2c_dev = &vector_at(bus->devices, i);
-        if (i2c_dev->addr == addr) return i2c_dev;
+        if (i2c_dev->addr == addr) {
+            return i2c_dev;
+        }
     }
     return NULL;
 }
@@ -119,7 +121,7 @@ static bool i2c_oc_mmio_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, u
             bus->tx_byte = read_uint8(data);
             break;
         case I2C_OC_CRSR: {
-            uint8_t cmd = read_uint8(data);
+            uint8_t cmd  = read_uint8(data);
             bus->status |= I2C_OC_SR_ACK;
             if (cmd & I2C_OC_CR_IACK) {
                 // Clear a pending interrupt
@@ -127,15 +129,15 @@ static bool i2c_oc_mmio_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, u
             }
             if (cmd & I2C_OC_CR_STA) {
                 // Start the transaction
-                bus->sel_addr = 0xFFFF;
-                bus->status |= I2C_OC_SR_BSY;
+                bus->sel_addr  = 0xFFFF;
+                bus->status   |= I2C_OC_SR_BSY;
             }
             if ((cmd & I2C_OC_CR_WR)) {
                 if (bus->sel_addr == 0xFFFF) {
                     // Get device address, signal start of transaction
-                    bus->sel_addr = bus->tx_byte >> 1;
-                    i2c_dev_t* i2c_dev = i2c_oc_get_dev(bus, bus->sel_addr);
-                    bool is_write = !(bus->tx_byte & 1);
+                    bus->sel_addr       = bus->tx_byte >> 1;
+                    i2c_dev_t* i2c_dev  = i2c_oc_get_dev(bus, bus->sel_addr);
+                    bool       is_write = !(bus->tx_byte & 1);
                     if (i2c_dev && (!i2c_dev->start || i2c_dev->start(i2c_dev->data, is_write))) {
                         bus->status &= ~I2C_OC_SR_ACK;
                     }
@@ -159,9 +161,11 @@ static bool i2c_oc_mmio_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, u
             if (cmd & I2C_OC_CR_STO) {
                 // End of transaction
                 i2c_dev_t* i2c_dev = i2c_oc_get_dev(bus, bus->sel_addr);
-                if (i2c_dev && i2c_dev->stop) i2c_dev->stop(i2c_dev->data);
-                bus->sel_addr = 0xFFFF;
-                bus->status &= ~I2C_OC_SR_BSY;
+                if (i2c_dev && i2c_dev->stop) {
+                    i2c_dev->stop(i2c_dev->data);
+                }
+                bus->sel_addr  = 0xFFFF;
+                bus->status   &= ~I2C_OC_SR_BSY;
                 i2c_oc_interrupt(bus);
             }
             break;
@@ -174,32 +178,34 @@ static bool i2c_oc_mmio_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, u
 static void i2c_oc_remove(rvvm_mmio_dev_t* dev)
 {
     i2c_bus_t* bus = dev->data;
-    vector_foreach(bus->devices, i) {
+    vector_foreach (bus->devices, i) {
         i2c_dev_t* i2c_dev = &vector_at(bus->devices, i);
-        if (i2c_dev->remove) i2c_dev->remove(i2c_dev->data);
+        if (i2c_dev->remove) {
+            i2c_dev->remove(i2c_dev->data);
+        }
     }
     vector_free(bus->devices);
     free(bus);
 }
 
 static rvvm_mmio_type_t i2c_oc_dev_type = {
-    .name = "i2c_opencores",
+    .name   = "i2c_opencores",
     .remove = i2c_oc_remove,
 };
 
 PUBLIC i2c_bus_t* i2c_oc_init(rvvm_machine_t* machine, rvvm_addr_t addr, rvvm_intc_t* intc, rvvm_irq_t irq)
 {
     i2c_bus_t* bus = safe_new_obj(i2c_bus_t);
-    bus->intc = intc;
-    bus->irq = irq;
+    bus->intc      = intc;
+    bus->irq       = irq;
 
     rvvm_mmio_dev_t i2c_oc = {
-        .addr = addr,
-        .size = I2C_OC_MMIO_SIZE,
-        .data = bus,
-        .read = i2c_oc_mmio_read,
-        .write = i2c_oc_mmio_write,
-        .type = &i2c_oc_dev_type,
+        .addr        = addr,
+        .size        = I2C_OC_MMIO_SIZE,
+        .data        = bus,
+        .read        = i2c_oc_mmio_read,
+        .write       = i2c_oc_mmio_write,
+        .type        = &i2c_oc_dev_type,
         .min_op_size = 1,
         .max_op_size = 4,
     };
@@ -241,15 +247,19 @@ PUBLIC i2c_bus_t* i2c_oc_init(rvvm_machine_t* machine, rvvm_addr_t addr, rvvm_in
 PUBLIC i2c_bus_t* i2c_oc_init_auto(rvvm_machine_t* machine)
 {
     rvvm_intc_t* intc = rvvm_get_intc(machine);
-    rvvm_addr_t addr = rvvm_mmio_zone_auto(machine, I2C_OC_ADDR_DEFAULT, I2C_OC_MMIO_SIZE);
+    rvvm_addr_t  addr = rvvm_mmio_zone_auto(machine, I2C_OC_ADDR_DEFAULT, I2C_OC_MMIO_SIZE);
     return i2c_oc_init(machine, addr, intc, rvvm_alloc_irq(intc));
 }
 
 PUBLIC uint16_t i2c_attach_dev(i2c_bus_t* bus, const i2c_dev_t* dev_desc)
 {
-    if (bus == NULL) return 0;
+    if (bus == NULL) {
+        return 0;
+    }
     i2c_dev_t tmp = *dev_desc;
-    if (dev_desc->addr == I2C_AUTO_ADDR) tmp.addr = 0x8;
+    if (dev_desc->addr == I2C_AUTO_ADDR) {
+        tmp.addr = 0x8;
+    }
     while (i2c_oc_get_dev(bus, tmp.addr)) {
         if (dev_desc->addr == I2C_AUTO_ADDR) {
             tmp.addr++;
@@ -264,6 +274,10 @@ PUBLIC uint16_t i2c_attach_dev(i2c_bus_t* bus, const i2c_dev_t* dev_desc)
 
 PUBLIC struct fdt_node* i2c_bus_fdt_node(i2c_bus_t* bus)
 {
-    if (bus == NULL) return NULL;
+    if (bus == NULL) {
+        return NULL;
+    }
     return bus->fdt_node;
 }
+
+POP_OPTIMIZATION_SIZE
