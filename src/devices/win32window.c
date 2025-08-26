@@ -10,6 +10,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "compiler.h"
 #include "gui_window.h"
 
+PUSH_OPTIMIZATION_SIZE
+
 // Enable unicode on Win64 / WinCE, otherwise use ANSI for Win9x compat
 #undef UNICODE
 #if defined(HOST_64BIT) || defined(UNDER_CE)
@@ -308,3 +310,5 @@ bool win32_window_init(gui_window_t* win)
 
     return true;
 }
+
+POP_OPTIMIZATION_SIZE
