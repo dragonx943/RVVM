@@ -13,7 +13,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "rvtimer.h"
 #include "utils.h"
 
-SOURCE_OPTIMIZATION_SIZE
+PUSH_OPTIMIZATION_SIZE
 
 #define RTC_TIME_LOW          0x0
 #define RTC_TIME_HIGH         0x4
@@ -158,3 +158,5 @@ PUBLIC rvvm_mmio_dev_t* rtc_goldfish_init_auto(rvvm_machine_t* machine)
     rvvm_addr_t  addr = rvvm_mmio_zone_auto(machine, RTC_GOLDFISH_ADDR_DEFAULT, RTC_GOLDFISH_REG_SIZE);
     return rtc_goldfish_init(machine, addr, intc, rvvm_alloc_irq(intc));
 }
+
+POP_OPTIMIZATION_SIZE
