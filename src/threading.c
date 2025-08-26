@@ -17,7 +17,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "utils.h"
 #include "vector.h"
 
-SOURCE_OPTIMIZATION_SIZE
+PUSH_OPTIMIZATION_SIZE
 
 #if defined(_MSC_VER)
 #include <intrin.h> // For _mm_pause()
@@ -333,6 +333,10 @@ static DWORD __stdcall thread_call_wrapper(void* arg)
 thread_ctx_t* thread_create_ex(thread_func_t func, void* arg, uint32_t stack_size)
 {
     thread_ctx_t* thread = safe_new_obj(thread_ctx_t);
+#if defined(SANITIZERS_ENABLED)
+    // Sanitizers consume a lot of extra stack space, use default stack size
+    stack_size = 0;
+#endif
 #if defined(HOST_TARGET_WIN32)
     DWORD               threadid = 0;
     thread_call_wrap_t* wrap     = safe_new_obj(thread_call_wrap_t);
@@ -999,3 +1003,5 @@ void thread_create_task_va(thread_func_va_t func, void** args, unsigned arg_coun
         func(args);
     }
 }
+
+POP_OPTIMIZATION_SIZE
