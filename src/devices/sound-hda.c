@@ -15,6 +15,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "spinlock.h"
 #include "utils.h"
 
+PUSH_OPTIMIZATION_SIZE
+
 #define SOUND_VENDOR_ID_CMEDIA        0x13f6 // C-Media
 #define SOUND_DEVICE_ID_CMEDIA        0x5011 // CM8888 HDA Controller
 #define SOUND_CLASS_CODE_CMEDIA       0x0403 // Audio device
@@ -912,3 +914,5 @@ PUBLIC pci_dev_t *sound_hda_init_auto(rvvm_machine_t *machine)
 {
     return sound_hda_init(rvvm_get_pci_bus(machine));
 }
+
+POP_OPTIMIZATION_SIZE
