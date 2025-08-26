@@ -88,8 +88,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // Conversion fp->long is correct on modern GCC/Clang targeting anything 64-bit, and i386
 #undef FPU_LIB_CORRECT_CONVERSION_FP_LONG
-#if defined(FPU_LIB_KNOWN_SANE_COMPILER) /**/                                                                          \
-    && (defined(__i386__) || defined(HOST_64BIT))
+#if defined(FPU_LIB_KNOWN_SANE_COMPILER) && (defined(__i386__) || defined(HOST_64BIT))
 #define FPU_LIB_CORRECT_CONVERSION_FP_LONG 1
 #endif
 
@@ -310,48 +309,86 @@ static forceinline fpu_f64_t fpu_wrap_f64(actual_double_t d)
 }
 
 /*
- * Software floating-point helpers
+ * Fast software floating-point helpers
  */
 
-// Checks for finite non-NaN, non-Inf input
+#define FPU_LIB_FP32_SIGNEDFP_MASK 0x80000000U
+#define FPU_LIB_FP32_NOSIGNED_MASK 0x7FFFFFFFU
+#define FPU_LIB_FP32_EXPONENT_MASK 0x7F800000U
+#define FPU_LIB_FP32_MANTISSA_MASK 0x007FFFFFU
+#define FPU_LIB_FP32_QUIETNAN_MASK 0x00400000U
+
+#define FPU_LIB_FP32_CANONICAL_NAN 0x7FC00000U
+#define FPU_LIB_FP32_POSITIVE_INF  0x7F800000U
+#define FPU_LIB_FP32_NEGATIVE_INF  0xFF800000U
+
+#define FPU_LIB_FP64_SIGNEDFP_MASK 0x8000000000000000ULL
+#define FPU_LIB_FP64_NOSIGNED_MASK 0x7FFFFFFFFFFFFFFFULL
+#define FPU_LIB_FP64_EXPONENT_MASK 0x7FF0000000000000ULL
+#define FPU_LIB_FP64_MANTISSA_MASK 0x000FFFFFFFFFFFFFULL
+#define FPU_LIB_FP64_QUIETNAN_MASK 0x0008000000000000ULL
+
+#define FPU_LIB_FP64_CANONICAL_NAN 0x7FF8000000000000ULL
+#define FPU_LIB_FP64_POSITIVE_INF  0x7FF0000000000000ULL
+#define FPU_LIB_FP64_NEGATIVE_INF  0xFFF0000000000000ULL
+
+// Checks for finite non-NaN, non-Inf input, never sets exceptions
 static forceinline bool fpu_is_finite32(fpu_f32_t f)
 {
-    return (fpu_bit_f32_to_u32(f) & 0x7FFFFFFFU) < 0x7F800000U;
+    return (fpu_bit_f32_to_u32(f) & FPU_LIB_FP32_NOSIGNED_MASK) < FPU_LIB_FP32_EXPONENT_MASK;
 }
 
 static forceinline bool fpu_is_finite64(fpu_f64_t d)
 {
-    return (fpu_bit_f64_to_u64(d) & 0x7FFFFFFFFFFFFFFFULL) < 0x7FF0000000000000ULL;
+    return (fpu_bit_f64_to_u64(d) & FPU_LIB_FP64_NOSIGNED_MASK) < FPU_LIB_FP64_EXPONENT_MASK;
+}
+
+// Checks for positive, possibly infinite non-NaN input, never sets exceptions
+static forceinline bool fpu_is_positive32(fpu_f32_t f)
+{
+    return fpu_bit_f32_to_u32(f) <= FPU_LIB_FP32_POSITIVE_INF;
+}
+
+static forceinline bool fpu_is_positive64(fpu_f64_t d)
+{
+    return fpu_bit_f64_to_u64(d) <= FPU_LIB_FP64_POSITIVE_INF;
+}
+
+// Checks for negative, possibly infinite non-NaN input, never sets exceptions
+static forceinline bool fpu_is_negative32(fpu_f32_t f)
+{
+    int32_t i = (int32_t)fpu_bit_f32_to_u32(f);
+    return i <= (int32_t)FPU_LIB_FP32_NEGATIVE_INF;
+}
+
+static forceinline bool fpu_is_negative64(fpu_f64_t d)
+{
+    int64_t i = (int64_t)fpu_bit_f64_to_u64(d);
+    return i <= (int64_t)FPU_LIB_FP64_NEGATIVE_INF;
 }
 
 // Checks for NaN input, never sets exceptions
 static forceinline bool fpu_is_nan32_soft(fpu_f32_t f)
 {
-    uint32_t u = fpu_bit_f32_to_u32(f);
-    return ((((uint16_t)(u >> 16) & 0x7FFFU)) + !!(uint16_t)u) > 0x7F80U;
+    return (fpu_bit_f32_to_u32(f) & FPU_LIB_FP32_NOSIGNED_MASK) > FPU_LIB_FP32_POSITIVE_INF;
 }
 
 static forceinline bool fpu_is_nan64_soft(fpu_f64_t d)
 {
-    uint64_t u = fpu_bit_f64_to_u64(d);
-    return ((((uint32_t)(u >> 32)) & 0x7FFFFFFFU) + !!(uint32_t)u) > 0x7FF00000U;
+    return (fpu_bit_f64_to_u64(d) & FPU_LIB_FP64_NOSIGNED_MASK) > FPU_LIB_FP64_POSITIVE_INF;
 }
 
 // Checks for sNaN input, never sets exceptions
 static forceinline bool fpu_is_snan32_soft(fpu_f32_t f)
 {
-    if (likely(fpu_bit_f32_to_u32(f) & 0x00400000U)) {
-        return false;
-    }
-    return fpu_is_nan32_soft(f);
+    uint32_t u = fpu_bit_f32_to_u32(f) & FPU_LIB_FP32_NOSIGNED_MASK;
+    return u > FPU_LIB_FP32_POSITIVE_INF && u < FPU_LIB_FP32_CANONICAL_NAN;
 }
 
 static forceinline bool fpu_is_snan64_soft(fpu_f64_t d)
 {
-    if (likely(fpu_bit_f64_to_u64(d) & 0x0008000000000000ULL)) {
-        return false;
-    }
-    return fpu_is_nan64_soft(d);
+    uint64_t u = fpu_bit_f64_to_u64(d) & FPU_LIB_FP64_NOSIGNED_MASK;
+    return u > FPU_LIB_FP64_POSITIVE_INF && u < FPU_LIB_FP64_CANONICAL_NAN;
 }
 
 // Returns normalized exponent value
@@ -374,7 +411,7 @@ static forceinline bool fpu_is_fractional32(fpu_f32_t f)
     } else if (e >= 23) {
         return false;
     }
-    return !!(fpu_bit_f32_to_u32(f) & (0x007FFFFFU >> e));
+    return !!(fpu_bit_f32_to_u32(f) & (FPU_LIB_FP32_MANTISSA_MASK >> e));
 }
 
 static forceinline bool fpu_is_fractional64(fpu_f64_t d)
@@ -385,7 +422,7 @@ static forceinline bool fpu_is_fractional64(fpu_f64_t d)
     } else if (e >= 23) {
         return false;
     }
-    return !!(fpu_bit_f64_to_u64(d) & (0x000FFFFFFFFFFFFFULL >> e));
+    return !!(fpu_bit_f64_to_u64(d) & (FPU_LIB_FP64_MANTISSA_MASK >> e));
 }
 
 /*
@@ -477,7 +514,7 @@ static forceinline fpu_f32_t fpu_nan_unbox_f32(fpu_f64_t d)
     if (likely(!(((uint32_t)(u >> 32)) + 1))) {
         return fpu_bit_u32_to_f32(u);
     }
-    return fpu_bit_u32_to_f32(0x7FC00000U);
+    return fpu_bit_u32_to_f32(FPU_LIB_FP32_CANONICAL_NAN);
 }
 
 static forceinline fpu_f32_t fpu_load_f32_le(const void* addr)
@@ -672,7 +709,7 @@ static forceinline bool fpu_signbit64(fpu_f64_t d)
 static forceinline fpu_f32_t fpu_neg32(fpu_f32_t f)
 {
 #if defined(USE_SOFT_FPU_WRAP)
-    return fpu_bit_u32_to_f32(fpu_bit_f32_to_u32(f) ^ 0x80000000U);
+    return fpu_bit_u32_to_f32(fpu_bit_f32_to_u32(f) ^ FPU_LIB_FP32_SIGNEDFP_MASK);
 #else
     return fpu_wrap_f32(-fpu_raw_f32(f));
 #endif
@@ -681,7 +718,7 @@ static forceinline fpu_f32_t fpu_neg32(fpu_f32_t f)
 static forceinline fpu_f64_t fpu_neg64(fpu_f64_t d)
 {
 #if defined(USE_SOFT_FPU_WRAP)
-    return fpu_bit_u64_to_f64(fpu_bit_f64_to_u64(d) ^ 0x8000000000000000ULL);
+    return fpu_bit_u64_to_f64(fpu_bit_f64_to_u64(d) ^ FPU_LIB_FP64_SIGNEDFP_MASK);
 #else
     return fpu_wrap_f64(-fpu_raw_f64(d));
 #endif
@@ -694,7 +731,7 @@ static forceinline fpu_f32_t fpu_fsgnj32(fpu_f32_t a, fpu_f32_t b)
 #else
     uint32_t ua = fpu_bit_f32_to_u32(a);
     uint32_t ub = fpu_bit_f32_to_u32(b);
-    return fpu_bit_u32_to_f32(ua ^ ((ua ^ ub) & 0x80000000U));
+    return fpu_bit_u32_to_f32(ua ^ ((ua ^ ub) & FPU_LIB_FP32_SIGNEDFP_MASK));
 #endif
 }
 
@@ -705,7 +742,7 @@ static forceinline fpu_f64_t fpu_fsgnj64(fpu_f64_t a, fpu_f64_t b)
 #else
     uint64_t ua = fpu_bit_f64_to_u64(a);
     uint64_t ub = fpu_bit_f64_to_u64(b);
-    return fpu_bit_u64_to_f64(ua ^ ((ua ^ ub) & 0x8000000000000000ULL));
+    return fpu_bit_u64_to_f64(ua ^ ((ua ^ ub) & FPU_LIB_FP64_SIGNEDFP_MASK));
 #endif
 }
 
@@ -716,7 +753,7 @@ static forceinline fpu_f32_t fpu_fsgnjn32(fpu_f32_t a, fpu_f32_t b)
 #else
     uint32_t ua = fpu_bit_f32_to_u32(a);
     uint32_t ub = fpu_bit_f32_to_u32(b);
-    return fpu_bit_u32_to_f32(ua ^ (~(ua ^ ub) & 0x80000000U));
+    return fpu_bit_u32_to_f32(ua ^ (~(ua ^ ub) & FPU_LIB_FP32_SIGNEDFP_MASK));
 #endif
 }
 
@@ -727,7 +764,7 @@ static forceinline fpu_f64_t fpu_fsgnjn64(fpu_f64_t a, fpu_f64_t b)
 #else
     uint64_t ua = fpu_bit_f64_to_u64(a);
     uint64_t ub = fpu_bit_f64_to_u64(b);
-    return fpu_bit_u64_to_f64(ua ^ (~(ua ^ ub) & 0x8000000000000000ULL));
+    return fpu_bit_u64_to_f64(ua ^ (~(ua ^ ub) & FPU_LIB_FP64_SIGNEDFP_MASK));
 #endif
 }
 
@@ -735,14 +772,14 @@ static forceinline fpu_f32_t fpu_fsgnjx32(fpu_f32_t a, fpu_f32_t b)
 {
     uint32_t ua = fpu_bit_f32_to_u32(a);
     uint32_t ub = fpu_bit_f32_to_u32(b);
-    return fpu_bit_u32_to_f32(ua ^ (ub & 0x80000000U));
+    return fpu_bit_u32_to_f32(ua ^ (ub & FPU_LIB_FP32_SIGNEDFP_MASK));
 }
 
 static forceinline fpu_f64_t fpu_fsgnjx64(fpu_f64_t a, fpu_f64_t b)
 {
     uint64_t ua = fpu_bit_f64_to_u64(a);
     uint64_t ub = fpu_bit_f64_to_u64(b);
-    return fpu_bit_u64_to_f64(ua ^ (ub & 0x8000000000000000ULL));
+    return fpu_bit_u64_to_f64(ua ^ (ub & FPU_LIB_FP64_SIGNEDFP_MASK));
 }
 
 /*
@@ -830,60 +867,63 @@ static forceinline fpu_f64_t fpu_fcvt_i64_to_f64(int64_t i)
 }
 
 /*
+ * Check whether floating-point value fits an integer type, never raises exceptions
+ */
+
+static forceinline bool fpu_f32_fits_u32(fpu_f32_t f)
+{
+    uint32_t u = fpu_bit_f32_to_u32(f);
+    return likely(u < 0x4F800000U) || (u & FPU_LIB_FP32_NOSIGNED_MASK) < 0x3F800000U;
+}
+
+static forceinline bool fpu_f64_fits_u32(fpu_f64_t d)
+{
+    uint64_t u = fpu_bit_f64_to_u64(d);
+    return likely(u < 0x41F0000000000000ULL) || (u & FPU_LIB_FP64_NOSIGNED_MASK) < 0x3FF0000000000000ULL;
+}
+
+static forceinline bool fpu_f32_fits_i32(fpu_f32_t f)
+{
+    uint32_t u = fpu_bit_f32_to_u32(f);
+    return (u & FPU_LIB_FP32_NOSIGNED_MASK) < 0x4F000000U;
+}
+
+static forceinline bool fpu_f64_fits_i32(fpu_f64_t d)
+{
+    uint64_t u = fpu_bit_f64_to_u64(d);
+    return (u & FPU_LIB_FP64_NOSIGNED_MASK) < 0x41E0000000000000ULL;
+}
+
+static forceinline bool fpu_f32_fits_u64(fpu_f32_t f)
+{
+    uint32_t u = fpu_bit_f32_to_u32(f);
+    return likely(u < 0x5F800000U) || (u & FPU_LIB_FP32_NOSIGNED_MASK) < 0x3F800000U;
+}
+
+static forceinline bool fpu_f64_fits_u64(fpu_f64_t d)
+{
+    uint64_t u = fpu_bit_f64_to_u64(d);
+    return likely(u < 0x43F0000000000000ULL) || (u & FPU_LIB_FP64_NOSIGNED_MASK) < 0x3FF0000000000000ULL;
+}
+
+static forceinline bool fpu_f32_fits_i64(fpu_f32_t f)
+{
+    uint32_t u = fpu_bit_f32_to_u32(f);
+    return (u & FPU_LIB_FP32_NOSIGNED_MASK) < 0x5F000000U;
+}
+
+static forceinline bool fpu_f64_fits_i64(fpu_f64_t d)
+{
+    uint64_t u = fpu_bit_f64_to_u64(d);
+    return (u & FPU_LIB_FP64_NOSIGNED_MASK) < 0x43E0000000000000ULL;
+}
+
+/*
  * Floating-point to integer conversions
  *
  * - Converting a value outside output range raises invalid flag & saturates the output
  * - NaN is treated like positive infinity
  */
-
-// Checking whether valid float to integer conversion is possible
-static forceinline bool fpu_f32_fits_u32(fpu_f32_t f)
-{
-    actual_float_t tmp = fpu_raw_f32(f);
-    return tmp > -1.f && tmp < 4294967296.f;
-}
-
-static forceinline bool fpu_f64_fits_u32(fpu_f64_t d)
-{
-    actual_double_t tmp = fpu_raw_f64(d);
-    return tmp > -1.0 && tmp < 4294967296.0;
-}
-
-static forceinline bool fpu_f32_fits_i32(fpu_f32_t f)
-{
-    actual_float_t tmp = fpu_raw_f32(f);
-    return tmp > -2147483649.f && tmp < 2147483648.f;
-}
-
-static forceinline bool fpu_f64_fits_i32(fpu_f64_t d)
-{
-    actual_double_t tmp = fpu_raw_f64(d);
-    return tmp > -2147483649.0 && tmp < 2147483648.0;
-}
-
-static forceinline bool fpu_f32_fits_u64(fpu_f32_t f)
-{
-    actual_float_t tmp = fpu_raw_f32(f);
-    return tmp > -1.f && tmp < 18446744073709551616.f;
-}
-
-static forceinline bool fpu_f64_fits_u64(fpu_f64_t d)
-{
-    actual_double_t tmp = fpu_raw_f64(d);
-    return tmp > -1.0 && tmp < 18446744073709551616.0;
-}
-
-static forceinline bool fpu_f32_fits_i64(fpu_f32_t f)
-{
-    actual_float_t tmp = fpu_raw_f32(f);
-    return tmp > -9223372036854775809.f && tmp < 9223372036854775808.f;
-}
-
-static forceinline bool fpu_f64_fits_i64(fpu_f64_t d)
-{
-    actual_double_t tmp = fpu_raw_f64(d);
-    return tmp > -9223372036854775809.0 && tmp < 9223372036854775808.0;
-}
 
 // Float to integer
 static forceinline uint32_t fpu_fcvt_f32_to_u32(fpu_f32_t f)
@@ -893,10 +933,10 @@ static forceinline uint32_t fpu_fcvt_f32_to_u32(fpu_f32_t f)
         return (uint32_t)fpu_raw_f32(f);
     }
     fpu_raise_invalid();
-    if (fpu_is_nan32(f) || !fpu_signbit32(f)) {
-        return -1;
+    if (fpu_is_negative32(f)) {
+        return 0;
     }
-    return 0;
+    return -1;
 }
 
 static forceinline uint32_t fpu_fcvt_f64_to_u32(fpu_f64_t d)
@@ -906,10 +946,10 @@ static forceinline uint32_t fpu_fcvt_f64_to_u32(fpu_f64_t d)
         return (uint32_t)fpu_raw_f64(d);
     }
     fpu_raise_invalid();
-    if (fpu_is_nan64(d) || !fpu_signbit64(d)) {
-        return -1;
+    if (fpu_is_negative64(d)) {
+        return 0;
     }
-    return 0;
+    return -1;
 }
 
 static forceinline int32_t fpu_fcvt_f32_to_i32(fpu_f32_t f)
@@ -919,10 +959,10 @@ static forceinline int32_t fpu_fcvt_f32_to_i32(fpu_f32_t f)
         return (int32_t)fpu_raw_f32(f);
     }
     fpu_raise_invalid();
-    if (fpu_is_nan32(f) || !fpu_signbit32(f)) {
-        return 0x7FFFFFFFU;
+    if (fpu_is_negative32(f)) {
+        return 0x80000000U;
     }
-    return 0x80000000U;
+    return 0x7FFFFFFFU;
 }
 
 static forceinline int32_t fpu_fcvt_f64_to_i32(fpu_f64_t d)
@@ -932,96 +972,86 @@ static forceinline int32_t fpu_fcvt_f64_to_i32(fpu_f64_t d)
         return (int32_t)fpu_raw_f64(d);
     }
     fpu_raise_invalid();
-    if (fpu_is_nan64(d) || !fpu_signbit64(d)) {
-        return 0x7FFFFFFFU;
+    if (fpu_is_negative64(d)) {
+        return 0x80000000U;
     }
-    return 0x80000000U;
+    return 0x7FFFFFFFU;
 }
 
 static forceinline uint64_t fpu_fcvt_f32_to_u64(fpu_f32_t f)
 {
-    if (likely(fpu_raw_f32(f) > -1.f)) {
+    if (likely(fpu_f32_fits_u64(f))) {
+        fpu_soft_fenv_copium32(f);
 #if !defined(FPU_LIB_CORRECT_CONVERSION_FP_LONG)
-        if (likely(fpu_raw_f32(f) < 4294967296.f)) {
-            fpu_soft_fenv_copium32(f);
+        if (likely(fpu_f32_fits_u32(f))) {
             return (uint32_t)fpu_raw_f32(f);
-        } else if (likely(fpu_raw_f32(f) < 9223372036854775808.f)) {
-            fpu_soft_fenv_copium32(f);
+        } else if (likely(fpu_f32_fits_i64(f))) {
             return (int64_t)fpu_raw_f32(f);
         }
 #endif
-        if (likely(fpu_raw_f32(f) < 18446744073709551616.f)) {
-            fpu_soft_fenv_copium32(f);
-            return (uint64_t)fpu_raw_f32(f);
-        }
+        return (uint64_t)fpu_raw_f32(f);
     }
     fpu_raise_invalid();
-    if (fpu_is_nan32(f) || !fpu_signbit32(f)) {
-        return -1;
+    if (fpu_is_negative32(f)) {
+        return 0;
     }
-    return 0;
+    return -1;
 }
 
 static forceinline uint64_t fpu_fcvt_f64_to_u64(fpu_f64_t d)
 {
-    if (likely(fpu_raw_f64(d) > -1.0)) {
+    if (likely(fpu_f64_fits_u64(d))) {
+        fpu_soft_fenv_copium64(d);
 #if !defined(FPU_LIB_CORRECT_CONVERSION_FP_LONG)
-        if (likely(fpu_raw_f64(d) < 4294967296.0)) {
-            fpu_soft_fenv_copium64(d);
+        if (likely(fpu_f64_fits_u32(d))) {
             return (uint32_t)fpu_raw_f64(d);
-        } else if (likely(fpu_raw_f64(d) < 9223372036854775808.0)) {
-            fpu_soft_fenv_copium64(d);
+        } else if (likely(fpu_f64_fits_i64(d))) {
             return (int64_t)fpu_raw_f64(d);
         }
 #endif
-        if (likely(fpu_raw_f64(d) < 18446744073709551616.0)) {
-            fpu_soft_fenv_copium64(d);
-            return (uint64_t)fpu_raw_f64(d);
-        }
+        return (uint64_t)fpu_raw_f64(d);
     }
     fpu_raise_invalid();
-    if (fpu_is_nan64(d) || !fpu_signbit64(d)) {
-        return -1;
+    if (fpu_is_negative64(d)) {
+        return 0;
     }
-    return 0;
+    return -1;
 }
 
 static forceinline int64_t fpu_fcvt_f32_to_i64(fpu_f32_t f)
 {
-#if !defined(FPU_LIB_CORRECT_CONVERSION_FP_LONG)
-    if (likely(fpu_f32_fits_i32(f))) {
-        fpu_soft_fenv_copium32(f);
-        return (int32_t)fpu_raw_f32(f);
-    }
-#endif
     if (likely(fpu_f32_fits_i64(f))) {
         fpu_soft_fenv_copium32(f);
+#if !defined(FPU_LIB_CORRECT_CONVERSION_FP_LONG)
+        if (likely(fpu_f32_fits_i32(f))) {
+            return (int32_t)fpu_raw_f32(f);
+        }
+#endif
         return (int64_t)fpu_raw_f32(f);
     }
     fpu_raise_invalid();
-    if (fpu_is_nan32(f) || !fpu_signbit32(f)) {
-        return 0x7FFFFFFFFFFFFFFFULL;
+    if (fpu_is_negative32(f)) {
+        return 0x8000000000000000ULL;
     }
-    return 0x8000000000000000ULL;
+    return 0x7FFFFFFFFFFFFFFFULL;
 }
 
 static forceinline int64_t fpu_fcvt_f64_to_i64(fpu_f64_t d)
 {
-#if !defined(FPU_LIB_CORRECT_CONVERSION_FP_LONG)
-    if (likely(fpu_f64_fits_i32(d))) {
-        fpu_soft_fenv_copium64(d);
-        return (int32_t)fpu_raw_f64(d);
-    }
-#endif
     if (likely(fpu_f64_fits_i64(d))) {
         fpu_soft_fenv_copium64(d);
+#if !defined(FPU_LIB_CORRECT_CONVERSION_FP_LONG)
+        if (likely(fpu_f64_fits_i32(d))) {
+            return (int32_t)fpu_raw_f64(d);
+        }
+#endif
         return (int64_t)fpu_raw_f64(d);
     }
     fpu_raise_invalid();
-    if (fpu_is_nan64(d) || !fpu_signbit64(d)) {
-        return 0x7FFFFFFFFFFFFFFFULL;
+    if (fpu_is_negative64(d)) {
+        return 0x8000000000000000ULL;
     }
-    return 0x8000000000000000ULL;
+    return 0x7FFFFFFFFFFFFFFFULL;
 }
 
 /*
@@ -1165,12 +1195,11 @@ static forceinline fpu_f32_t fpu_min32(fpu_f32_t a, fpu_f32_t b)
         return a;
     } else if (likely(fpu_is_flt32_quiet(b, a))) {
         return b;
-    } else if (unlikely(fpu_is_nan32(b))) {
+    } else if (fpu_is_negative32(a)) {
         return a;
-    } else if (unlikely(fpu_is_nan32(a))) {
+    } else {
         return b;
     }
-    return fpu_signbit32(a) ? a : b;
 #else
     if (unlikely(fpu_is_nan32(a))) {
         return b;
@@ -1185,35 +1214,6 @@ static forceinline fpu_f32_t fpu_min32(fpu_f32_t a, fpu_f32_t b)
 #endif
 }
 
-static forceinline fpu_f32_t fpu_max32(fpu_f32_t a, fpu_f32_t b)
-{
-#if defined(FPU_LIB_CONFORMING_BUILTIN_IEEE754_2008_FMINMAX)
-    return fpu_wrap_f32(__builtin_fmaxf(fpu_raw_f32(a), fpu_raw_f32(b)));
-#elif defined(FPU_LIB_CONFORMING_BUILTIN_QUIET_COMPARE)
-    if (fpu_is_flt32_quiet(b, a)) {
-        return a;
-    } else if (likely(fpu_is_flt32_quiet(a, b))) {
-        return b;
-    } else if (unlikely(fpu_is_nan32(b))) {
-        return a;
-    } else if (unlikely(fpu_is_nan32(a))) {
-        return b;
-    }
-    return fpu_signbit32(a) ? b : a;
-#else
-    if (unlikely(fpu_is_nan32(a))) {
-        return b;
-    } else if (unlikely(fpu_is_nan32(b))) {
-        return a;
-    } else if (fpu_raw_f32(a) > fpu_raw_f32(b)) {
-        return a;
-    } else if (fpu_raw_f32(b) > fpu_raw_f32(a)) {
-        return b;
-    }
-    return fpu_signbit32(a) ? b : a;
-#endif
-}
-
 static forceinline fpu_f64_t fpu_min64(fpu_f64_t a, fpu_f64_t b)
 {
 #if defined(FPU_LIB_CONFORMING_BUILTIN_IEEE754_2008_FMINMAX)
@@ -1223,12 +1223,11 @@ static forceinline fpu_f64_t fpu_min64(fpu_f64_t a, fpu_f64_t b)
         return a;
     } else if (likely(fpu_is_flt64_quiet(b, a))) {
         return b;
-    } else if (unlikely(fpu_is_nan64(b))) {
+    } else if (fpu_is_negative64(a)) {
         return a;
-    } else if (unlikely(fpu_is_nan64(a))) {
+    } else {
         return b;
     }
-    return fpu_signbit64(a) ? a : b;
 #else
     if (unlikely(fpu_is_nan64(a))) {
         return b;
@@ -1243,6 +1242,34 @@ static forceinline fpu_f64_t fpu_min64(fpu_f64_t a, fpu_f64_t b)
 #endif
 }
 
+static forceinline fpu_f32_t fpu_max32(fpu_f32_t a, fpu_f32_t b)
+{
+#if defined(FPU_LIB_CONFORMING_BUILTIN_IEEE754_2008_FMINMAX)
+    return fpu_wrap_f32(__builtin_fmaxf(fpu_raw_f32(a), fpu_raw_f32(b)));
+#elif defined(FPU_LIB_CONFORMING_BUILTIN_QUIET_COMPARE)
+    if (fpu_is_flt32_quiet(b, a)) {
+        return a;
+    } else if (likely(fpu_is_flt32_quiet(a, b))) {
+        return b;
+    } else if (fpu_is_positive32(a)) {
+        return a;
+    } else {
+        return b;
+    }
+#else
+    if (unlikely(fpu_is_nan32(a))) {
+        return b;
+    } else if (unlikely(fpu_is_nan32(b))) {
+        return a;
+    } else if (fpu_raw_f32(a) > fpu_raw_f32(b)) {
+        return a;
+    } else if (fpu_raw_f32(b) > fpu_raw_f32(a)) {
+        return b;
+    }
+    return fpu_signbit32(a) ? b : a;
+#endif
+}
+
 static forceinline fpu_f64_t fpu_max64(fpu_f64_t a, fpu_f64_t b)
 {
 #if defined(FPU_LIB_CONFORMING_BUILTIN_IEEE754_2008_FMINMAX)
@@ -1252,12 +1279,11 @@ static forceinline fpu_f64_t fpu_max64(fpu_f64_t a, fpu_f64_t b)
         return a;
     } else if (likely(fpu_is_flt64_quiet(a, b))) {
         return b;
-    } else if (unlikely(fpu_is_nan64(b))) {
+    } else if (fpu_is_positive64(a)) {
         return a;
-    } else if (unlikely(fpu_is_nan64(a))) {
+    } else {
         return b;
     }
-    return fpu_signbit64(a) ? b : a;
 #else
     if (unlikely(fpu_is_nan64(a))) {
         return b;

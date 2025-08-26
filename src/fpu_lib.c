@@ -283,54 +283,44 @@ void fpu_set_rounding_mode(uint32_t mode)
     UNUSED(mode);
 }
 
-#define FPU_FP32_EXPONENT_MASK 0x7F800000U
-#define FPU_FP32_MANTISSA_MASK 0x007FFFFFU
-#define FPU_FP32_QUIETNAN_MASK 0x00400000U
-#define FPU_FP32_SIGNEDFP_MASK 0x80000000U
-
-#define FPU_FP64_EXPONENT_MASK 0x7FF0000000000000ULL
-#define FPU_FP64_MANTISSA_MASK 0x000FFFFFFFFFFFFFULL
-#define FPU_FP64_QUIETNAN_MASK 0x0008000000000000ULL
-#define FPU_FP64_SIGNEDFP_MASK 0x8000000000000000ULL
-
 slow_path uint32_t fpu_fclass32(fpu_f32_t f)
 {
     uint32_t u    = fpu_bit_f32_to_u32(f);
-    uint32_t exp  = u & FPU_FP32_EXPONENT_MASK;
-    uint32_t mant = u & FPU_FP32_MANTISSA_MASK;
-    if (exp == FPU_FP32_EXPONENT_MASK) {
+    uint32_t exp  = u & FPU_LIB_FP32_EXPONENT_MASK;
+    uint32_t mant = u & FPU_LIB_FP32_MANTISSA_MASK;
+    if (exp == FPU_LIB_FP32_EXPONENT_MASK) {
         if (mant) {
-            return (u & FPU_FP32_QUIETNAN_MASK) ? FPU_CLASS_NAN_QUIET : FPU_CLASS_NAN_SIG;
+            return (u & FPU_LIB_FP32_QUIETNAN_MASK) ? FPU_CLASS_NAN_QUIET : FPU_CLASS_NAN_SIG;
         } else {
-            return (u & FPU_FP32_SIGNEDFP_MASK) ? FPU_CLASS_NEG_INF : FPU_CLASS_POS_INF;
+            return (u & FPU_LIB_FP32_SIGNEDFP_MASK) ? FPU_CLASS_NEG_INF : FPU_CLASS_POS_INF;
         }
     } else if (!exp && mant) {
-        return (u & FPU_FP32_SIGNEDFP_MASK) ? FPU_CLASS_NEG_SUBNORMAL : FPU_CLASS_POS_SUBNORMAL;
+        return (u & FPU_LIB_FP32_SIGNEDFP_MASK) ? FPU_CLASS_NEG_SUBNORMAL : FPU_CLASS_POS_SUBNORMAL;
     } else if (u << 1) {
-        return (u & FPU_FP32_SIGNEDFP_MASK) ? FPU_CLASS_NEG_NORMAL : FPU_CLASS_POS_NORMAL;
+        return (u & FPU_LIB_FP32_SIGNEDFP_MASK) ? FPU_CLASS_NEG_NORMAL : FPU_CLASS_POS_NORMAL;
     }
-    return (u & FPU_FP32_SIGNEDFP_MASK) ? FPU_CLASS_NEG_ZERO : FPU_CLASS_POS_ZERO;
+    return (u & FPU_LIB_FP32_SIGNEDFP_MASK) ? FPU_CLASS_NEG_ZERO : FPU_CLASS_POS_ZERO;
 }
 
 slow_path uint32_t fpu_fclass64(fpu_f64_t d)
 {
     uint64_t u    = fpu_bit_f64_to_u64(d);
-    uint64_t exp  = u & FPU_FP64_EXPONENT_MASK;
-    uint64_t mant = u & FPU_FP64_MANTISSA_MASK;
-    if (exp == FPU_FP64_EXPONENT_MASK) {
+    uint64_t exp  = u & FPU_LIB_FP64_EXPONENT_MASK;
+    uint64_t mant = u & FPU_LIB_FP64_MANTISSA_MASK;
+    if (exp == FPU_LIB_FP64_EXPONENT_MASK) {
         // Infinity or NaN
         if (mant) {
             // NaN
-            return (u & FPU_FP64_QUIETNAN_MASK) ? FPU_CLASS_NAN_QUIET : FPU_CLASS_NAN_SIG;
+            return (u & FPU_LIB_FP64_QUIETNAN_MASK) ? FPU_CLASS_NAN_QUIET : FPU_CLASS_NAN_SIG;
         } else {
-            return (u & FPU_FP64_SIGNEDFP_MASK) ? FPU_CLASS_NEG_INF : FPU_CLASS_POS_INF;
+            return (u & FPU_LIB_FP64_SIGNEDFP_MASK) ? FPU_CLASS_NEG_INF : FPU_CLASS_POS_INF;
         }
     } else if (!exp && mant) {
-        return (u & FPU_FP64_SIGNEDFP_MASK) ? FPU_CLASS_NEG_SUBNORMAL : FPU_CLASS_POS_SUBNORMAL;
+        return (u & FPU_LIB_FP64_SIGNEDFP_MASK) ? FPU_CLASS_NEG_SUBNORMAL : FPU_CLASS_POS_SUBNORMAL;
     } else if (u << 1) {
-        return (u & FPU_FP64_SIGNEDFP_MASK) ? FPU_CLASS_NEG_NORMAL : FPU_CLASS_POS_NORMAL;
+        return (u & FPU_LIB_FP64_SIGNEDFP_MASK) ? FPU_CLASS_NEG_NORMAL : FPU_CLASS_POS_NORMAL;
     }
-    return (u & FPU_FP64_SIGNEDFP_MASK) ? FPU_CLASS_NEG_ZERO : FPU_CLASS_POS_ZERO;
+    return (u & FPU_LIB_FP64_SIGNEDFP_MASK) ? FPU_CLASS_NEG_ZERO : FPU_CLASS_POS_ZERO;
 }
 
 slow_path void fpu_raise_invalid(void)
