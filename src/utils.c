@@ -21,7 +21,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include <stdio.h>
 #include <string.h>
 
-SOURCE_OPTIMIZATION_SIZE
+PUSH_OPTIMIZATION_SIZE
 
 /*
  * String/Integer conversions
@@ -646,3 +646,5 @@ GNU_DESTRUCTOR void full_deinit(void)
         } while (func);
     }
 }
+
+POP_OPTIMIZATION_SIZE
