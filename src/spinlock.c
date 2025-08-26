@@ -13,6 +13,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "threading.h"
 #include "utils.h"
 
+PUSH_OPTIMIZATION_SIZE
+
 // Attemts to claim the lock before blocking in the kernel
 #define SPINLOCK_USER_RETRIES 40
 
@@ -207,3 +209,5 @@ slow_path void spin_read_lock_wake(spinlock_t* lock, uint32_t prev)
         thread_futex_wake(&lock->flag, 1);
     }
 }
+
+POP_OPTIMIZATION_SIZE
