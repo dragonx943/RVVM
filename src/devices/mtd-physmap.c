@@ -12,7 +12,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "fdtlib.h"
 #include "utils.h"
 
-SOURCE_OPTIMIZATION_SIZE
+PUSH_OPTIMIZATION_SIZE
 
 typedef struct {
     blkdev_t* blk;
@@ -29,13 +29,15 @@ static void mtd_reset(rvvm_mmio_dev_t* dev)
 {
     mtd_dev_t* mtd = dev->data;
     void* ptr = rvvm_get_dma_ptr(dev->machine, rvvm_get_opt(dev->machine, RVVM_OPT_MEM_BASE), blk_getsize(mtd->blk));
-    if (ptr) blk_read(mtd->blk, ptr, blk_getsize(mtd->blk), 0);
+    if (ptr) {
+        blk_read(mtd->blk, ptr, blk_getsize(mtd->blk), 0);
+    }
 }
 
 static rvvm_mmio_type_t mtd_type = {
-    .name = "mtd_physmap",
+    .name   = "mtd_physmap",
     .remove = mtd_remove,
-    .reset = mtd_reset,
+    .reset  = mtd_reset,
 };
 
 static bool mtd_mmio_read(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint8_t size)
@@ -53,20 +55,22 @@ static bool mtd_mmio_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint
 PUBLIC rvvm_mmio_dev_t* mtd_physmap_init_blk(rvvm_machine_t* machine, rvvm_addr_t addr, void* blk_dev)
 {
     mtd_dev_t* mtd = safe_new_obj(mtd_dev_t);
-    mtd->blk = blk_dev;
+    mtd->blk       = blk_dev;
 
     rvvm_mmio_dev_t mtd_mmio = {
-        .addr = addr,
-        .size = blk_getsize(mtd->blk),
+        .addr        = addr,
+        .size        = blk_getsize(mtd->blk),
         .min_op_size = 1,
         .max_op_size = 8,
-        .read = mtd_mmio_read,
-        .write = mtd_mmio_write,
-        .data = mtd,
-        .type = &mtd_type,
+        .read        = mtd_mmio_read,
+        .write       = mtd_mmio_write,
+        .data        = mtd,
+        .type        = &mtd_type,
     };
     rvvm_mmio_dev_t* mmio = rvvm_attach_mmio(machine, &mtd_mmio);
-    if (mmio == NULL) return mmio;
+    if (mmio == NULL) {
+        return mmio;
+    }
 #ifdef USE_FDT
     struct fdt_node* mtd_fdt = fdt_node_create_reg("flash", mtd_mmio.addr);
     fdt_node_add_prop_reg(mtd_fdt, "reg", mtd_mmio.addr, mtd_mmio.size);
@@ -76,7 +80,10 @@ PUBLIC rvvm_mmio_dev_t* mtd_physmap_init_blk(rvvm_machine_t* machine, rvvm_addr_
     fdt_node_add_prop_u32(mtd_fdt, "#size-cells", 1);
     {
         struct fdt_node* partition0 = fdt_node_create("partition@0");
-        uint32_t reg[2] = { 0, mtd_mmio.size, };
+        uint32_t         reg[2]     = {
+            0,
+            mtd_mmio.size,
+        };
         fdt_node_add_prop_cells(partition0, "reg", reg, 2);
         fdt_node_add_prop_str(partition0, "label", "firmware");
         fdt_node_add_child(mtd_fdt, partition0);
@@ -89,7 +96,9 @@ PUBLIC rvvm_mmio_dev_t* mtd_physmap_init_blk(rvvm_machine_t* machine, rvvm_addr_
 PUBLIC rvvm_mmio_dev_t* mtd_physmap_init(rvvm_machine_t* machine, rvvm_addr_t addr, const char* image_path, bool rw)
 {
     blkdev_t* blk = blk_open(image_path, rw ? BLKDEV_RW : 0);
-    if (blk == NULL) return NULL;
+    if (blk == NULL) {
+        return NULL;
+    }
     return mtd_physmap_init_blk(machine, addr, blk);
 }
 
@@ -97,3 +106,5 @@ PUBLIC rvvm_mmio_dev_t* mtd_physmap_init_auto(rvvm_machine_t* machine, const cha
 {
     return mtd_physmap_init(machine, MTD_PHYSMAP_DEFAULT_MMIO, image_path, rw);
 }
+
+POP_OPTIMIZATION_SIZE
