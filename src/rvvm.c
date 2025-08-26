@@ -20,6 +20,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "utils.h"
 #include "vector.h"
 
+PUSH_OPTIMIZATION_SIZE
+
 static spinlock_t                global_lock     = SPINLOCK_INIT;
 static vector_t(rvvm_machine_t*) global_machines = {0};
 static bool                      global_manual   = false;
@@ -1183,3 +1185,5 @@ PUBLIC void rvvm_write_cpu_reg(rvvm_hart_t* thread, size_t reg_id, rvvm_addr_t r
         rvvm_warn("Unknown register %d in rvvm_write_cpu_reg()!", (uint32_t)reg_id);
     }
 }
+
+POP_OPTIMIZATION_SIZE
