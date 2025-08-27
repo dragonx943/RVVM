@@ -422,14 +422,16 @@ void thread_sched_yield(void)
 
 void thread_cpu_relax(void)
 {
-#if defined(GNU_EXTS) && defined(__x86_64__)
-    __asm__ volatile("pause" : : : "memory");
+#if defined(GNU_EXTS) && (defined(__i386__) || defined(__x86_64__))
+    __asm__ __volatile__("pause" : : : "memory");
 #elif defined(GNU_EXTS) && defined(__aarch64__)
-    __asm__ volatile("isb sy" : : : "memory");
+    __asm__ __volatile__("isb sy" : : : "memory");
 #elif defined(GNU_EXTS) && defined(__riscv)
-    __asm__ volatile(".4byte 0x100000F" : : : "memory");
+    __asm__ __volatile__(".4byte 0x100000F" : : : "memory");
 #elif defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64))
     _mm_pause();
+#else
+    atomic_fence_ex(ATOMIC_SEQ_CST);
 #endif
 }
 
