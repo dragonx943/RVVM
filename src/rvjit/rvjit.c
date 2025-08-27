@@ -56,17 +56,17 @@ static inline void rvjit_arm64_fluch_icache(const void* addr, size_t size)
     for (size_t cl = align_size_down((size_t)addr, dsize); cl < end; cl += dsize) {
         // Use "dc civac" instead of "dc cvau", as this is the suggested workaround for
         // Cortex-A53 errata 819472, 826319, 827319 and 824069.
-        __asm__ volatile("dc civac, %0" : : "r"(cl) : "memory");
+        __asm__ __volatile__("dc civac, %0" : : "r"(cl) : "memory");
     }
     // Store barrier
-    __asm__ volatile("dsb ish" : : : "memory");
+    __asm__ __volatile__("dsb ish" : : : "memory");
     // Flush instruction cache
     for (size_t cl = align_size_down((size_t)addr, isize); cl < end; cl += isize) {
-        __asm__ volatile("ic ivau, %0" : : "r"(cl) : "memory");
+        __asm__ __volatile__("ic ivau, %0" : : "r"(cl) : "memory");
     }
     // Load/store barrier
-    __asm__ volatile("dsb ish" : : : "memory");
-    __asm__ volatile("isb" : : : "memory");
+    __asm__ __volatile__("dsb ish" : : : "memory");
+    __asm__ __volatile__("isb" : : : "memory");
 }
 
 #endif
