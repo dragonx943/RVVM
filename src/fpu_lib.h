@@ -527,7 +527,7 @@ static forceinline fpu_f32_t fpu_nan_unbox_f32(fpu_f64_t d)
     return fpu_bit_u32_to_f32(FPU_LIB_FP32_CANONICAL_NAN);
 }
 
-static forceinline fpu_f32_t fpu_load_f32_le(const void* addr)
+TSAN_SUPPRESS static forceinline fpu_f32_t fpu_load_f32_le(const void* addr)
 {
 #if defined(HOST_LITTLE_ENDIAN)
     return *(const safe_aliasing fpu_f32_t*)addr;
@@ -536,7 +536,7 @@ static forceinline fpu_f32_t fpu_load_f32_le(const void* addr)
 #endif
 }
 
-static forceinline void fpu_store_f32_le(void* addr, fpu_f32_t f)
+TSAN_SUPPRESS static forceinline void fpu_store_f32_le(void* addr, fpu_f32_t f)
 {
 #if defined(HOST_LITTLE_ENDIAN)
     *(safe_aliasing fpu_f32_t*)addr = f;
@@ -545,7 +545,7 @@ static forceinline void fpu_store_f32_le(void* addr, fpu_f32_t f)
 #endif
 }
 
-static forceinline fpu_f64_t fpu_load_f64_le(const void* addr)
+TSAN_SUPPRESS static forceinline fpu_f64_t fpu_load_f64_le(const void* addr)
 {
 #if defined(HOST_LITTLE_ENDIAN)
     return *(const safe_aliasing fpu_f64_t*)addr;
@@ -554,7 +554,7 @@ static forceinline fpu_f64_t fpu_load_f64_le(const void* addr)
 #endif
 }
 
-static forceinline void fpu_store_f64_le(void* addr, fpu_f64_t d)
+TSAN_SUPPRESS static forceinline void fpu_store_f64_le(void* addr, fpu_f64_t d)
 {
 #if defined(HOST_LITTLE_ENDIAN)
     *(safe_aliasing fpu_f64_t*)addr = d;
