@@ -150,7 +150,7 @@ static forceinline void atomic_compiler_barrier(void)
 #if defined(C11_ATOMICS_IMPL)
     atomic_signal_fence(memory_order_seq_cst);
 #elif defined(GNU_EXTS)
-    __asm__ volatile("" : : : "memory");
+    __asm__ __volatile__("" : : : "memory");
 #elif defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_AMD64))
     _ReadWriteBarrier();
 #endif
@@ -191,7 +191,7 @@ static forceinline void atomic_fence_ex(int memorder)
     atomic_compiler_barrier();
     if (memorder == ATOMIC_SEQ_CST) {
         // Clang and older GCC use a sub-optimal `mfence` instruction for SEQ_CST fences
-        __asm__ volatile("lock orq $0, (%%rsp)" : : : "memory");
+        __asm__ __volatile__("lock orq $0, (%%rsp)" : : : "memory");
     }
 #elif defined(C11_ATOMICS_IMPL) || defined(GNU_ATOMICS_IMPL)
     atomic_thread_fence(memorder);
