@@ -49,10 +49,10 @@ static uint32_t fpu_get_exceptions_internal(void)
 #if defined(FENV_8087_IMPL) || defined(FENV_SSE2_IMPL)
 #if defined(FENV_SSE2_IMPL)
     uint32_t sw = 0;
-    __asm__ volatile("stmxcsr %0" : "=m"(*&sw) : : "memory");
+    __asm__ __volatile__("stmxcsr %0" : "=m"(*&sw) : : "memory");
 #else
     uint16_t sw = 0;
-    __asm__ volatile("fnstsw %0" : "=a"(sw) : : "memory");
+    __asm__ __volatile__("fnstsw %0" : "=a"(sw) : : "memory");
 #endif
     if (unlikely(sw & 0x3D)) {
         if (sw & 0x01) {
@@ -109,10 +109,10 @@ static void fpu_set_exceptions_internal(uint32_t exceptions)
 #if defined(FENV_8087_IMPL) || defined(FENV_SSE2_IMPL)
     uint32_t sw = 0, nsw = 0;
 #if defined(FENV_SSE2_IMPL)
-    __asm__ volatile("stmxcsr %0" : "=m"(*&sw) : : "memory");
+    __asm__ __volatile__("stmxcsr %0" : "=m"(*&sw) : : "memory");
 #else
     uint16_t fenv_8087[32] = ZERO_INIT;
-    __asm__ volatile("fnstenv %0" : "=m"(*&fenv_8087) : : "memory");
+    __asm__ __volatile__("fnstenv %0" : "=m"(*&fenv_8087) : : "memory");
     sw = fenv_8087[2];
 #endif
     nsw = sw & ~0x0000003DU;
@@ -135,10 +135,10 @@ static void fpu_set_exceptions_internal(uint32_t exceptions)
     }
     if (nsw != sw) {
 #if defined(FENV_SSE2_IMPL)
-        __asm__ volatile("ldmxcsr %0" : : "m"(*&nsw) : "memory");
+        __asm__ __volatile__("ldmxcsr %0" : : "m"(*&nsw) : "memory");
 #else
         fenv_8087[2] = nsw;
-        __asm__ volatile("fldenv %0" : : "m"(*&fenv_8087) : "memory");
+        __asm__ __volatile__("fldenv %0" : : "m"(*&fenv_8087) : "memory");
 #endif
     }
 #elif defined(FENV_EXCEPTIONS_IMPL)
@@ -182,7 +182,7 @@ static void fpu_set_rounding_mode_internal(uint32_t mode)
 {
 #if defined(FENV_SSE2_IMPL)
     uint32_t cw = 0, ncw = 0;
-    __asm__ volatile("stmxcsr %0" : "=m"(*&cw) : : "memory");
+    __asm__ __volatile__("stmxcsr %0" : "=m"(*&cw) : : "memory");
     ncw = cw & ~0x6000U;
     switch (mode) {
         case FPU_LIB_ROUND_DN:
@@ -196,11 +196,11 @@ static void fpu_set_rounding_mode_internal(uint32_t mode)
             break;
     }
     if (ncw != cw) {
-        __asm__ volatile("ldmxcsr %0" : : "m"(*&ncw) : "memory");
+        __asm__ __volatile__("ldmxcsr %0" : : "m"(*&ncw) : "memory");
     }
 #elif defined(FENV_8087_IMPL)
     uint16_t cw = 0, ncw = 0;
-    __asm__ volatile("fnstcw %0" : "=m"(*&cw) : : "memory");
+    __asm__ __volatile__("fnstcw %0" : "=m"(*&cw) : : "memory");
     ncw = cw & ~0x0C00U;
     switch (mode) {
         case FPU_LIB_ROUND_DN:
@@ -214,7 +214,7 @@ static void fpu_set_rounding_mode_internal(uint32_t mode)
             break;
     }
     if (ncw != cw) {
-        __asm__ volatile("fldcw %0" : : "m"(*&ncw) : "memory");
+        __asm__ __volatile__("fldcw %0" : : "m"(*&ncw) : "memory");
     }
 #elif defined(FENV_ROUNDING_IMPL)
     switch (mode) {
