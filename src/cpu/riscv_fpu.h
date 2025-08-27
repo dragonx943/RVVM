@@ -79,7 +79,7 @@ static forceinline void riscv_write_s(rvvm_hart_t* vm, regid_t reg, fpu_f32_t va
     if (likely(!fpu_is_nan32(val))) {
         riscv_emit_s(vm, reg, val);
     } else {
-        riscv_emit_s(vm, reg, fpu_bit_u32_to_f32(0x7FC00000U));
+        riscv_emit_s(vm, reg, fpu_bit_u32_to_f32(FPU_LIB_FP32_CANONICAL_NAN));
     }
 }
 
@@ -167,10 +167,16 @@ static forceinline void riscv_emulate_f_fmadd(rvvm_hart_t* vm, const uint32_t in
     if (likely(riscv_fpu_is_enabled(vm) && riscv_fpu_rm_is_valid(rm))) {
         switch (funct2) {
             case 0x0: // fmadd.s
-                riscv_emit_s(vm, rds, fpu_fma32(riscv_view_s(vm, rs1), riscv_view_s(vm, rs2), riscv_view_s(vm, rs3)));
+                riscv_emit_s(vm, rds,
+                             fpu_fma32(riscv_view_s(vm, rs1), //
+                                       riscv_view_s(vm, rs2), //
+                                       riscv_view_s(vm, rs3)));
                 return;
             case 0x1: // fmadd.d
-                riscv_emit_d(vm, rds, fpu_fma64(riscv_view_d(vm, rs1), riscv_view_d(vm, rs2), riscv_view_d(vm, rs3)));
+                riscv_emit_d(vm, rds,
+                             fpu_fma64(riscv_view_d(vm, rs1), //
+                                       riscv_view_d(vm, rs2), //
+                                       riscv_view_d(vm, rs3)));
                 return;
         }
     }
@@ -189,10 +195,16 @@ static forceinline void riscv_emulate_f_fmsub(rvvm_hart_t* vm, const uint32_t in
     if (likely(riscv_fpu_is_enabled(vm) && riscv_fpu_rm_is_valid(rm))) {
         switch (funct2) {
             case 0x0: // fmsub.s
-                riscv_emit_s(vm, rds, fpu_fma32(riscv_view_s(vm, rs1), riscv_view_s(vm, rs2), fpu_neg32(riscv_view_s(vm, rs3))));
+                riscv_emit_s(vm, rds,
+                             fpu_fma32(riscv_view_s(vm, rs1), //
+                                       riscv_view_s(vm, rs2), //
+                                       fpu_neg32(riscv_view_s(vm, rs3))));
                 return;
             case 0x1: // fmsub.d
-                riscv_emit_d(vm, rds, fpu_fma64(riscv_view_d(vm, rs1), riscv_view_d(vm, rs2), fpu_neg64(riscv_view_d(vm, rs3))));
+                riscv_emit_d(vm, rds,
+                             fpu_fma64(riscv_view_d(vm, rs1), //
+                                       riscv_view_d(vm, rs2), //
+                                       fpu_neg64(riscv_view_d(vm, rs3))));
                 return;
         }
     }
@@ -211,10 +223,16 @@ static forceinline void riscv_emulate_f_fnmsub(rvvm_hart_t* vm, const uint32_t i
     if (likely(riscv_fpu_is_enabled(vm) && riscv_fpu_rm_is_valid(rm))) {
         switch (funct2) {
             case 0x0: // fnmsub.s
-                riscv_emit_s(vm, rds, fpu_fma32(fpu_neg32(riscv_view_s(vm, rs1)), riscv_view_s(vm, rs2), riscv_view_s(vm, rs3)));
+                riscv_emit_s(vm, rds,
+                             fpu_fma32(fpu_neg32(riscv_view_s(vm, rs1)), //
+                                       riscv_view_s(vm, rs2),            //
+                                       riscv_view_s(vm, rs3)));
                 return;
             case 0x1: // fnmsub.d
-                riscv_emit_d(vm, rds, fpu_fma64(fpu_neg64(riscv_view_d(vm, rs1)), riscv_view_d(vm, rs2), riscv_view_d(vm, rs3)));
+                riscv_emit_d(vm, rds,
+                             fpu_fma64(fpu_neg64(riscv_view_d(vm, rs1)), //
+                                       riscv_view_d(vm, rs2),            //
+                                       riscv_view_d(vm, rs3)));
                 return;
         }
     }
@@ -233,10 +251,16 @@ static forceinline void riscv_emulate_f_fnmadd(rvvm_hart_t* vm, const uint32_t i
     if (likely(riscv_fpu_is_enabled(vm) && riscv_fpu_rm_is_valid(rm))) {
         switch (funct2) {
             case 0x0: // fnmadd.s
-                riscv_emit_s(vm, rds, fpu_neg32(fpu_fma32(riscv_view_s(vm, rs1), riscv_view_s(vm, rs2), riscv_view_s(vm, rs3))));
+                riscv_emit_s(vm, rds,
+                             fpu_neg32(fpu_fma32(riscv_view_s(vm, rs1), //
+                                                 riscv_view_s(vm, rs2), //
+                                                 riscv_view_s(vm, rs3))));
                 return;
             case 0x1: // fnmadd.d
-                riscv_emit_d(vm, rds, fpu_neg64(fpu_fma64(riscv_view_d(vm, rs1), riscv_view_d(vm, rs2), riscv_view_d(vm, rs3))));
+                riscv_emit_d(vm, rds,
+                             fpu_neg64(fpu_fma64(riscv_view_d(vm, rs1), //
+                                                 riscv_view_d(vm, rs2), //
+                                                 riscv_view_d(vm, rs3))));
                 return;
         }
     }
@@ -350,17 +374,17 @@ static forceinline void riscv_emulate_f_opc_op(rvvm_hart_t* vm, const uint32_t i
             case RISCV_FCVT_W_S:
                 switch (rs2) {
                     case 0x0: // fcvt.w.s
-                        riscv_write_reg(vm, rds, (int32_t)fpu_fcvt_f32_to_i32(riscv_view_s(vm, rs1)));
+                        riscv_write_reg(vm, rds, (int32_t)fpu_round_f32_to_i32(riscv_view_s(vm, rs1), rm));
                         return;
                     case 0x1: // fcvt.wu.s
-                        riscv_write_reg(vm, rds, (int32_t)fpu_fcvt_f32_to_u32(riscv_view_s(vm, rs1)));
+                        riscv_write_reg(vm, rds, (int32_t)fpu_round_f32_to_u32(riscv_view_s(vm, rs1), rm));
                         return;
 #ifdef RV64
                     case 0x2: // fcvt.l.s
-                        riscv_write_reg(vm, rds, (int64_t)fpu_fcvt_f32_to_i64(riscv_view_s(vm, rs1)));
+                        riscv_write_reg(vm, rds, (int64_t)fpu_round_f32_to_i64(riscv_view_s(vm, rs1), rm));
                         return;
                     case 0x3: // fcvt.lu.s
-                        riscv_write_reg(vm, rds, (int64_t)fpu_fcvt_f32_to_u64(riscv_view_s(vm, rs1)));
+                        riscv_write_reg(vm, rds, (int64_t)fpu_round_f32_to_u64(riscv_view_s(vm, rs1), rm));
                         return;
 #endif
                 }
@@ -368,17 +392,17 @@ static forceinline void riscv_emulate_f_opc_op(rvvm_hart_t* vm, const uint32_t i
             case RISCV_FCVT_W_D:
                 switch (rs2) {
                     case 0x0: // fcvt.w.d
-                        riscv_write_reg(vm, rds, (int32_t)fpu_fcvt_f64_to_i32(riscv_view_d(vm, rs1)));
+                        riscv_write_reg(vm, rds, (int32_t)fpu_round_f64_to_i32(riscv_view_d(vm, rs1), rm));
                         return;
                     case 0x1: // fcvt.wu.d
-                        riscv_write_reg(vm, rds, (int32_t)fpu_fcvt_f64_to_u32(riscv_view_d(vm, rs1)));
+                        riscv_write_reg(vm, rds, (int32_t)fpu_round_f64_to_u32(riscv_view_d(vm, rs1), rm));
                         return;
 #ifdef RV64
                     case 0x2: // fcvt.l.d
-                        riscv_write_reg(vm, rds, (int64_t)fpu_fcvt_f64_to_i64(riscv_view_d(vm, rs1)));
+                        riscv_write_reg(vm, rds, (int64_t)fpu_round_f64_to_i64(riscv_view_d(vm, rs1), rm));
                         return;
                     case 0x3: // fcvt.lu.d
-                        riscv_write_reg(vm, rds, (int64_t)fpu_fcvt_f64_to_u64(riscv_view_d(vm, rs1)));
+                        riscv_write_reg(vm, rds, (int64_t)fpu_round_f64_to_u64(riscv_view_d(vm, rs1), rm));
                         return;
 #endif
                 }
