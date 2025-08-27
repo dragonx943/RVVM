@@ -178,47 +178,27 @@ static void fpu_set_exceptions_internal(uint32_t exceptions)
     UNUSED(exceptions);
 }
 
-uint32_t fpu_get_exceptions(void)
+static void fpu_set_rounding_mode_internal(uint32_t mode)
 {
-    return fpu_get_exceptions_internal() | fpu_exceptions;
-}
-
-void fpu_set_exceptions(uint32_t new_exceptions)
-{
-    new_exceptions &= FPU_ENV_FLAGS_ALL;
-    fpu_exceptions  = new_exceptions;
-    if (fpu_get_exceptions_internal() & ~fpu_exceptions) {
-        fpu_set_exceptions_internal(0);
+#if defined(FENV_SSE2_IMPL)
+    uint32_t cw = 0, ncw = 0;
+    __asm__ volatile("stmxcsr %0" : "=m"(*&cw) : : "memory");
+    ncw = cw & ~0x6000U;
+    switch (mode) {
+        case FPU_LIB_ROUND_DN:
+            ncw |= 0x2000U;
+            break;
+        case FPU_LIB_ROUND_UP:
+            ncw |= 0x4000U;
+            break;
+        case FPU_LIB_ROUND_TZ:
+            ncw |= 0x6000U;
+            break;
     }
-}
-
-void fpu_raise_exceptions(uint32_t set_exceptions)
-{
-    set_exceptions &= FPU_ENV_FLAGS_ALL;
-    fpu_exceptions |= set_exceptions;
-}
-
-void fpu_clear_exceptions(uint32_t clr_exceptions)
-{
-    clr_exceptions &= FPU_ENV_FLAGS_ALL;
-    fpu_exceptions &= ~clr_exceptions;
-    if (fpu_get_exceptions_internal() & ~fpu_exceptions) {
-        fpu_set_exceptions_internal(0);
+    if (ncw != cw) {
+        __asm__ volatile("ldmxcsr %0" : : "m"(*&ncw) : "memory");
     }
-}
-
-uint32_t fpu_get_rounding_mode(void)
-{
-    return fpu_round_mode;
-}
-
-void fpu_set_rounding_mode(uint32_t mode)
-{
-    if (mode > FPU_LIB_ROUND_MM) {
-        mode = FPU_LIB_ROUND_NE;
-    }
-    fpu_round_mode = mode;
-#if defined(FENV_8087_IMPL)
+#elif defined(FENV_8087_IMPL)
     uint16_t cw = 0, ncw = 0;
     __asm__ volatile("fnstcw %0" : "=m"(*&cw) : : "memory");
     ncw = cw & ~0x0C00U;
@@ -260,6 +240,47 @@ void fpu_set_rounding_mode(uint32_t mode)
 #endif
     }
 #endif
+}
+
+uint32_t fpu_get_exceptions(void)
+{
+    return fpu_get_exceptions_internal() | fpu_exceptions;
+}
+
+void fpu_set_exceptions(uint32_t new_exceptions)
+{
+    new_exceptions &= FPU_ENV_FLAGS_ALL;
+    fpu_exceptions  = new_exceptions;
+    fpu_set_exceptions_internal(0);
+}
+
+void fpu_raise_exceptions(uint32_t set_exceptions)
+{
+    set_exceptions &= FPU_ENV_FLAGS_ALL;
+    fpu_exceptions |= set_exceptions;
+}
+
+void fpu_clear_exceptions(uint32_t clr_exceptions)
+{
+    clr_exceptions &= FPU_ENV_FLAGS_ALL;
+    fpu_exceptions &= ~clr_exceptions;
+    fpu_set_exceptions_internal(0);
+}
+
+uint32_t fpu_get_rounding_mode(void)
+{
+    return fpu_round_mode;
+}
+
+void fpu_set_rounding_mode(uint32_t mode)
+{
+    if (mode > FPU_LIB_ROUND_MM) {
+        mode = FPU_LIB_ROUND_NE;
+    }
+    if (fpu_round_mode != mode) {
+        fpu_round_mode = mode;
+        fpu_set_rounding_mode_internal(mode);
+    }
 }
 
 slow_path void fpu_raise_invalid(void)
