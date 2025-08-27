@@ -399,7 +399,7 @@ override CC_VERSION_TRIPLET := $(foreach tmp,$(subst $(SPACE)version$(SPACE),$(M
 override CC_VERSION_TRIPLET := $(strip $(foreach tmp,$(CC_VERSION_TRIPLET),$(if $(call is_numeric,$(word 3,$(subst $(MAGIC),$(SPACE),$(tmp)))),$(subst $(MAGIC),$(SPACE),$(tmp)))))
 
 # If compiler version triplet is empty & CC_BRAND isn't provided, fallback to heuristics
-override CC_BRAND := $(call canonize_cc,$(firstword $(word 1,$(CC_VERSION_TRIPLET)) $(CC_BRAND) $(notdir $(CC))))
+override CC_BRAND := $(call canonize_cc,$(firstword $(word 1,$(CC_VERSION_TRIPLET)) $(CC_BRAND) $(filter oneAPI,$(CC_VERSION_DUMP)) $(notdir $(CC))))
 
 # If neither compiler version triplet nor $(cc -dumpfullversion -dumpversion) provide a proper version, fallback to user-supplied CC_VERSION or whatever we've got
 override CC_VERSION := $(firstword $(call is_semver,$(word 3,$(CC_VERSION_TRIPLET))) $(call is_semver,$(call shell_ex,$(CC) -dumpfullversion -dumpversion $(NULL_STDERR))) $(CC_VERSION) $(word 3,$(CC_VERSION_TRIPLET)))
@@ -839,27 +839,29 @@ endif
 
 # Set compiler-specific optimization options
 # Enable -O2 unless USE_DEBUG_FULL is set, which enables -O0
+# Default to -march=i586 for 32-bit x86
 #
 # Enable -flto=auto on GCC 5.0+, -flto-incremental on GCC 15.0+ (non-Windows)
-# Enable -fvisibility=hidden -frounding-math -fno-math-errno on GCC 4.0+
+# Enable -flto on Clang 5.0+
+
 # Enable -fno-plt -fno-semantic-interposition on GCC 6.0+
 # Enable -fanalyzer for USE_ANALYZER on GCC 10.1+
-#
-# Enable -flto on Clang 5.0+
-# Enable -fvisibility=hidden -fno-math-errno on Clang 3.0+,
-# Enable -frounding-math on Clang 4.0+
-#
-# Enable -Bsymbolic-functions on GCC/Clang 4.0+
-# Default to -march=i586 for 32-bit x86
+
+# Enable -fvisibility=hidden -fno-math-errno -pipe -Bsymbolic-functions on GCC/Clang 4.0+
 override OPTIMIZE_OPTS := $(strip $(OPTIMIZE_OPTS) \
+$(if $(filter i386,$(ARCH)),$(if $(call gnuc_min_ver,3.0),$(if $(filter -march% -msse% -mfpmath%,$(CFLAGS)),,-march=i586))) \
 $(if $(LTO_SUPPORTED),$(if $(call gcc_min_ver,5.0),-flto=auto) $(if $(call gcc_min_ver,15.0),$(if $(filter-out windows,$(OS)),-flto-incremental=$(OBJDIR)))) \
-$(if $(call gcc_min_ver,4.0),-fvisibility=hidden -fno-math-errno -frounding-math) \
+$(if $(LTO_SUPPORTED),$(if $(call clang_min_ver,5.0),-flto)) \
 $(if $(call gcc_min_ver,6.0),-fno-plt -fno-semantic-interposition) \
 $(if $(call var_use,USE_ANALYZER),$(if $(call gcc_min_ver,10.1),-fanalyzer)) \
-$(if $(LTO_SUPPORTED),$(if $(call clang_min_ver,5.0),-flto)) \
-$(if $(call clang_min_ver,3.0),-fvisibility=hidden -fno-math-errno) \
-$(if $(call clang_min_ver,4.0),-frounding-math) \
-$(if $(call gnuc_min_ver,4.0),-pipe -Bsymbolic-functions) $(if $(filter i386,$(ARCH)),$(if $(filter -march% -msse% -mfpmath%,$(CFLAGS)),,-march=i586))) \
+$(if $(call gnuc_min_ver,4.0),-fvisibility=hidden -fno-math-errno -pipe -Bsymbolic-functions))
+
+# Set compiler-specific mandatory optimization options appended after user CFLAGS
+# Enable -fno-fast-math -fno-math-errno -frounding-math on GCC/Clang 4.0+
+# Enable -mno-daz-ftz on GCC 12.0+
+override MANDATORY_OPTS := $(strip \
+$(if $(call gnuc_min_ver,4.0),-fno-fast-math -fno-math-errno -frounding-math) \
+$(if $(call gcc_min_ver,12.0),-mno-daz-ftz))
 
 # Set compiler-specific warning & suppression options
 #
@@ -878,7 +880,7 @@ $(if $(call clang_min_ver,4.0),-Wdocumentation))
 
 # Produce final CFLAGS/LDFLAGS, strip excess spaces
 override CPPFLAGS    := $(strip -I$(SRCDIR) $(if $(filter-out $(SRCDIR),$(HDRDIR)),-I$(HDRDIR)) -D$(NAME_UPPER)_VERSION="$(VERSION)" $(CPPFLAGS))
-override CFLAGS      := $(strip $(OPTIMIZE_OPTS) $(WARN_OPTS) $(CFLAGS))
+override CFLAGS      := $(strip $(OPTIMIZE_OPTS) $(WARN_OPTS) $(CFLAGS) $(MANDATORY_OPTS))
 override LDFLAGS     := $(strip $(LDFLAGS))
 override PRE_LDFLAGS := $(if $(call gnuc_min_ver,4.0),$(call check_cc_flags,-Wl$(COMMA)--as-needed))
 
