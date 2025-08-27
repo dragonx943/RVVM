@@ -174,9 +174,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // Exception handling
 uint32_t fpu_get_exceptions(void);
-void     fpu_set_exceptions(uint32_t exceptions);
-void     fpu_raise_exceptions(uint32_t exceptions);
-void     fpu_clear_exceptions(uint32_t exceptions);
+void     fpu_set_exceptions(uint32_t new_exceptions);
+void     fpu_raise_exceptions(uint32_t set_exceptions);
+void     fpu_clear_exceptions(uint32_t clr_exceptions);
 
 // Rounding mode handling
 uint32_t fpu_get_rounding_mode(void);
@@ -185,6 +185,10 @@ void     fpu_set_rounding_mode(uint32_t mode);
 // Floating-point Classification
 slow_path uint32_t fpu_fclass32(fpu_f32_t f);
 slow_path uint32_t fpu_fclass64(fpu_f64_t d);
+
+// Internal rounding helpers (Only to be coverted to an integer afterwards)
+slow_path fpu_f32_t fpu_round_f32_internal(fpu_f32_t f, uint32_t mode);
+slow_path fpu_f64_t fpu_round_f64_internal(fpu_f64_t d, uint32_t mode);
 
 // Unintrusive soft exception handling for inlined paths
 slow_path void fpu_raise_inexact(void);
@@ -405,24 +409,30 @@ static forceinline int32_t fpu_exponent64(fpu_f64_t f)
 // Returns true on non-zero fractional part
 static forceinline bool fpu_is_fractional32(fpu_f32_t f)
 {
-    int32_t e = fpu_exponent32(f);
-    if (e < 0) {
-        return true;
-    } else if (e >= 23) {
-        return false;
+    uint32_t u = fpu_bit_f32_to_u32(f);
+    if (u << 1) {
+        int32_t e = fpu_exponent32(f);
+        if (e < 0) {
+            return true;
+        } else if (e < 23) {
+            return !!(u & (FPU_LIB_FP32_MANTISSA_MASK >> e));
+        }
     }
-    return !!(fpu_bit_f32_to_u32(f) & (FPU_LIB_FP32_MANTISSA_MASK >> e));
+    return false;
 }
 
 static forceinline bool fpu_is_fractional64(fpu_f64_t d)
 {
-    int32_t e = fpu_exponent64(d);
-    if (e < 0) {
-        return true;
-    } else if (e >= 23) {
-        return false;
+    uint64_t u = fpu_bit_f64_to_u64(d);
+    if (u << 1) {
+        int32_t e = fpu_exponent64(d);
+        if (e < 0) {
+            return true;
+        } else if (e < 52) {
+            return !!(u & (FPU_LIB_FP64_MANTISSA_MASK >> e));
+        }
     }
-    return !!(fpu_bit_f64_to_u64(d) & (FPU_LIB_FP64_MANTISSA_MASK >> e));
+    return false;
 }
 
 /*
@@ -511,7 +521,7 @@ static forceinline fpu_f32_t fpu_unpack_f32_from_f64(fpu_f64_t d)
 static forceinline fpu_f32_t fpu_nan_unbox_f32(fpu_f64_t d)
 {
     uint64_t u = fpu_bit_f64_to_u64(d);
-    if (likely(!(((uint32_t)(u >> 32)) + 1))) {
+    if (likely(((int32_t)(u >> 32)) == -1)) {
         return fpu_bit_u32_to_f32(u);
     }
     return fpu_bit_u32_to_f32(FPU_LIB_FP32_CANONICAL_NAN);
@@ -671,7 +681,7 @@ static forceinline fpu_f64_t fpu_fma64(fpu_f64_t a, fpu_f64_t b, fpu_f64_t c)
 static forceinline fpu_f32_t fpu_sqrt32(fpu_f32_t f)
 {
     fpu_f32_t ret = fpu_wrap_f32(fpu_sqrtf_internal(fpu_raw_f32(f)));
-    if (likely(fpu_raw_f32(f) >= 0.f)) {
+    if (likely(fpu_is_positive32(f))) {
         fpu_soft_fenv_copium32(ret);
         return ret;
     }
@@ -683,7 +693,7 @@ static forceinline fpu_f32_t fpu_sqrt32(fpu_f32_t f)
 static forceinline fpu_f64_t fpu_sqrt64(fpu_f64_t d)
 {
     fpu_f64_t ret = fpu_wrap_f64(fpu_sqrt_internal(fpu_raw_f64(d)));
-    if (likely(fpu_raw_f64(d) >= 0.0)) {
+    if (likely(fpu_is_positive64(d))) {
         fpu_soft_fenv_copium64(ret);
         return ret;
     }
@@ -1052,6 +1062,74 @@ static forceinline int64_t fpu_fcvt_f64_to_i64(fpu_f64_t d)
         return 0x8000000000000000ULL;
     }
     return 0x7FFFFFFFFFFFFFFFULL;
+}
+
+/*
+ * Floating-point to integer rounding
+ */
+
+static forceinline uint32_t fpu_round_f32_to_u32(fpu_f32_t f, uint32_t mode)
+{
+    if (likely(mode == FPU_LIB_ROUND_TZ)) {
+        return fpu_fcvt_f32_to_u32(f);
+    }
+    return fpu_fcvt_f32_to_u32(fpu_round_f32_internal(f, mode));
+}
+
+static forceinline uint32_t fpu_round_f64_to_u32(fpu_f64_t d, uint32_t mode)
+{
+    if (likely(mode == FPU_LIB_ROUND_TZ)) {
+        return fpu_fcvt_f64_to_u32(d);
+    }
+    return fpu_fcvt_f64_to_u32(fpu_round_f64_internal(d, mode));
+}
+
+static forceinline int32_t fpu_round_f32_to_i32(fpu_f32_t f, uint32_t mode)
+{
+    if (likely(mode == FPU_LIB_ROUND_TZ)) {
+        return fpu_fcvt_f32_to_i32(f);
+    }
+    return fpu_fcvt_f32_to_i32(fpu_round_f32_internal(f, mode));
+}
+
+static forceinline int32_t fpu_round_f64_to_i32(fpu_f64_t d, uint32_t mode)
+{
+    if (likely(mode == FPU_LIB_ROUND_TZ)) {
+        return fpu_fcvt_f64_to_i32(d);
+    }
+    return fpu_fcvt_f64_to_i32(fpu_round_f64_internal(d, mode));
+}
+
+static forceinline uint64_t fpu_round_f32_to_u64(fpu_f32_t f, uint32_t mode)
+{
+    if (likely(mode == FPU_LIB_ROUND_TZ)) {
+        return fpu_fcvt_f32_to_u64(f);
+    }
+    return fpu_fcvt_f32_to_u64(fpu_round_f32_internal(f, mode));
+}
+
+static forceinline uint64_t fpu_round_f64_to_u64(fpu_f64_t d, uint32_t mode)
+{
+    if (likely(mode == FPU_LIB_ROUND_TZ)) {
+        return fpu_fcvt_f64_to_u64(d);
+    }
+    return fpu_fcvt_f64_to_u64(fpu_round_f64_internal(d, mode));
+}
+
+static forceinline int64_t fpu_round_f32_to_i64(fpu_f32_t f, uint32_t mode)
+{
+    if (likely(mode == FPU_LIB_ROUND_TZ)) {
+        return fpu_fcvt_f32_to_i64(f);
+    }
+    return fpu_fcvt_f32_to_i64(fpu_round_f32_internal(f, mode));
+}
+
+static forceinline int64_t fpu_round_f64_to_i64(fpu_f64_t d, uint32_t mode)
+{
+    if (likely(mode == FPU_LIB_ROUND_TZ)) {
+        return fpu_fcvt_f64_to_i64(d);
+    }
+    return fpu_fcvt_f64_to_i64(fpu_round_f64_internal(d, mode));
 }
 
 /*

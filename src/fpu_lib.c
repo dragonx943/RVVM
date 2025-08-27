@@ -36,9 +36,11 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #if defined(THREAD_LOCAL)
 static THREAD_LOCAL uint32_t fpu_exceptions = 0;
+static THREAD_LOCAL uint32_t fpu_round_mode = FPU_LIB_ROUND_NE;
 #else
 // Non thread-safe fpu exceptions shared across threads, will work fine for single-core guests
 static uint32_t fpu_exceptions = 0;
+static uint32_t fpu_round_mode = 0;
 #endif
 
 static uint32_t fpu_get_exceptions_internal(void)
@@ -101,7 +103,6 @@ static uint32_t fpu_get_exceptions_internal(void)
 #endif
     return ret;
 }
-
 
 static void fpu_set_exceptions_internal(uint32_t exceptions)
 {
@@ -182,62 +183,41 @@ uint32_t fpu_get_exceptions(void)
     return fpu_get_exceptions_internal() | fpu_exceptions;
 }
 
-void fpu_set_exceptions(uint32_t exceptions)
+void fpu_set_exceptions(uint32_t new_exceptions)
 {
-    fpu_exceptions = exceptions;
-    if (fpu_get_exceptions_internal() & ~exceptions) {
+    new_exceptions &= FPU_ENV_FLAGS_ALL;
+    fpu_exceptions  = new_exceptions;
+    if (fpu_get_exceptions_internal() & ~fpu_exceptions) {
         fpu_set_exceptions_internal(0);
     }
 }
 
-void fpu_raise_exceptions(uint32_t exceptions)
+void fpu_raise_exceptions(uint32_t set_exceptions)
 {
-    fpu_exceptions |= (exceptions & FPU_ENV_FLAGS_ALL);
+    set_exceptions &= FPU_ENV_FLAGS_ALL;
+    fpu_exceptions |= set_exceptions;
 }
 
-void fpu_clear_exceptions(uint32_t exceptions)
+void fpu_clear_exceptions(uint32_t clr_exceptions)
 {
-    exceptions &= FPU_ENV_FLAGS_ALL;
-    fpu_exceptions &= ~exceptions;
-    if (fpu_get_exceptions_internal() & exceptions) {
+    clr_exceptions &= FPU_ENV_FLAGS_ALL;
+    fpu_exceptions &= ~clr_exceptions;
+    if (fpu_get_exceptions_internal() & ~fpu_exceptions) {
         fpu_set_exceptions_internal(0);
     }
 }
 
 uint32_t fpu_get_rounding_mode(void)
 {
-#if defined(FENV_8087_IMPL)
-    uint16_t cw = 0;
-    __asm__ volatile("fnstcw %0" : "=m"(*&cw) : : "memory");
-    if ((cw & 0x0C00U) == 0x0C00U) {
-        return FPU_LIB_ROUND_TZ;
-    } else if (cw & 0x0400U) {
-        return FPU_LIB_ROUND_DN;
-    } else if (cw & 0x0800U) {
-        return FPU_LIB_ROUND_UP;
-    }
-#elif defined(FENV_ROUNDING_IMPL)
-    uint32_t frm = fegetround();
-    switch (frm) {
-#if defined(FE_DOWNWARD)
-        case FE_DOWNWARD:
-            return FPU_LIB_ROUND_DN;
-#endif
-#if defined(FE_UPWARD)
-        case FE_UPWARD:
-            return FPU_LIB_ROUND_UP;
-#endif
-#if defined(FE_TOWARDZERO)
-        case FE_TOWARDZERO:
-            return FPU_LIB_ROUND_TZ;
-#endif
-    }
-#endif
-    return FPU_LIB_ROUND_NE;
+    return fpu_round_mode;
 }
 
 void fpu_set_rounding_mode(uint32_t mode)
 {
+    if (mode > FPU_LIB_ROUND_MM) {
+        mode = FPU_LIB_ROUND_NE;
+    }
+    fpu_round_mode = mode;
 #if defined(FENV_8087_IMPL)
     uint16_t cw = 0, ncw = 0;
     __asm__ volatile("fnstcw %0" : "=m"(*&cw) : : "memory");
@@ -280,7 +260,26 @@ void fpu_set_rounding_mode(uint32_t mode)
 #endif
     }
 #endif
-    UNUSED(mode);
+}
+
+slow_path void fpu_raise_invalid(void)
+{
+    fpu_raise_exceptions(FPU_LIB_FLAG_NV);
+}
+
+slow_path void fpu_raise_inexact(void)
+{
+    fpu_raise_exceptions(FPU_LIB_FLAG_NX);
+}
+
+slow_path void fpu_raise_ovrflow(void)
+{
+    fpu_raise_exceptions(FPU_LIB_FLAG_OF);
+}
+
+slow_path void fpu_raise_divzero(void)
+{
+    fpu_raise_exceptions(FPU_LIB_FLAG_DZ);
 }
 
 slow_path uint32_t fpu_fclass32(fpu_f32_t f)
@@ -323,22 +322,52 @@ slow_path uint32_t fpu_fclass64(fpu_f64_t d)
     return (u & FPU_LIB_FP64_SIGNEDFP_MASK) ? FPU_CLASS_NEG_ZERO : FPU_CLASS_POS_ZERO;
 }
 
-slow_path void fpu_raise_invalid(void)
+slow_path fpu_f32_t fpu_round_f32_internal(fpu_f32_t f, uint32_t mode)
 {
-    fpu_raise_exceptions(FPU_LIB_FLAG_NV);
+    uint32_t u = fpu_bit_f32_to_u32(f);
+    uint32_t s = u & FPU_LIB_FP32_SIGNEDFP_MASK;
+    if (unlikely(mode > FPU_LIB_ROUND_UP)) {
+        mode = fpu_get_rounding_mode();
+    }
+    switch (mode) {
+        case FPU_LIB_ROUND_NE:
+        case FPU_LIB_ROUND_MM:
+            return fpu_add32(f, fpu_bit_u32_to_f32(0x3F000000U | s));
+        case FPU_LIB_ROUND_DN:
+            if (s && fpu_is_fractional32(f)) {
+                return fpu_sub32(f, fpu_bit_u32_to_f32(0x3F800000U));
+            }
+            break;
+        case FPU_LIB_ROUND_UP:
+            if (!s && fpu_is_fractional32(f)) {
+                return fpu_add32(f, fpu_bit_u32_to_f32(0x3F800000U));
+            }
+            break;
+    }
+    return f;
 }
 
-slow_path void fpu_raise_inexact(void)
+slow_path fpu_f64_t fpu_round_f64_internal(fpu_f64_t d, uint32_t mode)
 {
-    fpu_raise_exceptions(FPU_LIB_FLAG_NX);
-}
-
-slow_path void fpu_raise_ovrflow(void)
-{
-    fpu_raise_exceptions(FPU_LIB_FLAG_OF);
-}
-
-slow_path void fpu_raise_divzero(void)
-{
-    fpu_raise_exceptions(FPU_LIB_FLAG_DZ);
+    uint64_t u = fpu_bit_f64_to_u64(d);
+    uint64_t s = u & FPU_LIB_FP64_SIGNEDFP_MASK;
+    if (unlikely(mode > FPU_LIB_ROUND_UP)) {
+        mode = fpu_get_rounding_mode();
+    }
+    switch (mode) {
+        case FPU_LIB_ROUND_NE:
+        case FPU_LIB_ROUND_MM:
+            return fpu_add64(d, fpu_bit_u64_to_f64(0x3FE0000000000000ULL | s));
+        case FPU_LIB_ROUND_DN:
+            if (s && fpu_is_fractional64(d)) {
+                return fpu_sub64(d, fpu_bit_u64_to_f64(0x3FF0000000000000ULL));
+            }
+            break;
+        case FPU_LIB_ROUND_UP:
+            if (!s && fpu_is_fractional64(d)) {
+                return fpu_add64(d, fpu_bit_u64_to_f64(0x3FF0000000000000ULL));
+            }
+            break;
+    }
+    return d;
 }
