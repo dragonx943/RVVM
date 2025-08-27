@@ -861,7 +861,7 @@ $(if $(call gnuc_min_ver,4.0),-fvisibility=hidden -fno-math-errno -pipe -Bsymbol
 # Enable -mno-daz-ftz on GCC 12.0+
 override MANDATORY_OPTS := $(strip \
 $(if $(call gnuc_min_ver,4.0),-fno-fast-math -fno-math-errno -frounding-math) \
-$(if $(call gcc_min_ver,12.0),-mno-daz-ftz))
+$(if $(filter x86_64,$(ARCH)),$(if $(call gcc_min_ver,12.0),-mno-daz-ftz)))
 
 # Set compiler-specific warning & suppression options
 #
