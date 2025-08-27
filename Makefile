@@ -857,11 +857,11 @@ $(if $(call var_use,USE_ANALYZER),$(if $(call gcc_min_ver,10.1),-fanalyzer)) \
 $(if $(call gnuc_min_ver,4.0),-fvisibility=hidden -fno-math-errno -pipe -Bsymbolic-functions))
 
 # Set compiler-specific mandatory optimization options appended after user CFLAGS
+# Override -Ofast into -O3 if detected
 # Enable -fno-fast-math -fno-math-errno -frounding-math on GCC/Clang 4.0+
-# Enable -mno-daz-ftz on GCC 12.0+
-override MANDATORY_OPTS := $(strip \
-$(if $(call gnuc_min_ver,4.0),-fno-fast-math -fno-math-errno -frounding-math) \
-$(if $(filter x86_64,$(ARCH)),$(if $(call gcc_min_ver,12.0),-mno-daz-ftz)))
+override MANDATORY_OPTS := $(strip  \
+$(if $(filter -Ofast,$(CFLAGS)),-O3) \
+$(if $(call gnuc_min_ver,4.0),-fno-fast-math -fno-math-errno -frounding-math))
 
 # Set compiler-specific warning & suppression options
 #
