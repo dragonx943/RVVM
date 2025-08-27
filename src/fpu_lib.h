@@ -53,6 +53,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  * NOTE: RISC-V THead CPUs also lack FPU exceptions, but I'm hesitant to enable such workaround
  * on RISC-V in general as this case is a single non-conforming hardware implementation.
  *
+ * Intel OneAPI compiler enables "flush to zero" & "denormals are zero" by default
+ * Solution: Pass -fno-fast-math at build time
+ *
  * This list is not even considering various historical compiler versions, and MSVC. To be continued?...
  *
  * Because of this, and because most workarounds have little performance impact, consider limited
@@ -66,9 +69,12 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define USE_SOFT_FPU_FENV 1
 #endif
 
-// Fix various floating-point misoptimizations (Duh)
-#if CLANG_CHECK_VER(12, 0)
+#if CLANG_CHECK_VER(12, 0) && defined(__INTEL_LLVM_COMPILER)
+// Fix a moronic Intel OneAPI compile error without pessimizing Clang codegen
 #pragma float_control(precise)
+#pragma STDC FENV_ACCESS ON
+#elif CLANG_CHECK_VER(12, 0)
+// Fix various floating-point misoptimizations
 #pragma STDC FENV_ACCESS ON
 #elif defined(_MSC_VER)
 #pragma fenv_access(on)
