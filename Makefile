@@ -38,6 +38,7 @@
 # - USE_OBJ_STAGE:   Use intermediate object file build step
 # - USE_DEBUG:       Optimized build with debug info
 # - USE_DEBUG_FULL:  Full debug build without optimizations
+# - USE_UBSAN:       Use UndefinedBehaviorSanitizer, implies USE_DEBUG
 # - USE_ASAN:        Use AddressSanitizer, implies USE_DEBUG
 # - USE_TSAN:        Use ThreadSanitizer, implies USE_DEBUG. Clang only!
 # - USE_MSAN:        Use MemorySanitizer, implies USE_DEBUG. Clang only!
@@ -595,6 +596,7 @@ USE_DEBUG_FULL  ?= 0 # Full debug build without optimizations
 # Warning / Static analysis / Sanitizer options
 USE_WARNS      ?= 3 # Warning level
 USE_ANALYZER   ?= 0 # Use Clang Static Analyzer / GCC static analyzer
+USE_UBSAN      ?= 0 # Use UndefinedBehaviorSanitizer
 USE_ASAN       ?= 0 # Use AddressSanitizer
 USE_TSAN       ?= 0 # Use ThreadSanitizer
 USE_MSAN       ?= 0 # Use MemorySanitizer
@@ -609,19 +611,23 @@ override DEPS_USE_LIB         := CC_IS_GNU
 override DEPS_USE_LIB_STATIC  := USE_OBJ_STAGE
 override DEPS_USE_LIB_SHARING := USE_LIB
 
-override DEPS_USE_ASAN     := CC_IS_GNU
-override DEPS_USE_TSAN     := CC_IS_CLANG
-override DEPS_USE_MSAN     := CC_IS_CLANG
+override DEPS_USE_UBSAN := CC_IS_GNU
+override DEPS_USE_ASAN  := CC_IS_GNU
+override DEPS_USE_TSAN  := CC_IS_CLANG
+override DEPS_USE_MSAN  := CC_IS_CLANG
 
 override IMPLY_USE_DEBUG_FULL := USE_DEBUG
+override IMPLY_USE_UBSAN      := USE_DEBUG
 override IMPLY_USE_ASAN       := USE_DEBUG
 override IMPLY_USE_TSAN       := USE_DEBUG
+override IMPLY_USE_MSAN       := USE_DEBUG
 
 override CFLAGS_USE_DEBUG := -DDEBUG -g -fno-omit-frame-pointer
 override CFLAGS_USE_LIB   := -fPIC
-override CFLAGS_USE_ASAN  := -fsanitize=address
-override CFLAGS_USE_TSAN  := -fsanitize=thread
-override CFLAGS_USE_MSAN  := -fsanitize=memory
+override CFLAGS_USE_UBSAN := -fsanitize=undefined,float-cast-overflow -fsanitize-recover=undefined,float-cast-overflow
+override CFLAGS_USE_ASAN  := -fsanitize=address -fsanitize-recover=address
+override CFLAGS_USE_TSAN  := -fsanitize=thread -fsanitize-recover=thread
+override CFLAGS_USE_MSAN  := -fsanitize=memory -fsanitize-recover=memory
 
 override LDFLAGS_USE_FPU := -lm
 
