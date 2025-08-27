@@ -1122,8 +1122,9 @@ static forceinline bool fpu_is_fle64_sig(fpu_f64_t a, fpu_f64_t b)
 /*
  * IEEE 754 Quiet Comparisons
  *
- * - If only one operand is a NaN, the result is false
- * - The invalid operation exception flag is set on sNaN inputs
+ * - If at least one operand is a NaN, the result is false
+ * - If at least one operand is a signaling NaN, the invalid operation exception flag is set
+ * - Infinity is handled as being larger than anything finite, -Inf < any non-Nan, etc
  * - Negative zero -0.0 is not distinguished from 0.0
  */
 
@@ -1180,8 +1181,8 @@ static forceinline bool fpu_is_fle64_quiet(fpu_f64_t a, fpu_f64_t b)
 /*
  * IEEE 754-2008 minNum and maxNum
  *
- * - If only one operand is a NaN, the result is the non-NaN operand
- * - Signaling NaN inputs set the invalid operation exception flag, even when the result is not NaN
+ * - If one operand is a NaN, the result is the non-NaN operand
+ * - If at least one operand is a signaling NaN, the invalid operation exception flag is set
  * - Negative zero -0.0 is considered smaller than 0.0
  */
 
@@ -1195,11 +1196,10 @@ static forceinline fpu_f32_t fpu_min32(fpu_f32_t a, fpu_f32_t b)
         return a;
     } else if (likely(fpu_is_flt32_quiet(b, a))) {
         return b;
-    } else if (fpu_is_negative32(a)) {
+    } else if (fpu_bit_f32_to_u32(a) == FPU_LIB_FP32_SIGNEDFP_MASK) {
         return a;
-    } else {
-        return b;
     }
+    return b;
 #else
     if (unlikely(fpu_is_nan32(a))) {
         return b;
@@ -1219,15 +1219,15 @@ static forceinline fpu_f64_t fpu_min64(fpu_f64_t a, fpu_f64_t b)
 #if defined(FPU_LIB_CONFORMING_BUILTIN_IEEE754_2008_FMINMAX)
     return fpu_wrap_f64(__builtin_fmin(fpu_raw_f64(a), fpu_raw_f64(b)));
 #elif defined(FPU_LIB_CONFORMING_BUILTIN_QUIET_COMPARE)
+    // fpu_is_flt64_quiet() matches -Inf < non-Nan,
     if (fpu_is_flt64_quiet(a, b)) {
         return a;
     } else if (likely(fpu_is_flt64_quiet(b, a))) {
         return b;
-    } else if (fpu_is_negative64(a)) {
+    } else if (fpu_bit_f64_to_u64(a) == FPU_LIB_FP64_SIGNEDFP_MASK) {
         return a;
-    } else {
-        return b;
     }
+    return b;
 #else
     if (unlikely(fpu_is_nan64(a))) {
         return b;
@@ -1251,11 +1251,10 @@ static forceinline fpu_f32_t fpu_max32(fpu_f32_t a, fpu_f32_t b)
         return a;
     } else if (likely(fpu_is_flt32_quiet(a, b))) {
         return b;
-    } else if (fpu_is_positive32(a)) {
+    } else if (!fpu_bit_f32_to_u32(a)) {
         return a;
-    } else {
-        return b;
     }
+    return b;
 #else
     if (unlikely(fpu_is_nan32(a))) {
         return b;
@@ -1279,11 +1278,10 @@ static forceinline fpu_f64_t fpu_max64(fpu_f64_t a, fpu_f64_t b)
         return a;
     } else if (likely(fpu_is_flt64_quiet(a, b))) {
         return b;
-    } else if (fpu_is_positive64(a)) {
+    } else if (!fpu_bit_f64_to_u64(a)) {
         return a;
-    } else {
-        return b;
     }
+    return b;
 #else
     if (unlikely(fpu_is_nan64(a))) {
         return b;
