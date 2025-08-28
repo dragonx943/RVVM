@@ -104,7 +104,7 @@ static forceinline void riscv_write_d(rvvm_hart_t* vm, regid_t reg, fpu_f64_t va
     if (likely(!fpu_is_nan64(val))) {
         riscv_emit_d(vm, reg, val);
     } else {
-        riscv_emit_d(vm, reg, fpu_bit_u64_to_f64(0x7FF8000000000000U));
+        riscv_emit_d(vm, reg, fpu_bit_u64_to_f64(FPU_LIB_FP64_CANONICAL_NAN));
     }
 }
 
@@ -303,13 +303,13 @@ static forceinline void riscv_emulate_f_opc_op(rvvm_hart_t* vm, const uint32_t i
                 return;
             case RISCV_FSQRT_S:
                 if (likely(rs2 == 0)) {
-                    riscv_write_s(vm, rds, fpu_sqrt32(riscv_view_s(vm, rs1)));
+                    riscv_emit_s(vm, rds, fpu_sqrt32(riscv_view_s(vm, rs1)));
                     return;
                 }
                 break;
             case RISCV_FSQRT_D:
                 if (likely(rs2 == 0)) {
-                    riscv_write_d(vm, rds, fpu_sqrt64(riscv_view_d(vm, rs1)));
+                    riscv_emit_d(vm, rds, fpu_sqrt64(riscv_view_d(vm, rs1)));
                     return;
                 }
                 break;
