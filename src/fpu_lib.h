@@ -345,12 +345,12 @@ static forceinline fpu_f64_t fpu_wrap_f64(actual_double_t d)
 // Checks for finite non-NaN, non-Inf input, never sets exceptions
 static forceinline bool fpu_is_finite32(fpu_f32_t f)
 {
-    return (fpu_bit_f32_to_u32(f) & FPU_LIB_FP32_NOSIGNED_MASK) < FPU_LIB_FP32_EXPONENT_MASK;
+    return (fpu_bit_f32_to_u32(f) << 1) < (FPU_LIB_FP32_EXPONENT_MASK << 1);
 }
 
 static forceinline bool fpu_is_finite64(fpu_f64_t d)
 {
-    return (fpu_bit_f64_to_u64(d) & FPU_LIB_FP64_NOSIGNED_MASK) < FPU_LIB_FP64_EXPONENT_MASK;
+    return (fpu_bit_f64_to_u64(d) << 1) < (FPU_LIB_FP64_EXPONENT_MASK << 1);
 }
 
 // Checks for positive, possibly infinite non-NaN input, never sets exceptions
@@ -380,25 +380,25 @@ static forceinline bool fpu_is_negative64(fpu_f64_t d)
 // Checks for NaN input, never sets exceptions
 static forceinline bool fpu_is_nan32_soft(fpu_f32_t f)
 {
-    return (fpu_bit_f32_to_u32(f) & FPU_LIB_FP32_NOSIGNED_MASK) > FPU_LIB_FP32_POSITIVE_INF;
+    return (fpu_bit_f32_to_u32(f) << 1) > (FPU_LIB_FP32_POSITIVE_INF << 1);
 }
 
 static forceinline bool fpu_is_nan64_soft(fpu_f64_t d)
 {
-    return (fpu_bit_f64_to_u64(d) & FPU_LIB_FP64_NOSIGNED_MASK) > FPU_LIB_FP64_POSITIVE_INF;
+    return (fpu_bit_f64_to_u64(d) << 1) > (FPU_LIB_FP64_POSITIVE_INF << 1);
 }
 
 // Checks for sNaN input, never sets exceptions
 static forceinline bool fpu_is_snan32_soft(fpu_f32_t f)
 {
-    uint32_t u = fpu_bit_f32_to_u32(f) & FPU_LIB_FP32_NOSIGNED_MASK;
-    return u > FPU_LIB_FP32_POSITIVE_INF && u < FPU_LIB_FP32_CANONICAL_NAN;
+    uint32_t u = fpu_bit_f32_to_u32(f) << 1;
+    return (u - (FPU_LIB_FP32_POSITIVE_INF << 1)) < FPU_LIB_FP32_QUIETNAN_MASK;
 }
 
 static forceinline bool fpu_is_snan64_soft(fpu_f64_t d)
 {
-    uint64_t u = fpu_bit_f64_to_u64(d) & FPU_LIB_FP64_NOSIGNED_MASK;
-    return u > FPU_LIB_FP64_POSITIVE_INF && u < FPU_LIB_FP64_CANONICAL_NAN;
+    uint64_t u = fpu_bit_f64_to_u64(d) << 1;
+    return (u - (FPU_LIB_FP64_POSITIVE_INF << 1)) < FPU_LIB_FP64_QUIETNAN_MASK;
 }
 
 // Returns normalized exponent value
@@ -889,49 +889,45 @@ static forceinline fpu_f64_t fpu_fcvt_i64_to_f64(int64_t i)
 static forceinline bool fpu_f32_fits_u32(fpu_f32_t f)
 {
     uint32_t u = fpu_bit_f32_to_u32(f);
-    return likely(u < 0x4F800000U) || (u & FPU_LIB_FP32_NOSIGNED_MASK) < 0x3F800000U;
+    return u < 0x4F800000U || ((int32_t)u) < ((int32_t)0xBF800000U);
 }
 
 static forceinline bool fpu_f64_fits_u32(fpu_f64_t d)
 {
     uint64_t u = fpu_bit_f64_to_u64(d);
-    return likely(u < 0x41F0000000000000ULL) || (u & FPU_LIB_FP64_NOSIGNED_MASK) < 0x3FF0000000000000ULL;
+    return u < 0x41F0000000000000ULL || ((int64_t)u) < ((int64_t)0xBFF0000000000000ULL);
 }
 
 static forceinline bool fpu_f32_fits_i32(fpu_f32_t f)
 {
-    uint32_t u = fpu_bit_f32_to_u32(f);
-    return (u & FPU_LIB_FP32_NOSIGNED_MASK) < 0x4F000000U;
+    return (fpu_bit_f32_to_u32(f) << 1) < 0x9E000000U;
 }
 
 static forceinline bool fpu_f64_fits_i32(fpu_f64_t d)
 {
-    uint64_t u = fpu_bit_f64_to_u64(d);
-    return (u & FPU_LIB_FP64_NOSIGNED_MASK) < 0x41E0000000000000ULL;
+    return (fpu_bit_f64_to_u64(d) << 1) < 0x83C0000000000000ULL;
 }
 
 static forceinline bool fpu_f32_fits_u64(fpu_f32_t f)
 {
     uint32_t u = fpu_bit_f32_to_u32(f);
-    return likely(u < 0x5F800000U) || (u & FPU_LIB_FP32_NOSIGNED_MASK) < 0x3F800000U;
+    return u < 0x5F800000U || ((int32_t)u) < ((int32_t)0xBF800000U);
 }
 
 static forceinline bool fpu_f64_fits_u64(fpu_f64_t d)
 {
     uint64_t u = fpu_bit_f64_to_u64(d);
-    return likely(u < 0x43F0000000000000ULL) || (u & FPU_LIB_FP64_NOSIGNED_MASK) < 0x3FF0000000000000ULL;
+    return u < 0x43F0000000000000ULL || ((int64_t)u) < ((int64_t)0xBFF0000000000000ULL);
 }
 
 static forceinline bool fpu_f32_fits_i64(fpu_f32_t f)
 {
-    uint32_t u = fpu_bit_f32_to_u32(f);
-    return (u & FPU_LIB_FP32_NOSIGNED_MASK) < 0x5F000000U;
+    return (fpu_bit_f32_to_u32(f) << 1) < 0xBE000000U;
 }
 
 static forceinline bool fpu_f64_fits_i64(fpu_f64_t d)
 {
-    uint64_t u = fpu_bit_f64_to_u64(d);
-    return (u & FPU_LIB_FP64_NOSIGNED_MASK) < 0x43E0000000000000ULL;
+    return (fpu_bit_f64_to_u64(d) << 1) < 0x87C0000000000000ULL;
 }
 
 /*
