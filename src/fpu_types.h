@@ -16,10 +16,10 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #include "compiler.h"
 
-#if (defined(__i386__) && !defined(__SSE2_MATH__)) || defined(_M_IX86)
+#if (defined(__i386__) && !defined(__SSE2_MATH__)) || defined(_M_IX86) || defined(__m68k__)
 
 /*
- * i386 without SSE2 (8087 FPU) implicitly converts sNaN into qNaN.
+ * i386 without SSE2 (8087 FPU) implicitly converts sNaN into qNaN, m68k has excess intermediate precision
  * FP type wrapping is needed for IEEE 754 conformance.
  */
 
