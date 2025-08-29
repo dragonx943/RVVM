@@ -27,10 +27,13 @@ PUSH_OPTIMIZATION_SIZE
 #define FENV_ROUNDING_IMPL 1
 #endif
 
-// Speed up FENV handling on x86_64; Prevent SIGILL on old x86 without SSE
-#if defined(GNU_EXTS) && defined(__i386__) && !defined(__SSE__) && !defined(__FXSR__)
+#if !defined(USE_FPU_WORKAROUNDS) && defined(GNU_EXTS) && defined(__i386__) /**/                                       \
+    && !defined(__SSE__) && !defined(__SSE_MATH__) && !defined(__FXSR__)
+// Prevent SIGILL on old x86 without SSE
 #define FENV_8087_IMPL 1
-#elif defined(GNU_EXTS) && defined(__x86_64__) && defined(__SSE2__) && defined(__SSE2_MATH__)
+#elif !defined(USE_FPU_WORKAROUNDS) && defined(GNU_EXTS) && defined(__x86_64__) /**/                                   \
+    && defined(__SSE2__) && defined(__SSE2_MATH__)
+// Speed up FENV handling on x86_64 with SSE2
 #define FENV_SSE2_IMPL 1
 #endif
 
