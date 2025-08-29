@@ -19,51 +19,66 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  * Signaling NaNs are silently converted to quit NaNs on 8087 FPU (Legacy x86 FPU before SSE2):
  * - The conversion happens upon storing a 8087 register into memory, together with other transformations
  * - This is possibly the most convoluted issue to fix, and a major reason this library exists at all
- * Solution: On i386, fpu_fp32_t/fpu_fp64_t typedefs are basically ingegers, and only upwrapped
- *   to a floating-point representation during an actual FP operation, thus preventing messing with
- *   the floating-point representation. sNaN checks are implemented using bit manipulations anyways.
- * The workaround is enabled on any non-SSE2 i386, and allows IEEE 754 conformance.
+ * Workaround: Introduce fpu_fp32_t/fpu_fp64_t typedefs, which are only unwrapped to native floating-point
+ *   type during an actual FP operation, preventing involuntary changes to the floating-point representation.
+ *   Signaling NaN checks are implemented in software.
+ * USE_SOFT_FPU_WRAP is enabled on i386 and m68k, and allows proper IEEE 754 conformance.
  *
  * Signaling comparisons (<, <=) may be miscompiled into quiet comparisons:
- * - GCC <8.1 & Clang <12.0 emit quiet comparisons on x86, arm64
- * - Quiet (unordered) compares seem to always be emitted on arm32, powerpc, loongarch...
- * Solution: Manually raise FE_INVALID if neither a < b nor b <= a
+ * - Older GCC <8.1, Clang <12.0 emit quiet <, <= comparisons on x86, arm64
+ * - Clang 12.0+ requires -frounding-math or #pragma STDC FENV_ACCESS ON
+ * - Quiet (unordered) compares are still emitted on arm32, powerpc, loongarch64...
+ * - ChibiCC, Cproc compilers emit quiet <, <= comparisons (ucomiss instead of comiss)
+ * - SlimCC compiler (ChibiCC fork) fixes this
+ * Workaround: Manually raise FE_INVALID if neither a < b nor b <= a
  *
  * Quiet comparisons (__builtin_isless) may be miscompiled or inefficient:
- * - Signaling comparisons are emitted on RISC-V
- * Solution: Manually check fpu_is_nan() and then perform <, <= check
+ * - Signaling comparisons are emitted on RISC-V instead
+ * Workaround: Manually check !fpu_is_nan() before <, <= comparison
  *
- * Converting floats into 64-bit integers may ignore FE_INEXACT semantics:
- * - FE_INEXACT is not raised for inexact fp->i64/u64 conversions on riscv32, arm32, powerpc32, loongarch
- * Solution: Manually raise FE_INEXACT on inexact conversion
+ * Converting floats into 64-bit integers may break FE_INEXACT semantics:
+ * - For inexact fp->i64 conversions, FE_INEXACT is missed on riscv32, arm32, powerpc32, loongarch64
+ * - Same issue with TCC compiler
+ * - Cproc compiler erroneously raises FE_INEXACT for exact fp->i64 conversions
+ * Workaround: Manually raise FE_INEXACT on inexact conversion
  *
- * Converting floats into unsigned 64-bit integers may be broken:
+ * Converting floats into unsigned integers may be broken:
  * - Cproc compiler uses cvtss2si for fp->u64 conversions, which is incorrect for >INT64_MAX inputs
- * Solution: Implement fp->u64 conversion in software for >INT64_MAX inputs
+ * - Same for XCC compiler, and fp->u32 conversions are also broken in same manner
+ * Workaround: Implement fp->uint conversion in software for >INT_MAX inputs
  *
- * Converting unsigned 64-bit integers into floats may be broken:
+ * Converting unsigned integers into floats may be broken:
  * - ChibiCC compiler uses cvtsi2ss for u64->fp conversions, which is incorrect for >INT64_MAX inputs
- * Solution: Implement u64->fp conversion in software for >INT64_MAX inputs
+ * - Same for XCC compiler, and u32->fp conversions are also broken in same manner
+ * - SlimCC compiler (ChibiCC fork) fixes this
+ * Workaround: Implement uint->fp conversion in software for >INT_MAX inputs
  *
- * Various libm calls (sqrt, fma) may ignore FE_INEXACT/FE_INVALID semantics:
- * - Windows libm fails to set FE_INVALID on sqrt(-1), even on MinGW
- * Solution: Raise FE_INVALID manually for invalid operations, prefer native sqrt instructions
+ * Intel OneAPI compiler enables FTZ/DAZ by default (Among other things):
+ * - Enabling "flush to zero" or "denormals are zero" breaks denormals and causes test failure
+ * Workaround: Pass -fno-fast-math at build time, clear FTZ/DAZ in MXCSR handling code
+ *
+ * Calling into libm may break FE_INEXACT/FE_INVALID semantics:
+ * - Windows fails to set FE_INVALID on sqrt(-1), even when using MinGW
+ * - Musl has FENV_SUPPORT as optional, and may fail to set FE_INEXACT, etc
+ * Workaround: Handle FE_INVALID manually, prefer native instructions
+ *
+ * Calling into libm may be completely broken:
+ * - WinNT 3.x/4.0, Win95 lack SSE state handling, any libm function that uses SSE crashes
+ * - Determinism is desired, yet various libm implementation may have non-bit-exact results
+ * Workaround: Handle fenv in asembly, prefer native instructions
  *
  * WASM, mips/mips64, m68k, hexagon, Windows CE (ARM32) platforms lack FENV completely:
  * - Basically what the title says. None of those have a working <fenv.h> implementation.
  * - There is no way to implement fesetround() anyways, at least as far as I'm aware
- * Solution: Thread-local exception flags, which are raised manually based on various checks
+ * Workaround: Thread-local exception flags, which are raised manually based on various checks
  *
  * NOTE: RISC-V THead CPUs also lack FPU exceptions, but I'm hesitant to enable such workaround
  * on RISC-V in general as this case is a single non-conforming hardware implementation.
  *
- * Intel OneAPI compiler enables "flush to zero" & "denormals are zero" by default
- * Solution: Pass -fno-fast-math at build time
- *
- * This list is not even considering various historical compiler versions, and MSVC. To be continued?...
+ * This list is not even considering various historical compilers, and MSVC. To be continued?...
  *
  * Because of this, and because most workarounds have little performance impact, consider limited
- * list of compilers/platforms a "Known Nice Platform" (C) and apply needed workarounds otherwise.
+ * list of compilers/platforms a "Known Nice Platform" (C) and apply workarounds otherwise.
  */
 
 #if defined(__wasm__) || defined(__mips__) || defined(__mips) || defined(__mips64__) || defined(__mips64) /**/         \
@@ -82,39 +97,40 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #pragma float_control(precise)
 #endif
 #pragma STDC FENV_ACCESS ON
-#elif defined(_MSC_VER)
+#elif defined(COMPILER_IS_MSVC)
 #pragma fenv_access(on)
 #endif
 
-// GCC 8.1+ and Clang 12.0+ generate mostly correct FP code, at least for cases checked here
+// GCC 8.1+, Clang 12.0+, SlimCC respect IEEE 754
 #undef FPU_LIB_KNOWN_SANE_COMPILER
-#if !defined(USE_FPU_WORKAROUNDS) && (GCC_CHECK_VER(8, 1) || CLANG_CHECK_VER(12, 0))
+#if !defined(USE_FPU_WORKAROUNDS) /**/                                                                                 \
+    && (GCC_CHECK_VER(8, 1) || CLANG_CHECK_VER(12, 0) || defined(__slimcc__))
 #define FPU_LIB_KNOWN_SANE_COMPILER 1
 #endif
 
-// Conversion long->fp is correct on modern GCC/Clang
-#undef FPU_LIB_CORRECT_CONVERSION_LONG_FP
+// Conversion uint->fp is correct on modern GCC/Clang, SlimCC
+#undef FPU_LIB_CORRECT_CONVERSION_UINT_FP
 #if defined(FPU_LIB_KNOWN_SANE_COMPILER)
-#define FPU_LIB_CORRECT_CONVERSION_LONG_FP 1
+#define FPU_LIB_CORRECT_CONVERSION_UINT_FP 1
 #endif
 
-// Conversion fp->long is correct on modern GCC/Clang targeting i386, x86_64, arm64, riscv64, powerpc64, mips64
-#undef FPU_LIB_CORRECT_CONVERSION_FP_LONG
-#if defined(FPU_LIB_KNOWN_SANE_COMPILER)                                       /**/                                    \
+// Conversion fp->uint is correct on i386, x86_64, arm64, riscv64, powerpc64, mips64
+#undef FPU_LIB_CORRECT_CONVERSION_FP_UINT
+#if !defined(USE_SOFT_FPU_FENV) && defined(FPU_LIB_KNOWN_SANE_COMPILER)        /**/                                    \
     && (defined(__i386__) || defined(__x86_64__)                               /**/                                    \
         || defined(__aarch64__) || (defined(__riscv_d) && defined(HOST_64BIT)) /**/                                    \
         || defined(__powerpc64__) || defined(__mips64__))
-#define FPU_LIB_CORRECT_CONVERSION_FP_LONG 1
+#define FPU_LIB_CORRECT_CONVERSION_FP_UINT 1
 #endif
 
-// Compare via <, >=  is signaling on NaN on modern GCC/Clang targeting i386, x86_64, arm64, riscv
+// Comparison via <, <= is signaling on i386, x86_64, arm64, riscv
 #undef FPU_LIB_CORRECT_SIGNALING_COMPARE
 #if !defined(USE_SOFT_FPU_FENV) && defined(FPU_LIB_KNOWN_SANE_COMPILER) /**/                                           \
     && (defined(__i386__) || defined(__x86_64__) || defined(__aarch64__) || defined(__riscv_d))
 #define FPU_LIB_CORRECT_SIGNALING_COMPARE 1
 #endif
 
-// Compare via __builtin_isless() is quiet on modern GCC/Clang targeting i386, x86_64, arm, arm64, powerpc
+// Comparison via __builtin_isless() is quiet on i386, x86_64, arm, arm64, powerpc
 #undef FPU_LIB_CORRECT_BUILTIN_QUIET_COMPARE
 #if !defined(USE_SOFT_FPU_FENV) && defined(FPU_LIB_KNOWN_SANE_COMPILER)    /**/                                        \
     && (defined(__i386__) || defined(__x86_64__)                           /**/                                        \
@@ -127,8 +143,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // Min/Max via __builtin_fmin() conforms to IEEE 754-2008 on riscv
 #undef FPU_LIB_CORRECT_BUILTIN_IEEE754_2008_FMINMAX
-#if defined(FPU_LIB_KNOWN_SANE_COMPILER) && defined(__riscv_f) && defined(__riscv_d) /**/                              \
-    && GNU_BUILTIN(__builtin_fminf) && GNU_BUILTIN(__builtin_fmin)                   /**/                              \
+#if !defined(USE_SOFT_FPU_FENV) && defined(FPU_LIB_KNOWN_SANE_COMPILER) /**/                                           \
+    && defined(__riscv_f) && defined(__riscv_d)                         /**/                                           \
+    && GNU_BUILTIN(__builtin_fminf) && GNU_BUILTIN(__builtin_fmin)      /**/                                           \
     && GNU_BUILTIN(__builtin_fmaxf) && GNU_BUILTIN(__builtin_fmax)
 #define FPU_LIB_CORRECT_BUILTIN_IEEE754_2008_FMINMAX 1
 #endif
@@ -143,7 +160,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // Fused-multiply-add via __builtin_fma() is optimal on arm64, riscv, powerpc
 #undef FPU_LIB_OPTIMAL_BUILTIN_FMA
-#if !defined(USE_SOFT_FPU_FENV) && defined(FPU_LIB_KNOWN_SANE_COMPILER)                               /**/             \
+#if !defined(USE_SOFT_FPU_FENV)                                                                       /**/             \
     && (defined(__aarch64__) || defined(__riscv_d) || defined(__powerpc__) || defined(__powerpc64__)) /**/             \
     && GNU_BUILTIN(__builtin_fmaf) && GNU_BUILTIN(__builtin_fma)
 #define FPU_LIB_OPTIMAL_BUILTIN_FMA 1
@@ -611,38 +628,8 @@ TSAN_SUPPRESS static forceinline void fpu_store_f64_le(void* addr, fpu_f64_t d)
 }
 
 /*
- * NaN, sNaN checking
+ * NaN checking
  */
-
-static forceinline bool fpu_is_equal32_quiet(fpu_f32_t a, fpu_f32_t b)
-{
-#if defined(USE_SOFT_FPU_FENV)
-    if (likely(fpu_raw_f32(a) == fpu_raw_f32(b))) {
-        return true;
-    }
-    if (fpu_is_snan32_soft(a) || fpu_is_snan32_soft(b)) {
-        fpu_raise_invalid();
-    }
-    return false;
-#else
-    return fpu_raw_f32(a) == fpu_raw_f32(b);
-#endif
-}
-
-static forceinline bool fpu_is_equal64_quiet(fpu_f64_t a, fpu_f64_t b)
-{
-#if defined(USE_SOFT_FPU_FENV)
-    if (likely(fpu_raw_f64(a) == fpu_raw_f64(b))) {
-        return true;
-    }
-    if (fpu_is_snan64_soft(a) || fpu_is_snan64_soft(b)) {
-        fpu_raise_invalid();
-    }
-    return false;
-#else
-    return fpu_raw_f64(a) == fpu_raw_f64(b);
-#endif
-}
 
 // Those functions raise FE_INVALID on sNaN, and that is commonly needed
 static forceinline bool fpu_is_nan32(fpu_f32_t f)
@@ -656,7 +643,7 @@ static forceinline bool fpu_is_nan32(fpu_f32_t f)
     }
     return true;
 #else
-    return !fpu_is_equal32_quiet(f, f);
+    return fpu_raw_f32(f) != fpu_raw_f32(f);
 #endif
 }
 
@@ -671,7 +658,26 @@ static forceinline bool fpu_is_nan64(fpu_f64_t d)
     }
     return true;
 #else
-    return !fpu_is_equal64_quiet(d, d);
+    return fpu_raw_f64(d) != fpu_raw_f64(d);
+#endif
+}
+
+// NOTE: Those functions assume FE_INVALID is already set
+static forceinline bool fpu_is_nan32_fast_soft(fpu_f32_t f)
+{
+#if defined(USE_SOFT_FPU_FENV)
+    return fpu_is_nan32_soft(f);
+#else
+    return fpu_raw_f32(f) != fpu_raw_f32(f);
+#endif
+}
+
+static forceinline bool fpu_is_nan64_fast_soft(fpu_f64_t d)
+{
+#if defined(USE_SOFT_FPU_FENV)
+    return fpu_is_nan64_soft(d);
+#else
+    return fpu_raw_f64(d) != fpu_raw_f64(d);
 #endif
 }
 
@@ -906,6 +912,7 @@ static forceinline fpu_f32_t fpu_sqrt32(fpu_f32_t f)
 #endif
         return ret;
     }
+    // Raise invalid flag, return a canonical NaN representation
     fpu_raise_invalid();
     return fpu_bit_u32_to_f32(FPU_LIB_FP32_CANONICAL_NAN);
 }
@@ -919,6 +926,7 @@ static forceinline fpu_f64_t fpu_sqrt64(fpu_f64_t d)
 #endif
         return ret;
     }
+    // Raise invalid flag, return a canonical NaN representation
     fpu_raise_invalid();
     return fpu_bit_u64_to_f64(FPU_LIB_FP64_CANONICAL_NAN);
 }
@@ -929,12 +937,28 @@ static forceinline fpu_f64_t fpu_sqrt64(fpu_f64_t d)
 
 static forceinline fpu_f32_t fpu_fcvt_u32_to_f32(uint32_t u)
 {
+#if !defined(FPU_LIB_CORRECT_CONVERSION_UINT_FP)
+    if (likely(!(u >> 31))) {
+        return fpu_wrap_f32((actual_float_t)(int32_t)u);
+    }
+    // Emulate conversion from u32 in software
+    return fpu_bit_u32_to_f32(0x4E800000U + (((u >> 7) + 1) >> 1));
+#else
     return fpu_wrap_f32((actual_float_t)u);
+#endif
 }
 
 static forceinline fpu_f64_t fpu_fcvt_u32_to_f64(uint32_t u)
 {
+#if !defined(FPU_LIB_CORRECT_CONVERSION_UINT_FP)
+    if (likely(!(u >> 31))) {
+        return fpu_wrap_f64((actual_double_t)(int32_t)u);
+    }
+    // Emulate conversion from u32 in software
+    return fpu_bit_u64_to_f64(0x41D0000000000000ULL + (((((uint64_t)u) << 22) + 1) >> 1));
+#else
     return fpu_wrap_f64((actual_double_t)u);
+#endif
 }
 
 static forceinline fpu_f32_t fpu_fcvt_i32_to_f32(int32_t i)
@@ -949,24 +973,28 @@ static forceinline fpu_f64_t fpu_fcvt_i32_to_f64(int32_t i)
 
 static forceinline fpu_f32_t fpu_fcvt_u64_to_f32(uint64_t u)
 {
-#if !defined(FPU_LIB_CORRECT_CONVERSION_LONG_FP)
-    if (unlikely(u >> 63)) {
-        // Emulate conversion beyond i64 in software
-        return fpu_bit_u32_to_f32(0x5E800000U + ((((uint32_t)(u >> 39)) + 1) >> 1));
+#if !defined(FPU_LIB_CORRECT_CONVERSION_UINT_FP)
+    if (likely(!(u >> 63))) {
+        return fpu_wrap_f32((actual_float_t)(int64_t)u);
     }
-#endif
+    // Emulate conversion from u64 in software
+    return fpu_bit_u32_to_f32(0x5E800000U + ((((uint32_t)(u >> 39)) + 1) >> 1));
+#else
     return fpu_wrap_f32((actual_float_t)u);
+#endif
 }
 
 static forceinline fpu_f64_t fpu_fcvt_u64_to_f64(uint64_t u)
 {
-#if !defined(FPU_LIB_CORRECT_CONVERSION_LONG_FP)
-    if (unlikely(u >> 63)) {
-        // Emulate conversion beyond i64 in software
-        return fpu_bit_u64_to_f64(0x43D0000000000000ULL + (((u >> 10) + 1) >> 1));
+#if !defined(FPU_LIB_CORRECT_CONVERSION_UINT_FP)
+    if (likely(!(u >> 63))) {
+        return fpu_wrap_f64((actual_double_t)(int64_t)u);
     }
-#endif
+    // Emulate conversion from u64 in software
+    return fpu_bit_u64_to_f64(0x43D0000000000000ULL + (((u >> 10) + 1) >> 1));
+#else
     return fpu_wrap_f64((actual_double_t)u);
+#endif
 }
 
 static forceinline fpu_f32_t fpu_fcvt_i64_to_f32(int64_t i)
@@ -1039,13 +1067,21 @@ static forceinline bool fpu_f64_fits_i64(fpu_f64_t d)
 static forceinline uint32_t fpu_fcvt_f32_to_u32(fpu_f32_t f)
 {
     if (likely(fpu_f32_fits_u32(f))) {
-        uint32_t ret = (uint32_t)fpu_raw_f32(f);
-#if defined(USE_SOFT_FPU_FENV)
+#if defined(USE_SOFT_FPU_FENV) || !defined(FPU_LIB_CORRECT_CONVERSION_FP_UINT)
+        uint32_t ret;
+        if (likely(fpu_f32_fits_i32(f))) {
+            ret = (int32_t)fpu_raw_f32(f);
+        } else {
+            // Emulate conversion to u32 in software
+            ret = (fpu_bit_f32_to_u32(f) << 8) - 0x80000000U;
+        }
         if (unlikely(!fpu_is_bit_equal32(f, fpu_fcvt_u32_to_f32(ret)))) {
             fpu_raise_inexact();
         }
-#endif
         return ret;
+#else
+        return (uint32_t)fpu_raw_f32(f);
+#endif
     }
     fpu_raise_invalid();
     if (fpu_is_negative32(f)) {
@@ -1057,13 +1093,21 @@ static forceinline uint32_t fpu_fcvt_f32_to_u32(fpu_f32_t f)
 static forceinline uint32_t fpu_fcvt_f64_to_u32(fpu_f64_t d)
 {
     if (likely(fpu_f64_fits_u32(d))) {
-        uint32_t ret = (uint32_t)fpu_raw_f64(d);
-#if defined(USE_SOFT_FPU_FENV)
+#if defined(USE_SOFT_FPU_FENV) || !defined(FPU_LIB_CORRECT_CONVERSION_FP_UINT)
+        uint32_t ret;
+        if (likely(fpu_f64_fits_i32(d))) {
+            ret = (int32_t)fpu_raw_f64(d);
+        } else {
+            // Emulate conversion to u32 in software
+            ret = ((uint32_t)(fpu_bit_f64_to_u64(d) >> 21)) - 0x80000000U;
+        }
         if (unlikely(!fpu_is_bit_equal64(d, fpu_fcvt_u32_to_f64(ret)))) {
             fpu_raise_inexact();
         }
-#endif
         return ret;
+#else
+        return (uint32_t)fpu_raw_f64(d);
+#endif
     }
     fpu_raise_invalid();
     if (fpu_is_negative64(d)) {
@@ -1111,13 +1155,13 @@ static forceinline int32_t fpu_fcvt_f64_to_i32(fpu_f64_t d)
 static forceinline uint64_t fpu_fcvt_f32_to_u64(fpu_f32_t f)
 {
     if (likely(fpu_f32_fits_u64(f))) {
-#if defined(USE_SOFT_FPU_FENV) || !defined(FPU_LIB_CORRECT_CONVERSION_FP_LONG)
+#if defined(USE_SOFT_FPU_FENV) || !defined(FPU_LIB_CORRECT_CONVERSION_FP_UINT)
         uint64_t ret;
         if (likely(fpu_f32_fits_i64(f))) {
             ret = (int64_t)fpu_raw_f32(f);
         } else {
-            // Emulate conversion beyond i64 in software
-            ret = ((uint64_t)(fpu_bit_f32_to_u32(f) - 0x5E800000U)) << 40;
+            // Emulate conversion to u64 in software
+            ret = (((uint64_t)fpu_bit_f32_to_u32(f)) << 40) - 0x8000000000000000ULL;
         }
         if (unlikely(!fpu_is_bit_equal32(f, fpu_fcvt_u64_to_f32(ret)))) {
             fpu_raise_inexact();
@@ -1137,13 +1181,13 @@ static forceinline uint64_t fpu_fcvt_f32_to_u64(fpu_f32_t f)
 static forceinline uint64_t fpu_fcvt_f64_to_u64(fpu_f64_t d)
 {
     if (likely(fpu_f64_fits_u64(d))) {
-#if defined(USE_SOFT_FPU_FENV) || !defined(FPU_LIB_CORRECT_CONVERSION_FP_LONG)
+#if defined(USE_SOFT_FPU_FENV) || !defined(FPU_LIB_CORRECT_CONVERSION_FP_UINT)
         uint64_t ret;
         if (likely(fpu_f64_fits_i64(d))) {
             ret = (int64_t)fpu_raw_f64(d);
         } else {
-            // Emulate conversion beyond i64 in software
-            ret = (fpu_bit_f64_to_u64(d) - 0x43D0000000000000ULL) << 11;
+            // Emulate conversion to u64 in software
+            ret = (fpu_bit_f64_to_u64(d) << 11) - 0x8000000000000000ULL;
         }
         if (unlikely(!fpu_is_bit_equal64(d, fpu_fcvt_u64_to_f64(ret)))) {
             fpu_raise_inexact();
@@ -1267,7 +1311,7 @@ static forceinline int64_t fpu_round_f64_to_i64(fpu_f64_t d, uint32_t mode)
 /*
  * IEEE 754 Signaling Comparisons
  *
- * - If only one operand is a NaN, the result is false, the invalid operation exception flag is set
+ * - If at least one operand is a NaN, the result is false, and invalid operation exception flag is set
  * - Negative zero -0.0 is not distinguished from 0.0
  */
 
@@ -1279,9 +1323,10 @@ static forceinline bool fpu_is_flt32_sig(fpu_f32_t a, fpu_f32_t b)
 #else
     if (fpu_raw_f32(a) < fpu_raw_f32(b)) {
         return true;
-    } else if (!(fpu_raw_f32(a) >= fpu_raw_f32(b))) {
-        fpu_raise_invalid();
+    } else if (likely(fpu_raw_f32(b) <= fpu_raw_f32(a))) {
+        return false;
     }
+    fpu_raise_invalid();
     return false;
 #endif
 }
@@ -1293,9 +1338,10 @@ static forceinline bool fpu_is_flt64_sig(fpu_f64_t a, fpu_f64_t b)
 #else
     if (fpu_raw_f64(a) < fpu_raw_f64(b)) {
         return true;
-    } else if (!(fpu_raw_f64(a) >= fpu_raw_f64(b))) {
-        fpu_raise_invalid();
+    } else if (likely(fpu_raw_f64(b) <= fpu_raw_f64(a))) {
+        return false;
     }
+    fpu_raise_invalid();
     return false;
 #endif
 }
@@ -1308,9 +1354,10 @@ static forceinline bool fpu_is_fle32_sig(fpu_f32_t a, fpu_f32_t b)
 #else
     if (fpu_raw_f32(a) <= fpu_raw_f32(b)) {
         return true;
-    } else if (!(fpu_raw_f32(a) > fpu_raw_f32(b))) {
-        fpu_raise_invalid();
+    } else if (likely(fpu_raw_f32(b) < fpu_raw_f32(a))) {
+        return false;
     }
+    fpu_raise_invalid();
     return false;
 #endif
 }
@@ -1322,9 +1369,10 @@ static forceinline bool fpu_is_fle64_sig(fpu_f64_t a, fpu_f64_t b)
 #else
     if (fpu_raw_f64(a) <= fpu_raw_f64(b)) {
         return true;
-    } else if (!(fpu_raw_f64(a) > fpu_raw_f64(b))) {
-        fpu_raise_invalid();
+    } else if (likely(fpu_raw_f64(b) < fpu_raw_f64(a))) {
+        return false;
     }
+    fpu_raise_invalid();
     return false;
 #endif
 }
@@ -1338,7 +1386,38 @@ static forceinline bool fpu_is_fle64_sig(fpu_f64_t a, fpu_f64_t b)
  * - Negative zero -0.0 is not distinguished from 0.0
  */
 
-// Comparison: Less than (<)
+// Comparison: Equal (a == b)
+static forceinline bool fpu_is_equal32_quiet(fpu_f32_t a, fpu_f32_t b)
+{
+#if defined(USE_SOFT_FPU_FENV)
+    if (likely(fpu_raw_f32(a) == fpu_raw_f32(b))) {
+        return true;
+    }
+    if (fpu_is_snan32_soft(a) || fpu_is_snan32_soft(b)) {
+        fpu_raise_invalid();
+    }
+    return false;
+#else
+    return fpu_raw_f32(a) == fpu_raw_f32(b);
+#endif
+}
+
+static forceinline bool fpu_is_equal64_quiet(fpu_f64_t a, fpu_f64_t b)
+{
+#if defined(USE_SOFT_FPU_FENV)
+    if (likely(fpu_raw_f64(a) == fpu_raw_f64(b))) {
+        return true;
+    }
+    if (fpu_is_snan64_soft(a) || fpu_is_snan64_soft(b)) {
+        fpu_raise_invalid();
+    }
+    return false;
+#else
+    return fpu_raw_f64(a) == fpu_raw_f64(b);
+#endif
+}
+
+// Comparison: Less than (a < b)
 static forceinline bool fpu_is_flt32_quiet(fpu_f32_t a, fpu_f32_t b)
 {
 #if defined(FPU_LIB_CORRECT_BUILTIN_QUIET_COMPARE)
@@ -1363,7 +1442,7 @@ static forceinline bool fpu_is_flt64_quiet(fpu_f64_t a, fpu_f64_t b)
 #endif
 }
 
-// Comparison: Less than or equal (<=)
+// Comparison: Less than or equal (a <= b)
 static forceinline bool fpu_is_fle32_quiet(fpu_f32_t a, fpu_f32_t b)
 {
 #if defined(FPU_LIB_CORRECT_BUILTIN_QUIET_COMPARE)
@@ -1399,28 +1478,21 @@ static forceinline bool fpu_is_fle64_quiet(fpu_f64_t a, fpu_f64_t b)
 static forceinline fpu_f32_t fpu_min32(fpu_f32_t a, fpu_f32_t b)
 {
 #if defined(FPU_LIB_CORRECT_BUILTIN_IEEE754_2008_FMINMAX)
-    // On RISC-V, fminf() actually behaves the way we need
+    // On RISC-V, __builtin_fminf() actually behaves the way we need
     return fpu_wrap_f32(__builtin_fminf(fpu_raw_f32(a), fpu_raw_f32(b)));
-#elif defined(FPU_LIB_CORRECT_BUILTIN_QUIET_COMPARE)
+#else
     if (fpu_is_flt32_quiet(a, b)) {
         return a;
-    } else if (likely(fpu_is_flt32_quiet(b, a))) {
+    } else if (fpu_is_flt32_quiet(b, a)) {
         return b;
-    } else if (fpu_bit_f32_to_u32(a) == FPU_LIB_FP32_SIGNEDFP_MASK) {
-        return a;
-    }
-    return b;
-#else
-    if (unlikely(fpu_is_nan32(a))) {
+    } else if (fpu_is_negative32(b)) {
         return b;
-    } else if (unlikely(fpu_is_nan32(b))) {
+    } else if (!fpu_is_nan32_fast_soft(a)) {
         return a;
-    } else if (fpu_raw_f32(a) < fpu_raw_f32(b)) {
-        return a;
-    } else if (fpu_raw_f32(b) < fpu_raw_f32(a)) {
+    } else if (!fpu_is_nan32_fast_soft(b)) {
         return b;
     }
-    return fpu_signbit32(a) ? a : b;
+    return fpu_bit_u32_to_f32(FPU_LIB_FP32_CANONICAL_NAN);
 #endif
 }
 
@@ -1428,54 +1500,42 @@ static forceinline fpu_f64_t fpu_min64(fpu_f64_t a, fpu_f64_t b)
 {
 #if defined(FPU_LIB_CORRECT_BUILTIN_IEEE754_2008_FMINMAX)
     return fpu_wrap_f64(__builtin_fmin(fpu_raw_f64(a), fpu_raw_f64(b)));
-#elif defined(FPU_LIB_CORRECT_BUILTIN_QUIET_COMPARE)
-    // fpu_is_flt64_quiet() matches -Inf < non-Nan,
+#else
     if (fpu_is_flt64_quiet(a, b)) {
         return a;
-    } else if (likely(fpu_is_flt64_quiet(b, a))) {
+    } else if (fpu_is_flt64_quiet(b, a)) {
         return b;
-    } else if (fpu_bit_f64_to_u64(a) == FPU_LIB_FP64_SIGNEDFP_MASK) {
-        return a;
-    }
-    return b;
-#else
-    if (unlikely(fpu_is_nan64(a))) {
+    } else if (fpu_is_negative64(b)) {
         return b;
-    } else if (unlikely(fpu_is_nan64(b))) {
+    } else if (!fpu_is_nan64_fast_soft(a)) {
         return a;
-    } else if (fpu_raw_f64(a) < fpu_raw_f64(b)) {
-        return a;
-    } else if (fpu_raw_f64(b) < fpu_raw_f64(a)) {
+    } else if (!fpu_is_nan64_fast_soft(b)) {
         return b;
     }
-    return fpu_signbit64(a) ? a : b;
+    return fpu_bit_u64_to_f64(FPU_LIB_FP64_CANONICAL_NAN);
 #endif
 }
 
 static forceinline fpu_f32_t fpu_max32(fpu_f32_t a, fpu_f32_t b)
 {
+    fpu_f32_t tmp = a;
+    a             = b;
+    b             = tmp;
 #if defined(FPU_LIB_CORRECT_BUILTIN_IEEE754_2008_FMINMAX)
     return fpu_wrap_f32(__builtin_fmaxf(fpu_raw_f32(a), fpu_raw_f32(b)));
-#elif defined(FPU_LIB_CORRECT_BUILTIN_QUIET_COMPARE)
-    if (fpu_is_flt32_quiet(b, a)) {
-        return a;
-    } else if (likely(fpu_is_flt32_quiet(a, b))) {
-        return b;
-    } else if (!fpu_bit_f32_to_u32(a)) {
-        return a;
-    }
-    return b;
 #else
-    if (unlikely(fpu_is_nan32(a))) {
+    if (fpu_is_flt32_quiet(a, b)) {
         return b;
-    } else if (unlikely(fpu_is_nan32(b))) {
+    } else if (fpu_is_flt32_quiet(b, a)) {
         return a;
-    } else if (fpu_raw_f32(a) > fpu_raw_f32(b)) {
+    } else if (fpu_is_positive32(b)) {
+        return b;
+    } else if (!fpu_is_nan32_fast_soft(a)) {
         return a;
-    } else if (fpu_raw_f32(b) > fpu_raw_f32(a)) {
+    } else if (!fpu_is_nan32_fast_soft(b)) {
         return b;
     }
-    return fpu_signbit32(a) ? b : a;
+    return fpu_bit_u32_to_f32(FPU_LIB_FP32_CANONICAL_NAN);
 #endif
 }
 
@@ -1483,26 +1543,19 @@ static forceinline fpu_f64_t fpu_max64(fpu_f64_t a, fpu_f64_t b)
 {
 #if defined(FPU_LIB_CORRECT_BUILTIN_IEEE754_2008_FMINMAX)
     return fpu_wrap_f64(__builtin_fmax(fpu_raw_f64(a), fpu_raw_f64(b)));
-#elif defined(FPU_LIB_CORRECT_BUILTIN_QUIET_COMPARE)
-    if (fpu_is_flt64_quiet(b, a)) {
-        return a;
-    } else if (likely(fpu_is_flt64_quiet(a, b))) {
-        return b;
-    } else if (!fpu_bit_f64_to_u64(a)) {
-        return a;
-    }
-    return b;
 #else
-    if (unlikely(fpu_is_nan64(a))) {
+    if (fpu_is_flt64_quiet(a, b)) {
         return b;
-    } else if (unlikely(fpu_is_nan64(b))) {
+    } else if (fpu_is_flt64_quiet(b, a)) {
         return a;
-    } else if (fpu_raw_f64(a) > fpu_raw_f64(b)) {
+    } else if (fpu_is_positive64(b)) {
+        return b;
+    } else if (!fpu_is_nan64_fast_soft(a)) {
         return a;
-    } else if (fpu_raw_f64(b) > fpu_raw_f64(a)) {
+    } else if (!fpu_is_nan64_fast_soft(b)) {
         return b;
     }
-    return fpu_signbit64(a) ? b : a;
+    return fpu_bit_u64_to_f64(FPU_LIB_FP64_CANONICAL_NAN);
 #endif
 }
 
