@@ -545,6 +545,6 @@ PUBLIC rvvm_mmio_dev_t* ethoc_init_auto(rvvm_machine_t* machine)
     return ethoc_init(machine, tap, addr, intc, rvvm_alloc_irq(intc));
 }
 
-#endif
-
 POP_OPTIMIZATION_SIZE
+
+#endif
