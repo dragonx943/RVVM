@@ -59,26 +59,26 @@ static size_t vfio_pci_sysfs_path(char* buffer, size_t size, const char* pci_id,
     return len + rvvm_strlcpy(buffer + len, suffix, size - len);
 }
 
-static bool vfio_rw_file(const char* path, void* rd, const void* wr, size_t size)
+static size_t vfio_rw_file(const char* path, void* rd, const void* wr, size_t size)
 {
-    int  fd  = open(path, (wr ? O_WRONLY : O_RDONLY) | O_CLOEXEC);
-    bool ret = false;
+    int fd  = open(path, (wr ? O_WRONLY : O_RDONLY) | O_CLOEXEC);
+    int ret = 0;
     if (fd >= 0) {
         if (wr) {
-            ret = ((size_t)write(fd, wr, size)) == size;
+            ret = write(fd, wr, size);
         } else {
-            ret = ((size_t)read(fd, rd, size)) == size;
+            ret = read(fd, rd, size);
         }
         close(fd);
     }
-    return ret;
+    return EVAL_MAX(ret, 0);
 }
 
 static bool vfio_unbind_driver(const char* pci_id)
 {
     char path[256] = {0};
     vfio_pci_sysfs_path(path, sizeof(path), pci_id, "/driver/unbind");
-    return vfio_rw_file(path, NULL, pci_id, rvvm_strlen(pci_id));
+    return !!vfio_rw_file(path, NULL, pci_id, rvvm_strlen(pci_id));
 }
 
 static bool vfio_bind_vfio(const char* pci_id)
@@ -86,12 +86,22 @@ static bool vfio_bind_vfio(const char* pci_id)
     char path[256]    = {0};
     char ven_dev[256] = {0};
     vfio_pci_sysfs_path(path, sizeof(path), pci_id, "/vendor");
-    size_t len  = vfio_rw_file(path, ven_dev, NULL, sizeof(ven_dev));
-    len        += rvvm_strlcpy(ven_dev + len, " ", sizeof(ven_dev) - len);
-    vfio_pci_sysfs_path(path, sizeof(path), pci_id, "/device");
-    len += vfio_rw_file(path, ven_dev + len, NULL, sizeof(ven_dev) - len);
-    vfio_rw_file("/sys/bus/pci/drivers/vfio-pci/new_id", NULL, ven_dev, len);
-    return vfio_rw_file("/sys/bus/pci/drivers/vfio-pci/bind", NULL, pci_id, rvvm_strlen(pci_id));
+    vfio_rw_file(path, ven_dev, NULL, sizeof(ven_dev) - 1);
+    if (rvvm_strfind(ven_dev, "\n")) {
+        size_t len = ((size_t)rvvm_strfind(ven_dev, "\n")) - (size_t)ven_dev;
+        if (len > 0 && len < 16) {
+            len += rvvm_strlcpy(ven_dev + len, " ", sizeof(ven_dev) - len - 1);
+            vfio_pci_sysfs_path(path, sizeof(path), pci_id, "/device");
+            len += vfio_rw_file(path, ven_dev + len, NULL, sizeof(ven_dev) - len - 1);
+            if (rvvm_strfind(ven_dev, "\n")) {
+                len = ((size_t)rvvm_strfind(ven_dev, "\n")) - (size_t)ven_dev;
+                ven_dev[len] = 0;
+            }
+            vfio_rw_file("/sys/bus/pci/drivers/vfio-pci/new_id", NULL, ven_dev, len);
+            return !!vfio_rw_file("/sys/bus/pci/drivers/vfio-pci/bind", NULL, pci_id, rvvm_strlen(pci_id));
+        }
+    }
+    return false;
 }
 
 static bool vfio_needs_rebind(const char* pci_id)
