@@ -16,14 +16,27 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  * Compiler feature detection
  */
 
-#undef GNU_EXTS
-#if defined(__GNUC__) || defined(__clang__) || defined(__llvm__) || defined(__INTEL_COMPILER)
-#define GNU_EXTS 1
+// Detect Clang compiler
+#undef COMPILER_IS_CLANG
+#if defined(__clang__) || defined(__llvm__)
+#define COMPILER_IS_CLANG 1
+#endif
+
+// Detect GCC compiler
+#undef COMPILER_IS_GCC
+#if defined(__GNUC__) && !defined(COMPILER_IS_CLANG) && !defined(__INTEL_COMPILER)
+#define COMPILER_IS_GCC 1
+#endif
+
+// Detect MSVC compiler
+#undef COMPILER_IS_MSVC
+#if defined(_MSC_VER)
+#define COMPILER_IS_MSVC 1
 #endif
 
 // GCC version checking
 #undef GCC_CHECK_VER
-#if defined(__GNUC__) && !defined(__clang__) && !defined(__llvm__) && !defined(__INTEL_COMPILER)
+#if defined(COMPILER_IS_GCC)
 #define GCC_CHECK_VER(major, minor) (__GNUC__ > major || (__GNUC__ == major && __GNUC_MINOR__ >= minor))
 #else
 #define GCC_CHECK_VER(major, minor) 0
@@ -31,11 +44,18 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // Clang version checking
 #undef CLANG_CHECK_VER
-#if defined(__clang__)
+#if defined(COMPILER_IS_CLANG)
 #define CLANG_CHECK_VER(major, minor)                                                                                  \
     (__clang_major__ > major || (__clang_major__ == major && __clang_minor__ >= minor))
 #else
 #define CLANG_CHECK_VER(major, minor) 0
+#endif
+
+// Detect GNU extensions support (Inline asm, etc)
+#undef GNU_EXTS
+#if defined(COMPILER_IS_GCC) || defined(COMPILER_IS_CLANG) /**/                                                        \
+    || defined(__INTEL_COMPILER) || defined(__tcc__) || defined(__slimcc__)
+#define GNU_EXTS 1
 #endif
 
 // Check GNU attribute presence (GCC 5.1+, Clang 3.1+)
@@ -94,7 +114,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define SANITIZERS_ENABLED 1
 #endif
 
-// Check header presence
+// Check header presence (GCC 4.9.2+, Clang 3.0+)
 #undef CHECK_INCLUDE
 #if defined(GNU_EXTS) && defined(__has_include)
 #define CHECK_INCLUDE(include, urgent) __has_include(#include)
@@ -119,7 +139,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define HOST_32BIT 1
 #endif
 
-// Detect integer endianness (Possibly neither big/little endian)
+// Determine integer endianness (Possibly neither big/little endian)
 // If neither __BYTE_ORDER__, __BIG_ENDIAN__, __LITTLE_ENDIAN__ are supported by the toolchain,
 // an extensive list of big-endian platforms is checked, and little-endian is assumed otherwise
 #undef HOST_BIG_ENDIAN
@@ -135,7 +155,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define HOST_LITTLE_ENDIAN 1
 #endif
 
-// Detect FPU endianness (Possibly differs from integer, or neither big/little endian)
+// Determine FPU endianness (Possibly differs from integer, or neither big/little endian)
 #undef HOST_FPU_BIG_ENDIAN
 #undef HOST_FPU_LITTLE_ENDIAN
 #if (defined(__FLOAT_WORD_ORDER__) && (__FLOAT_WORD_ORDER__ == __ORDER_BIG_ENDIAN__))                                  \
@@ -146,9 +166,10 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define HOST_FPU_LITTLE_ENDIAN 1
 #endif
 
-// Determine whether host may perform fast misaligned access (Hint)
+// Detect whether host may perform fast misaligned access (Hint)
 #undef HOST_FAST_MISALIGN
-#if defined(__x86_64__) || defined(__aarch64__) || defined(_M_AMD64) || defined(_M_ARM64)
+#if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv_misaligned_fast) || defined(_M_AMD64)               \
+    || defined(_M_ARM64)
 #define HOST_FAST_MISALIGN 1
 #endif
 
@@ -234,7 +255,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
     && (GCC_CHECK_VER(3, 3) || GNU_ATTRIBUTE(__always_inline__))
 // ThreadSanitizer doesn't play well with __always_inline__
 #define forceinline inline __attribute__((__always_inline__))
-#elif !defined(USE_NO_FORCEINLINE) && defined(_MSC_VER)
+#elif !defined(USE_NO_FORCEINLINE) && defined(COMPILER_IS_MSVC)
 #define forceinline __forceinline
 #else
 #define forceinline inline GNU_DUMMY_ATTRIBUTE
@@ -246,7 +267,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define no_inline __attribute__((__noinline__, __noclone__))
 #elif !defined(USE_NO_NOINLINE) && (GCC_CHECK_VER(3, 2) || GNU_ATTRIBUTE(__noinline__))
 #define no_inline __attribute__((__noinline__))
-#elif !defined(USE_NO_NOINLINE) && defined(_MSC_VER)
+#elif !defined(USE_NO_NOINLINE) && defined(COMPILER_IS_MSVC)
 #define no_inline __declspec(noinline)
 #else
 #define no_inline GNU_DUMMY_ATTRIBUTE
@@ -389,7 +410,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #else
 #define must_never_reach()                                                                                             \
     do {                                                                                                               \
-    } while (0)
+    } while (1)
 #endif
 
 // Assert that the condition is always true
@@ -434,7 +455,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #undef align_type
 #if !defined(USE_NO_ALIGN_TYPE) && (GCC_CHECK_VER(3, 0) || GNU_ATTRIBUTE(__aligned__))
 #define align_type(alignment) __attribute__((__aligned__(alignment)))
-#elif !defined(USE_NO_ALIGN_TYPE) && defined(_MSC_VER)
+#elif !defined(USE_NO_ALIGN_TYPE) && defined(COMPILER_IS_MSVC)
 #define align_type(alignment) __declspec(align(alignment))
 #else
 #define align_type(alignment) GNU_DUMMY_ATTRIBUTE
@@ -470,10 +491,11 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // Thread-local storage specifier (Optional, check presence via ifdef THREAD_LOCAL)
 #undef THREAD_LOCAL
-#if !defined(USE_NO_THREAD_LOCAL) && (GCC_CHECK_VER(3, 3) || CLANG_CHECK_VER(3, 0))
-// Use GNU __thread attribute on GCC 3.3+ and Clang 3.0+
+#if !defined(USE_NO_THREAD_LOCAL) /**/                                                                                 \
+    && (GCC_CHECK_VER(3, 3) || CLANG_CHECK_VER(3, 0) || defined(__slimcc__) || defined(__cproc__))
+// Use GNU __thread attribute on GCC 3.3+, Clang 3.0+, SlimCC, Cproc
 #define THREAD_LOCAL __thread
-#elif !defined(USE_NO_THREAD_LOCAL) && defined(_MSC_VER)
+#elif !defined(USE_NO_THREAD_LOCAL) && defined(COMPILER_IS_MSVC)
 // Use MSVC __declspec(thread)
 #define THREAD_LOCAL __declspec(thread)
 #elif !defined(USE_NO_THREAD_LOCAL) && __STDC_VERSION__ >= 202000LL && !defined(__STDC_NO_THREADS__)
