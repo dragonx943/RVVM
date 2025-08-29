@@ -342,20 +342,20 @@ static forceinline void riscv_emulate_f_opc_op(rvvm_hart_t* vm, const uint32_t i
             case RISCV_FCLAMP_S:
                 switch (rm) {
                     case 0x0: // fmin.s
-                        riscv_write_s(vm, rds, fpu_min32(riscv_view_s(vm, rs1), riscv_view_s(vm, rs2)));
+                        riscv_emit_s(vm, rds, fpu_min32(riscv_view_s(vm, rs1), riscv_view_s(vm, rs2)));
                         return;
                     case 0x1: // fmax.s
-                        riscv_write_s(vm, rds, fpu_max32(riscv_view_s(vm, rs1), riscv_view_s(vm, rs2)));
+                        riscv_emit_s(vm, rds, fpu_max32(riscv_view_s(vm, rs1), riscv_view_s(vm, rs2)));
                         return;
                 }
                 break;
             case RISCV_FCLAMP_D:
                 switch (rm) {
                     case 0x0: // fmin.d
-                        riscv_write_d(vm, rds, fpu_min64(riscv_view_d(vm, rs1), riscv_view_d(vm, rs2)));
+                        riscv_emit_d(vm, rds, fpu_min64(riscv_view_d(vm, rs1), riscv_view_d(vm, rs2)));
                         return;
                     case 0x1: // fmax.d
-                        riscv_write_d(vm, rds, fpu_max64(riscv_view_d(vm, rs1), riscv_view_d(vm, rs2)));
+                        riscv_emit_d(vm, rds, fpu_max64(riscv_view_d(vm, rs1), riscv_view_d(vm, rs2)));
                         return;
                 }
                 break;
