@@ -41,19 +41,27 @@ static inline size_t align_size_down(size_t x, size_t align)
 }
 
 // Portable strtol/ltostr replacement
-PUBLIC size_t   uint_to_str_base(char* str, size_t size, uint64_t val, uint8_t base);
+size_t uint_to_str_base(char* str, size_t size, uint64_t val, uint8_t base);
+size_t int_to_str_base(char* str, size_t size, int64_t val, uint8_t base);
+size_t int_to_str_dec(char* str, size_t size, int64_t val);
+
+
 PUBLIC uint64_t str_to_uint_base(const char* str, size_t* len, uint8_t base);
-PUBLIC size_t   int_to_str_base(char* str, size_t size, int64_t val, uint8_t base);
-PUBLIC int64_t  str_to_int_base(const char* str, size_t* len, uint8_t base);
-PUBLIC size_t   int_to_str_dec(char* str, size_t size, int64_t val);
-PUBLIC int64_t  str_to_int_dec(const char* str);
+int64_t         str_to_int_base(const char* str, size_t* len, uint8_t base);
+int64_t         str_to_int_dec(const char* str);
 
 // Portable & safer string.h replacement
-PUBLIC size_t      rvvm_strlen(const char* string);
-PUBLIC size_t      rvvm_strnlen(const char* string, size_t size);
-PUBLIC bool        rvvm_strcmp(const char* s1, const char* s2);
-PUBLIC size_t      rvvm_strlcpy(char* dst, const char* src, size_t size);
-PUBLIC const char* rvvm_strfind(const char* string, const char* pattern);
+size_t rvvm_strlen(const char* string);
+size_t rvvm_strnlen(const char* string, size_t size);
+
+PUBLIC bool rvvm_strcmp(const char* s1, const char* s2);
+const char* rvvm_strfind(const char* string, const char* pattern);
+
+size_t rvvm_strlcpy(char* dst, const char* src, size_t size);
+
+// Portable vsnprintf() replacement
+size_t rvvm_vsnprintf(char* buffer, size_t size, const char* fmt, const void* argv);
+size_t rvvm_snprintf(char* buffer, size_t size, const char* fmt, ...);
 
 static inline size_t mem_suffix_shift(char suffix)
 {
@@ -75,10 +83,10 @@ static inline size_t mem_suffix_shift(char suffix)
 }
 
 // Generate random bytes
-PUBLIC void rvvm_randombytes(void* buffer, size_t size);
+void rvvm_randombytes(void* buffer, size_t size);
 
 // Generate random serial number (0-9, A-Z)
-PUBLIC void rvvm_randomserial(char* serial, size_t size);
+void rvvm_randomserial(char* serial, size_t size);
 
 /*
  * Safe memory allocation
