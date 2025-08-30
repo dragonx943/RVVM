@@ -277,13 +277,12 @@ static bool net_handle_set_blocking(net_handle_t fd, bool block)
 
 static void net_handle_set_cloexec(net_handle_t fd)
 {
-#if defined(HOST_TARGET_WINNT) && defined(HANDLE_FLAG_INHERIT)
+#if defined(HOST_TARGET_WINNT) && defined(HOST_64BIT) && defined(HANDLE_FLAG_INHERIT)
     SetHandleInformation((HANDLE)fd, HANDLE_FLAG_INHERIT, 0);
 #elif defined(F_SETFD) && defined(FD_CLOEXEC)
     fcntl(fd, F_SETFD, FD_CLOEXEC);
-#else
-    UNUSED(fd);
 #endif
+    UNUSED(fd);
 }
 
 // Set CLOEXEC flag on created sockets to prevent handle leaking
