@@ -782,7 +782,7 @@ static forceinline fpu_f64_t fpu_fcvt_f32_to_f64(fpu_f32_t f)
 
 static forceinline fpu_f32_t fpu_fcvt_f64_to_f32(fpu_f64_t d)
 {
-    return fpu_wrap_f32((actual_double_t)fpu_raw_f64(d));
+    return fpu_wrap_f32((actual_float_t)fpu_raw_f64(d));
 }
 
 /*
