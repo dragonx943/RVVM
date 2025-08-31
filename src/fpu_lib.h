@@ -585,7 +585,7 @@ static forceinline fpu_f32_t fpu_unpack_f32_from_f64(fpu_f64_t d)
 static forceinline fpu_f32_t fpu_nan_unbox_f32(fpu_f64_t d)
 {
     uint64_t u = fpu_bit_f64_to_u64(d);
-    if (likely(((int32_t)(u >> 32)) == -1)) {
+    if (likely(u >= 0xFFFFFFFF00000000ULL)) {
         return fpu_bit_u32_to_f32(u);
     }
     return fpu_bit_u32_to_f32(FPU_LIB_FP32_CANONICAL_NAN);
