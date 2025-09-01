@@ -45,13 +45,13 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  * Converting floats into unsigned integers may be broken:
  * - Cproc compiler uses cvtss2si for fp->u64 conversions, which is incorrect for >INT64_MAX inputs
  * - Same for XCC compiler, and fp->u32 conversions are also broken in same manner
- * Workaround: Implement fp->uint conversion in software for >INT_MAX inputs
+ * Workaround: Implement fp->u32 conversion as fp->i64, fp->u64 conversion in software for >INT_MAX inputs
  *
  * Converting unsigned integers into floats may be broken:
  * - ChibiCC compiler uses cvtsi2ss for u64->fp conversions, which is incorrect for >INT64_MAX inputs
  * - Same for XCC compiler, and u32->fp conversions are also broken in same manner
  * - SlimCC compiler (ChibiCC fork) fixes this
- * Workaround: Implement uint->fp conversion in software for >INT_MAX inputs
+ * Workaround: Implement u32->fp conversion as i64->fp, u64->fp conversion in software for >INT_MAX inputs
  *
  * Intel OneAPI compiler enables FTZ/DAZ by default (Among other things):
  * - Enabling "flush to zero" or "denormals are zero" breaks denormals and causes test failure
@@ -938,11 +938,8 @@ static forceinline fpu_f64_t fpu_sqrt64(fpu_f64_t d)
 static forceinline fpu_f32_t fpu_fcvt_u32_to_f32(uint32_t u)
 {
 #if !defined(FPU_LIB_CORRECT_CONVERSION_UINT_FP)
-    if (likely(!(u >> 31))) {
-        return fpu_wrap_f32((actual_float_t)(int32_t)u);
-    }
-    // Emulate conversion from u32 in software
-    return fpu_bit_u32_to_f32(0x4E800000U + (((u >> 7) + 1) >> 1));
+    // Use i64->f32 conversion for correct >0x80000000 values handling
+    return fpu_wrap_f32((actual_float_t)(int64_t)u);
 #else
     return fpu_wrap_f32((actual_float_t)u);
 #endif
@@ -951,11 +948,8 @@ static forceinline fpu_f32_t fpu_fcvt_u32_to_f32(uint32_t u)
 static forceinline fpu_f64_t fpu_fcvt_u32_to_f64(uint32_t u)
 {
 #if !defined(FPU_LIB_CORRECT_CONVERSION_UINT_FP)
-    if (likely(!(u >> 31))) {
-        return fpu_wrap_f64((actual_double_t)(int32_t)u);
-    }
-    // Emulate conversion from u32 in software
-    return fpu_bit_u64_to_f64(0x41D0000000000000ULL + (((((uint64_t)u) << 22) + 1) >> 1));
+    // Use i64->f64 conversion for correct >0x80000000 values handling
+    return fpu_wrap_f64((actual_double_t)(int64_t)u);
 #else
     return fpu_wrap_f64((actual_double_t)u);
 #endif
@@ -977,8 +971,8 @@ static forceinline fpu_f32_t fpu_fcvt_u64_to_f32(uint64_t u)
     if (likely(!(u >> 63))) {
         return fpu_wrap_f32((actual_float_t)(int64_t)u);
     }
-    // Emulate conversion from u64 in software
-    return fpu_bit_u32_to_f32(0x5E800000U + ((((uint32_t)(u >> 39)) + 1) >> 1));
+    // Lower conversion from u64 as halved, evenly rounded i64, multiply back
+    return fpu_wrap_f32(((actual_float_t)(int64_t)((u >> 1) | (u & 1))) * 2.f);
 #else
     return fpu_wrap_f32((actual_float_t)u);
 #endif
@@ -990,8 +984,8 @@ static forceinline fpu_f64_t fpu_fcvt_u64_to_f64(uint64_t u)
     if (likely(!(u >> 63))) {
         return fpu_wrap_f64((actual_double_t)(int64_t)u);
     }
-    // Emulate conversion from u64 in software
-    return fpu_bit_u64_to_f64(0x43D0000000000000ULL + (((u >> 10) + 1) >> 1));
+    // Lower conversion from u64 as halved, evenly rounded i64, multiply back
+    return fpu_wrap_f64(((actual_double_t)(int64_t)((u >> 1) | (u & 1))) * 2.0);
 #else
     return fpu_wrap_f64((actual_double_t)u);
 #endif
@@ -1068,13 +1062,7 @@ static forceinline uint32_t fpu_fcvt_f32_to_u32(fpu_f32_t f)
 {
     if (likely(fpu_f32_fits_u32(f))) {
 #if defined(USE_SOFT_FPU_FENV) || !defined(FPU_LIB_CORRECT_CONVERSION_FP_UINT)
-        uint32_t ret;
-        if (likely(fpu_f32_fits_i32(f))) {
-            ret = (int32_t)fpu_raw_f32(f);
-        } else {
-            // Emulate conversion to u32 in software
-            ret = (fpu_bit_f32_to_u32(f) << 8) - 0x80000000U;
-        }
+        uint32_t ret = (int64_t)fpu_raw_f32(f);
         if (unlikely(!fpu_is_bit_equal32(f, fpu_fcvt_u32_to_f32(ret)))) {
             fpu_raise_inexact();
         }
@@ -1094,13 +1082,7 @@ static forceinline uint32_t fpu_fcvt_f64_to_u32(fpu_f64_t d)
 {
     if (likely(fpu_f64_fits_u32(d))) {
 #if defined(USE_SOFT_FPU_FENV) || !defined(FPU_LIB_CORRECT_CONVERSION_FP_UINT)
-        uint32_t ret;
-        if (likely(fpu_f64_fits_i32(d))) {
-            ret = (int32_t)fpu_raw_f64(d);
-        } else {
-            // Emulate conversion to u32 in software
-            ret = ((uint32_t)(fpu_bit_f64_to_u64(d) >> 21)) - 0x80000000U;
-        }
+        uint32_t ret = (int64_t)fpu_raw_f64(d);
         if (unlikely(!fpu_is_bit_equal64(d, fpu_fcvt_u32_to_f64(ret)))) {
             fpu_raise_inexact();
         }
