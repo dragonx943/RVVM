@@ -49,17 +49,83 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 PUSH_OPTIMIZATION_SIZE
 
 #if defined(HOST_TARGET_WINNT)
-#include <windows.h> // For WriteFile(), SetConsoleOutputCP(), SetConsoleCP(), GetCommandLineW(), CommandLineToArgvW()
-#else
-#include <stdio.h> // For puts()
-#endif
 
-static void print_string(const char* str)
+// For WriteFile(), GetCommandLine(), SetConsoleOutputCP(), SetConsoleCP()
+#include <windows.h>
+
+// Split command line or environment string into argv/envp
+static int split_cmdline(const char* cmdline, int argc, char*** argv_p, bool env)
+{
+    int end = 0, pos = 0, cnt = 0, esc = 0;
+    if (cmdline) {
+        do {
+            if (cmdline[pos] == '\"' && !env) {
+                esc = !esc;
+            } else if (!cmdline[pos] || (cmdline[pos] == ' ' && !esc && !env)) {
+                int len = pos - end;
+                if (cmdline[end] != ' ' && len) {
+                    if (argv_p && cnt < argc) {
+                        (*argv_p)[cnt] = safe_new_arr(char, len + 1);
+                        memcpy((*argv_p)[cnt], cmdline + end, len);
+                    }
+                    cnt++;
+                }
+                end += len + 1;
+            }
+        } while (cmdline[pos++] || (env && cmdline[pos]));
+    }
+    return cnt;
+}
+
+// Fill argc/argv/envp
+static int fill_argv_envp(int* argc_p, char*** argv_p, char*** envp_p)
+{
+    static int    argc_g = 0;
+    static char** argv_g = NULL;
+    static char** envp_g = NULL;
+    if (!argv_g) {
+        // Get UTF-16 cmdline & convert to UTF-8, fallback to ANSI
+        LPWSTR cmdline_u16 = GetCommandLineW();
+        char*  cmdline     = cmdline_u16 ? utf16_to_utf8(cmdline_u16) : GetCommandLineA();
+        // Split cmdline into argv
+        argc_g = split_cmdline(cmdline, 0, NULL, false);
+        argv_g = safe_new_arr(char*, argc_g + 1);
+        split_cmdline(cmdline, argc_g, &argv_g, false);
+        // Free UTF-8 cmdline if needed
+        if (cmdline_u16) {
+            free(cmdline);
+        }
+        if (!cmdline) {
+            return -1;
+        }
+    }
+    if (!envp_g) {
+        const char* envstr = GetEnvironmentStringsA();
+        // Split environment string into envp
+        int envc = split_cmdline(envstr, 0, NULL, true);
+        envp_g   = safe_new_arr(char*, envc + 1);
+        split_cmdline(envstr, envc, &envp_g, true);
+        if (!envstr) {
+            return -1;
+        }
+    }
+    if (argc_p) {
+        *argc_p = argc_g;
+    }
+    if (argv_p) {
+        *argv_p = argv_g;
+    }
+    if (envp_p) {
+        *envp_p = envp_g;
+    }
+    return 0;
+}
+
+static void print_stderr(const char* str)
 {
 #if defined(HOST_TARGET_WINNT)
-    DWORD       count = 0;
-    const char* tmp   = str;
-    while (*tmp++) {
+    DWORD count = 0;
+    while (str[count]) {
         count++;
     }
     WriteFile(GetStdHandle(STD_ERROR_HANDLE), str, count, &count, NULL);
@@ -67,6 +133,30 @@ static void print_string(const char* str)
     fputs(str, stderr);
 #endif
 }
+
+#if defined(GNU_EXTS) && defined(HOST_32BIT)
+
+// Fix crtdll crash
+int __getmainargs(int* argc_p, char*** argv_p, char*** envp_p, int do_wildcard, void* start_info)
+{
+    UNUSED(do_wildcard);
+    UNUSED(start_info);
+    return fill_argv_envp(argc_p, argv_p, envp_p);
+}
+
+#endif
+
+#else
+
+// For fputs()
+#include <stdio.h>
+
+static void print_stderr(const char* str)
+{
+    fputs(str, stderr);
+}
+
+#endif
 
 static void rvvm_print_help(void)
 {
@@ -117,7 +207,7 @@ static void rvvm_print_help(void)
         "    -noisolation     Disable seccomp/pledge isolation\n"
         "    -nojit           Disable RVJIT (For debug purposes, slow!)\n"
         "\n";
-    print_string(help);
+    print_stderr(help);
 }
 
 static bool rvvm_cli_configure(rvvm_machine_t* machine, const char* bios, tap_dev_t* tap)
@@ -228,7 +318,7 @@ static int rvvm_cli_main(int argc, char** argv)
 
     if (!bios) {
         // No firmware passed
-        print_string("Usage: rvvm <firmware> [-mem 256M] [-k kernel] [-help] ...\n");
+        print_stderr("Usage: rvvm <firmware> [-mem 256M] [-k kernel] [-help] ...\n");
         return 0;
     }
 
@@ -317,46 +407,12 @@ static int rvvm_cli_main(int argc, char** argv)
 int main(int argc, char** argv)
 {
 #if defined(HOST_TARGET_WINNT)
-    // Prefer UTF-8 arguments on Windows whenever GetCommandLineW() & CommandLineToArgvW() are available
-    LPWSTR  (*__stdcall get_command_line_w)(void)              = NULL;
-    LPWSTR* (*__stdcall command_line_to_argv_w)(LPCWSTR, int*) = NULL;
-    get_command_line_w     = (void*)GetProcAddress(LoadLibraryW(L"kernel32.dll"), "GetCommandLineW");
-    command_line_to_argv_w = (void*)GetProcAddress(LoadLibraryW(L"shell32.dll"), "CommandLineToArgvW");
-
     // Prefer UTF-8 console on Windows
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
 
-    if (get_command_line_w && command_line_to_argv_w) {
-        LPWSTR cmdline_w = get_command_line_w();
-        if (cmdline_w) {
-            int     argc_u8  = 0;
-            LPWSTR* argv_u16 = command_line_to_argv_w(cmdline_w, &argc_u8);
-            if (argv_u16 && argc_u8) {
-                char** argv_u8 = safe_new_arr(char*, argc_u8 + 1);
-                bool   success = true;
-                int    ret     = 0;
-                for (int i = 0; i < argc_u8; ++i) {
-                    argv_u8[i] = utf16_to_utf8(argv_u16[i]);
-                    if (!argv_u8[i]) {
-                        success = false;
-                        break;
-                    }
-                }
-                LocalFree(argv_u16);
-                if (success) {
-                    ret = rvvm_cli_main(argc_u8, argv_u8);
-                }
-                for (int i = 0; i < argc_u8; ++i) {
-                    free(argv_u8[i]);
-                }
-                free(argv_u8);
-                if (success) {
-                    return ret;
-                }
-            }
-        }
-    }
+    // Prefer UTF-8 arguments on Windows
+    fill_argv_envp(&argc, &argv, NULL);
 #endif
     return rvvm_cli_main(argc, argv);
 }
