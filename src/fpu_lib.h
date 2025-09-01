@@ -443,13 +443,13 @@ static forceinline bool fpu_is_nan64_soft(fpu_f64_t d)
 static forceinline bool fpu_is_snan32_soft(fpu_f32_t f)
 {
     uint32_t u = fpu_bit_f32_to_u32(f) << 1;
-    return (u - (FPU_LIB_FP32_POSITIVE_INF << 1)) < FPU_LIB_FP32_QUIETNAN_MASK;
+    return (u - ((FPU_LIB_FP32_POSITIVE_INF << 1) + 1)) < ((FPU_LIB_FP32_QUIETNAN_MASK << 1) - 1);
 }
 
 static forceinline bool fpu_is_snan64_soft(fpu_f64_t d)
 {
     uint64_t u = fpu_bit_f64_to_u64(d) << 1;
-    return (u - (FPU_LIB_FP64_POSITIVE_INF << 1)) < FPU_LIB_FP64_QUIETNAN_MASK;
+    return (u - ((FPU_LIB_FP64_POSITIVE_INF << 1) + 1)) < ((FPU_LIB_FP64_QUIETNAN_MASK << 1) - 1);
 }
 
 // Returns normalized exponent value
@@ -1518,9 +1518,6 @@ static forceinline fpu_f64_t fpu_min64(fpu_f64_t a, fpu_f64_t b)
 
 static forceinline fpu_f32_t fpu_max32(fpu_f32_t a, fpu_f32_t b)
 {
-    fpu_f32_t tmp = a;
-    a             = b;
-    b             = tmp;
 #if defined(FPU_LIB_CORRECT_BUILTIN_IEEE754_2008_FMINMAX)
     return fpu_wrap_f32(__builtin_fmaxf(fpu_raw_f32(a), fpu_raw_f32(b)));
 #else
