@@ -385,11 +385,11 @@ static void* vma_mmap_aligned_internal(void* addr, size_t size, uint32_t flags, 
             return NULL;
         }
         if (file_handle) {
-#if defined(HOST_64BIT) || defined(HOST_TARGET_WINCE)
-            // Use Unicode syscall on 64 bits and Windows CE, ANSI otherwise for Win9x support
-            HANDLE file_map = CreateFileMappingW(file_handle, NULL, vma_native_prot(flags), 0, 0, NULL);
-#else
+#if defined(HOST_TARGET_WIN9X)
+            // Use ANSI syscall (Win9x compat)
             HANDLE file_map = CreateFileMappingA(file_handle, NULL, vma_native_prot(flags), 0, 0, NULL);
+#else
+            HANDLE file_map = CreateFileMappingW(file_handle, NULL, vma_native_prot(flags), 0, 0, NULL);
 #endif
             if (!file_map || file_map == INVALID_HANDLE_VALUE) {
                 return NULL;
@@ -453,17 +453,24 @@ static void* vma_mmap_aligned_internal(void* addr, size_t size, uint32_t flags, 
     // Generic libc implementation using calloc()
     // No support for VMA_SHARED, VMA_EXEC, VMA_FIXED
     UNUSED(addr);
-    if (!(flags & (VMA_SHARED | VMA_EXEC | VMA_FIXED))) {
+    if (!(flags & (VMA_SHARED | VMA_EXEC | VMA_FIXED)) && !file) {
         ret = calloc(size, 1);
-        if (ret && file) {
-            // Emulate private file mappings by reading the file into memory
-            if (rvread(file, ret, size, offset) != size) {
-                free(ret);
-                return NULL;
-            }
-        }
     }
 #endif
+    return ret;
+}
+
+static void* vma_mmap_aligned(void* addr, size_t size, uint32_t flags, rvfile_t* file, uint64_t offset)
+{
+    void* ret = vma_mmap_aligned_internal(addr, size, flags, file, offset);
+    if (!ret && file) {
+        // Private file mappings emulation fallback
+        ret = vma_mmap_aligned_internal(addr, size, VMA_RDWR | (flags & VMA_FIXED), NULL, 0);
+        if (ret && (rvread(file, ret, size, offset) != size || !vma_protect(addr, size, flags & VMA_RWX))) {
+            vma_free(ret, size);
+            return NULL;
+        }
+    }
     return ret;
 }
 
@@ -511,7 +518,7 @@ void* vma_mmap(void* addr, size_t size, uint32_t flags, rvfile_t* file, uint64_t
         }
     }
 
-    ret = vma_mmap_aligned_internal(addr, size, flags, file, offset);
+    ret = vma_mmap_aligned(addr, size, flags, file, offset);
 
     if ((flags & VMA_FIXED) && ret && ret != addr) {
         vma_free(ret, size);
