@@ -623,7 +623,7 @@ override IMPLY_USE_TSAN       := USE_DEBUG
 override IMPLY_USE_MSAN       := USE_DEBUG
 
 override CFLAGS_USE_DEBUG := -DDEBUG -g -fno-omit-frame-pointer
-override CFLAGS_USE_LIB   := -fPIC
+override CFLAGS_USE_LIB   := $(if $(filter-out windows,$(OS)),-fPIC)
 override CFLAGS_USE_UBSAN := -fsanitize=undefined,float-cast-overflow -fsanitize-recover=undefined,float-cast-overflow
 override CFLAGS_USE_ASAN  := -fsanitize=address -fsanitize-recover=address
 override CFLAGS_USE_TSAN  := -fsanitize=thread -fsanitize-recover=thread
@@ -840,26 +840,31 @@ endif
 # Set compiler-specific optimization options
 # Enable -O2 unless USE_DEBUG_FULL is set, which enables -O0
 # Default to -march=i586 for 32-bit x86
+# Enable -flto=auto on GCC 5.0+, -flto on Clang 5.0+
 #
-# Enable -flto=auto on GCC 5.0+, -flto-incremental on GCC 15.0+ (non-Windows)
-# Enable -flto on Clang 5.0+
-
+# Non-Windows (ELF) targets:
+# Enable -flto-incremental on GCC 15.0+
 # Enable -fno-plt -fno-semantic-interposition on GCC 6.0+
-# Enable -fanalyzer for USE_ANALYZER on GCC 10.1+
-
-# Enable -fvisibility=hidden -fno-math-errno -pipe -Bsymbolic-functions on GCC/Clang 4.0+
+# Enable -fvisibility=hidden -Bsymbolic-functions on GCC/Clang 4.0+
+#
+# Enable -fanalyzer on USE_ANALYZER on GCC 10.1+
 override OPTIMIZE_OPTS := $(strip $(OPTIMIZE_OPTS) \
-$(if $(filter i386,$(ARCH)),$(if $(call gnuc_min_ver,3.0),$(if $(filter -march% -msse% -mfpmath%,$(CFLAGS)),,-march=i586))) \
-$(if $(LTO_SUPPORTED),$(if $(call gcc_min_ver,5.0),-flto=auto) $(if $(call gcc_min_ver,15.0),$(if $(filter-out windows,$(OS)),-flto-incremental=$(OBJDIR)))) \
-$(if $(LTO_SUPPORTED),$(if $(call clang_min_ver,5.0),-flto)) \
-$(if $(call gcc_min_ver,6.0),-fno-plt -fno-semantic-interposition) \
-$(if $(call var_use,USE_ANALYZER),$(if $(call gcc_min_ver,10.1),-fanalyzer)) \
-$(if $(call gnuc_min_ver,4.0),-fvisibility=hidden -fno-math-errno -pipe -Bsymbolic-functions))
+$(if $(filter i386,$(ARCH)), \
+  $(if $(call gnuc_min_ver,3.0),$(if $(filter -march% -msse% -mfpmath%,$(CFLAGS)),,-march=i586))) \
+$(if $(LTO_SUPPORTED), \
+  $(if $(call gcc_min_ver,5.0),-flto=auto) \
+  $(if $(call clang_min_ver,5.0),-flto)) \
+$(if $(filter-out windows,$(OS)), \
+  $(if $(call gcc_min_ver,15.0),-flto-incremental=$(OBJDIR)) \
+  $(if $(call gcc_min_ver,6.0),-fno-plt -fno-semantic-interposition) \
+  $(if $(call gnuc_min_ver,4.0),-fvisibility=hidden -Bsymbolic-functions)) \
+$(if $(call var_use,USE_ANALYZER), \
+  $(if $(call gcc_min_ver,10.1),-fanalyzer)))
 
 # Set compiler-specific mandatory optimization options appended after user CFLAGS
 # Override -Ofast into -O3 if detected
 # Enable -fno-fast-math -fno-math-errno -frounding-math on GCC/Clang 4.0+
-override MANDATORY_OPTS := $(strip  \
+override MANDATORY_OPTS := $(strip \
 $(if $(filter -Ofast,$(CFLAGS)),-O3) \
 $(if $(call gnuc_min_ver,4.0),-fno-fast-math -fno-math-errno -frounding-math))
 
