@@ -15,6 +15,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "blk_io.h"
 #include "utils.h"
 
+PUSH_OPTIMIZATION_SIZE
+
 // Maximum buffer size processed per internal IO syscall: 256M
 #define RVFILE_MAX_BUFF    0x10000000U
 
@@ -391,7 +393,7 @@ rvfile_t* rvopen(const char* filepath, uint8_t filemode)
 
 void rvclose(rvfile_t* file)
 {
-    if (file) {
+    if (likely(file)) {
         rvfsync(file);
 #if defined(POSIX_FILE_IMPL)
         close(file->fd);
@@ -406,7 +408,7 @@ void rvclose(rvfile_t* file)
 
 uint64_t rvfilesize(rvfile_t* file)
 {
-    if (file) {
+    if (likely(file)) {
         return atomic_load_uint64(&file->size);
     }
     return 0;
@@ -461,7 +463,7 @@ static int32_t rvread_unlocked(rvfile_t* file, void* dst, size_t size, uint64_t 
     uint8_t* buffer = dst;
     size_t   ret    = 0;
 
-    while (file && ret < size) {
+    while (ret < size) {
         size_t  chunk_size = EVAL_MIN(size - ret, RVFILE_MAX_BUFF);
         int32_t tmp        = rvread_chunk(file, buffer + ret, chunk_size, offset + ret);
         if (likely(tmp > 0)) {
@@ -481,29 +483,30 @@ static int32_t rvread_unlocked(rvfile_t* file, void* dst, size_t size, uint64_t 
 
 size_t rvread(rvfile_t* file, void* dst, size_t size, uint64_t offset)
 {
-    uint64_t pos = (offset == RVFILE_POSITION) ? rvtell(file) : offset;
-    size_t   ret = 0;
+    size_t ret = 0;
 
+    if (likely(file)) {
+        uint64_t pos = (offset == RVFILE_POSITION) ? rvtell(file) : offset;
 #if defined(POSIX_FILE_IMPL)
-    ret = rvread_unlocked(file, dst, size, pos);
+        ret = rvread_unlocked(file, dst, size, pos);
 #elif defined(WIN32_FILE_IMPL)
-    if (rvfile_win32_has_threaded_io()) {
-        scoped_spin_read_lock_slow (&file->lock) {
-            ret = rvread_unlocked(file, dst, size, pos);
+        if (rvfile_win32_has_threaded_io()) {
+            scoped_spin_read_lock_slow (&file->lock) {
+                ret = rvread_unlocked(file, dst, size, pos);
+            }
+        } else {
+            scoped_spin_lock_slow (&file->lock) {
+                ret = rvread_unlocked(file, dst, size, pos);
+            }
         }
-    } else {
+#else
         scoped_spin_lock_slow (&file->lock) {
             ret = rvread_unlocked(file, dst, size, pos);
         }
-    }
-#else
-    scoped_spin_lock_slow (&file->lock) {
-        ret = rvread_unlocked(file, dst, size, pos);
-    }
 #endif
-
-    if (offset == RVFILE_POSITION && ret) {
-        rvseek(file, pos + ret, RVFILE_SEEK_SET);
+        if (offset == RVFILE_POSITION && ret) {
+            rvseek(file, pos + ret, RVFILE_SEEK_SET);
+        }
     }
 
     return ret;
@@ -557,7 +560,7 @@ static int32_t rvwrite_unlocked(rvfile_t* file, const void* src, size_t size, ui
     const uint8_t* buffer = src;
     size_t         ret    = 0;
 
-    while (file && ret < size) {
+    while (ret < size) {
         size_t  chunk_size = EVAL_MIN(size - ret, RVFILE_MAX_BUFF);
         int32_t tmp        = rvwrite_chunk(file, buffer + ret, chunk_size, offset + ret);
         if (likely(tmp > 0)) {
@@ -575,29 +578,30 @@ static int32_t rvwrite_unlocked(rvfile_t* file, const void* src, size_t size, ui
 
 size_t rvwrite(rvfile_t* file, const void* src, size_t size, uint64_t offset)
 {
-    uint64_t pos = (offset == RVFILE_POSITION) ? rvtell(file) : offset;
-    size_t   ret = 0;
+    size_t ret = 0;
 
+    if (likely(file)) {
+        uint64_t pos = (offset == RVFILE_POSITION) ? rvtell(file) : offset;
 #if defined(POSIX_FILE_IMPL)
-    ret = rvwrite_unlocked(file, src, size, offset);
+        ret = rvwrite_unlocked(file, src, size, offset);
 #elif defined(WIN32_FILE_IMPL)
-    if (rvfile_win32_has_threaded_io()) {
-        scoped_spin_read_lock_slow (&file->lock) {
-            ret = rvwrite_unlocked(file, src, size, offset);
+        if (rvfile_win32_has_threaded_io()) {
+            scoped_spin_read_lock_slow (&file->lock) {
+                ret = rvwrite_unlocked(file, src, size, offset);
+            }
+        } else {
+            scoped_spin_lock_slow (&file->lock) {
+                ret = rvwrite_unlocked(file, src, size, offset);
+            }
         }
-    } else {
+#else
         scoped_spin_lock_slow (&file->lock) {
             ret = rvwrite_unlocked(file, src, size, offset);
         }
-    }
-#else
-    scoped_spin_lock_slow (&file->lock) {
-        ret = rvwrite_unlocked(file, src, size, offset);
-    }
 #endif
-
-    if (offset == RVFILE_POSITION && ret) {
-        rvseek(file, pos + ret, RVFILE_SEEK_SET);
+        if (offset == RVFILE_POSITION && ret) {
+            rvseek(file, pos + ret, RVFILE_SEEK_SET);
+        }
     }
 
     return ret;
@@ -605,7 +609,7 @@ size_t rvwrite(rvfile_t* file, const void* src, size_t size, uint64_t offset)
 
 bool rvtrim(rvfile_t* file, uint64_t offset, uint64_t size)
 {
-    if (file) {
+    if (likely(file)) {
 #if defined(POSIX_FILE_IMPL) && defined(HOST_TARGET_LINUX) && defined(FALLOC_FL_PUNCH_HOLE)
         // Use fallocate(FALLOC_FL_PUNCH_HOLE) on Linux to punch holes
         return !fallocate(file->fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, offset, size);
@@ -642,7 +646,7 @@ bool rvtrim(rvfile_t* file, uint64_t offset, uint64_t size)
 
 bool rvseek(rvfile_t* file, int64_t offset, uint8_t startpos)
 {
-    if (file) {
+    if (likely(file)) {
         if (startpos == RVFILE_SEEK_CUR) {
             offset = rvtell(file) + offset;
         } else if (startpos == RVFILE_SEEK_END) {
@@ -661,7 +665,7 @@ bool rvseek(rvfile_t* file, int64_t offset, uint8_t startpos)
 
 uint64_t rvtell(rvfile_t* file)
 {
-    if (file) {
+    if (likely(file)) {
         return atomic_load_uint64_relax(&file->pos);
     }
     return -1;
@@ -670,7 +674,7 @@ uint64_t rvtell(rvfile_t* file)
 bool rvfsync(rvfile_t* file)
 {
     bool ret = false;
-    if (file) {
+    if (likely(file)) {
 #if defined(POSIX_FILE_IMPL)
 #if defined(HOST_TARGET_DARWIN) && defined(F_BARRIERFSYNC)
         // Barrier sync on MacOS, will fail on Darling and possibly elsewhere
@@ -704,37 +708,32 @@ bool rvfsync(rvfile_t* file)
 
 bool rvtruncate(rvfile_t* file, uint64_t length)
 {
-    bool resized = false;
-    if (!file) {
-        return false;
-    }
-    if (length == rvfilesize(file)) {
-        return true;
-    }
+    if (likely(file)) {
+        bool resized = false;
+        if (length == rvfilesize(file)) {
+            return true;
+        }
 #if defined(POSIX_FILE_IMPL)
-    resized = !ftruncate(file->fd, length);
+        resized = !ftruncate(file->fd, length);
 #elif defined(WIN32_FILE_IMPL)
-    scoped_spin_lock_slow (&file->lock) {
-        // Perform SetFilePointer() + SetEndOfFile() under writer lock
-        // to prevent ReadFile()/WriteFile() from moving file pointer
-        if (rvfile_win32_lseek(file->handle, length, FILE_BEGIN)) {
-            // Successfully set file pointer, set end of file here
-            resized = !!SetEndOfFile(file->handle);
+        scoped_spin_lock_slow (&file->lock) {
+            // Perform SetFilePointer() + SetEndOfFile() under writer lock
+            // to prevent ReadFile()/WriteFile() from moving file pointer
+            if (rvfile_win32_lseek(file->handle, length, FILE_BEGIN)) {
+                // Successfully set file pointer, set end of file here
+                resized = !!SetEndOfFile(file->handle);
+            }
+        }
+#endif
+        if (resized) {
+            // Successfully resized the file natively
+            atomic_store_uint64(&file->size, length);
+            return true;
+        } else if (length >= rvfilesize(file)) {
+            // Try to grow the file via rvfallocate()
+            return rvfallocate(file, length);
         }
     }
-#endif
-    if (resized) {
-        // Successfully resized the file natively
-        atomic_store_uint64(&file->size, length);
-        return true;
-    }
-
-    if (length >= rvfilesize(file)) {
-        // Try to grow the file via rvfallocate()
-        return rvfallocate(file, length);
-    }
-
-    // Failed to resize the file
     return false;
 }
 
@@ -768,51 +767,52 @@ static bool rvfile_grow_generic(rvfile_t* file, uint64_t length)
 
 bool rvfallocate(rvfile_t* file, uint64_t length)
 {
-    if (!file) {
-        return false;
-    }
-    if (length <= rvfilesize(file)) {
-        return true;
-    }
+    if (likely(file)) {
+        if (length <= rvfilesize(file)) {
+            return true;
+        }
 #if defined(POSIX_FILE_IMPL)                                                                                           \
     && ((defined(HOST_TARGET_LINUX) && defined(FALLOC_FL_PUNCH_HOLE))                                                  \
         || (defined(HOST_TARGET_FREEBSD) && HOST_TARGET_FREEBSD >= 9)                                                  \
         || (defined(HOST_TARGET_NETBSD) && HOST_TARGET_NETBSD >= 7))
-    // Try to grow file via posix_fallocate() (Available on Linux 2.6.23+, FreeBSD 9+, NetBSD 7+)
-    if (!posix_fallocate(file->fd, length - 1, 1)) {
-        rvfile_grow_internal(file, length);
-        return true;
-    }
+        // Try to grow file via posix_fallocate() (Available on Linux 2.6.23+, FreeBSD 9+, NetBSD 7+)
+        if (!posix_fallocate(file->fd, length - 1, 1)) {
+            rvfile_grow_internal(file, length);
+            return true;
+        }
 #endif
-
-    // Generic grow file implementation
-    return rvfile_grow_generic(file, length);
+        // Generic grow file implementation
+        return rvfile_grow_generic(file, length);
+    }
+    return false;
 }
 
 int rvfile_get_posix_fd(rvfile_t* file)
 {
+    if (likely(file)) {
+        UNUSED(file);
 #if defined(POSIX_FILE_IMPL)
-    return file->fd;
+        return file->fd;
 #elif !defined(WIN32_FILE_IMPL) && defined(HOST_TARGET_POSIX)
-    return fileno(file->fp);
-#else
-    UNUSED(file);
-    return -1;
+        return fileno(file->fp);
 #endif
+    }
+    return -1;
 }
 
 void* rvfile_get_win32_handle(rvfile_t* file)
 {
+    if (likely(file)) {
+        UNUSED(file);
 #if defined(WIN32_FILE_IMPL)
-    return (void*)file->handle;
+        return (void*)file->handle;
 #elif !defined(POSIX_FILE_IMPL) && defined(HOST_TARGET_WINCE)
-    return (void*)_fileno(file->fp);
+        return (void*)_fileno(file->fp);
 #elif !defined(POSIX_FILE_IMPL) && defined(HOST_TARGET_WIN32)
-    return (void*)_get_osfhandle(_fileno(file->fp));
-#else
-    UNUSED(file);
-    return NULL;
+        return (void*)_get_osfhandle(_fileno(file->fp));
 #endif
+    }
+    return NULL;
 }
 
 /*
@@ -902,3 +902,5 @@ void blk_close(blkdev_t* dev)
         safe_free(dev);
     }
 }
+
+POP_OPTIMIZATION_SIZE
