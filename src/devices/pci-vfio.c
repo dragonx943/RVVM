@@ -8,7 +8,6 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
 // Expose pread()/pwrite()/readlink(), O_CLOEXEC
-#include "atomics.h"
 #include "feature_test.h"
 
 #include "blk_io.h"
