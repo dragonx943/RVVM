@@ -449,6 +449,8 @@ static void x11_handle_mouse_motion(XMotionEvent* xmotion)
             if (dx || dy) {
                 XWarpPointer(x11_dsp, None, x11->window, 0, 0, 0, 0, center_x, center_y);
                 XFlush(x11_dsp);
+                dx -= dx / 3;
+                dy -= dy / 3;
                 win->on_mouse_move(win, dx, dy);
             }
         } else if (win->on_mouse_place) {
@@ -874,9 +876,6 @@ bool x11_window_init(gui_window_t* win)
                                 DefaultDepth(x11_dsp, DefaultScreen(x11_dsp)), InputOutput, CopyFromParent, CWEventMask,
                                 &attributes);
     x11->gc     = XCreateGC(x11_dsp, x11->window, 0, NULL);
-
-    // Set window title
-    XStoreName(x11_dsp, x11->window, "RVVM");
 
     // Window size hints
     XSizeHints hints = {
