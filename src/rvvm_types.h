@@ -19,35 +19,80 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include <inttypes.h>
 #endif
 
-#if defined(HOST_64BIT) && !defined(_WIN32)
-#ifndef PRIx64
-#define PRIx64 "lx"
-#endif
-#ifndef PRId64
-#define PRId64 "ld"
-#endif
-#ifndef PRIu64
-#define PRIu64 "lu"
-#endif
+/*
+ * Fix awful msvcrt PRI* macros implementation
+ */
+
+#if defined(HOST_32BIT) || defined(_WIN32)
+#define PRI64_PREFIX "ll"
 #else
-#ifndef PRIx64
-#define PRIx64 "llx"
+#define PRI64_PREFIX "l"
 #endif
-#ifndef PRId64
-#define PRId64 "lld"
+
+#if defined(HOST_32BIT)
+#define PRIPTR_PREFIX
+#else
+#define PRIPTR_PREFIX PRI64_PREFIX
 #endif
-#ifndef PRIu64
-#define PRIu64 "llu"
-#endif
-#endif
+
+#undef PRId32
+#undef PRIi32
+#undef PRIu32
+#undef PRIo32
+#undef PRIx32
+#undef PRIX32
+
+#undef PRId64
+#undef PRIi64
+#undef PRIu64
+#undef PRIo64
+#undef PRIx64
+#undef PRIX64
+
+#undef PRIdPTR
+#undef PRIiPTR
+#undef PRIuPTR
+#undef PRIoPTR
+#undef PRIxPTR
+#undef PRIXPTR
+
+#define PRId32  "d"
+#define PRIi32  "i"
+#define PRIu32  "u"
+#define PRIo32  "o"
+#define PRIX32  "X"
+
+#define PRId64  PRI64_PREFIX "d"
+#define PRIi64  PRI64_PREFIX "i"
+#define PRIu64  PRI64_PREFIX "u"
+#define PRIo64  PRI64_PREFIX "o"
+#define PRIx64  PRI64_PREFIX "x"
+#define PRIX64  PRI64_PREFIX "X"
+
+#define PRIdPTR PRIPTR_PREFIX "d"
+#define PRIiPTR PRIPTR_PREFIX "i"
+#define PRIuPTR PRIPTR_PREFIX "u"
+#define PRIoPTR PRIPTR_PREFIX "o"
+#define PRIXPTR PRIPTR_PREFIX "X"
+
+/*
+ * Provide int128_t / uint128_t types
+ */
 
 #if defined(__SIZEOF_INT128__)
-#define INT128_SUPPORT 1
+
 typedef unsigned __int128 uint128_t;
 typedef __int128          int128_t;
+
+#define INT128_SUPPORT 1
+
 #endif
 
-typedef uint8_t regid_t;  // Register index
-typedef uint8_t bitcnt_t; // Bits count
+/*
+ * Provide regid_t / bitcnt_t types
+ */
+
+typedef uint8_t regid_t;
+typedef uint8_t bitcnt_t;
 
 #endif
