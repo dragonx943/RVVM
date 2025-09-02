@@ -57,7 +57,7 @@ static dlib_ctx_t* dlib_open_internal(const char* lib_name, uint32_t flags)
     if (lib_name_u16) {
         // Try to get module from already loaded modules
         HMODULE handle = GetModuleHandleW(lib_name_u16);
-#if defined(HOST_32BIT) && !defined(HOST_TARGET_WINCE)
+#if defined(HOST_TARGET_WIN9X)
         if (!handle && GetLastError() == ERROR_CALL_NOT_IMPLEMENTED) {
             // Try ANSI GetModuleHandleA() (Win9x compat)
             handle = GetModuleHandleA(lib_name);
@@ -70,7 +70,7 @@ static dlib_ctx_t* dlib_open_internal(const char* lib_name, uint32_t flags)
         if (!handle) {
             handle = LoadLibraryW(lib_name_u16);
         }
-#if defined(HOST_32BIT) && !defined(HOST_TARGET_WINCE)
+#if defined(HOST_TARGET_WIN9X)
         if (!handle && GetLastError() == ERROR_CALL_NOT_IMPLEMENTED) {
             // Try ANSI LoadLibraryA() (Win9x compat)
             handle = LoadLibraryA(lib_name);
