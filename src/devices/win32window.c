@@ -1,5 +1,5 @@
 /*
-win32window.c - Win32 RVVM Window
+win32window.c - Win32 GUI Window
 Copyright (C) 2021  LekKit <github.com/LekKit>
 
 This Source Code Form is subject to the terms of the Mozilla Public
@@ -7,31 +7,34 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#include "compiler.h"
-#include "gui_window.h"
+#include "feature_test.h"
 
-PUSH_OPTIMIZATION_SIZE
-
-// Enable unicode on Win64 / WinCE, otherwise use ANSI for Win9x compat
+// Use ANSI for Win9x compat, widechar otherwise
 #undef UNICODE
-#if defined(HOST_64BIT) || defined(UNDER_CE)
+#if !defined(HOST_TARGET_WIN9X)
 #define UNICODE
 #endif
 
-#include <windows.h>
+#include "compiler.h"
+#include "gui_window.h"
 
-// Internal headers come after system headers because of safe_free()
+#if defined(HOST_TARGET_WIN32) || defined(HOST_TARGET_CYGWIN)
+
 #include "utils.h"
 #include "vma_ops.h"
 
-#define WINDOW_CLASS_NAME TEXT("RVVM_WINDOW")
+#include <windows.h>
 
-static ATOM window_atom = 0;
+PUSH_OPTIMIZATION_SIZE
+
+#define WINDOW_CLASS_NAME TEXT("LEKKIT_FB_WINDOW")
 
 typedef struct {
     HWND hwnd;
     HDC  hdc;
-} win32_data_t;
+} win32_win_t;
+
+static ATOM window_atom = 0;
 
 static const hid_key_t win32_key_to_hid_byte_map[] = {
     [0x41] = HID_KEY_A,
@@ -130,7 +133,7 @@ static const hid_key_t win32_key_to_hid_byte_map[] = {
     [0x60] = HID_KEY_KP0,
     [0x6E] = HID_KEY_KPDOT,
     [0x5D] = HID_KEY_MENU,
-    [0xE2] = HID_KEY_RO, // It's HID_KEY_102ND on German keyboards (I have one),
+    [0xE2] = HID_KEY_RO, // It's HID_KEY_102ND on Nordic keyboards (I have one),
                          // but Windows has no way to distinguish their VK keycodes
     [0xF2] = HID_KEY_KATAKANAHIRAGANA,
     [0x1C] = HID_KEY_HENKAN,
@@ -152,6 +155,7 @@ static hid_key_t win32_key_to_hid(uint32_t win32_key)
     if (win32_key < sizeof(win32_key_to_hid_byte_map)) {
         return win32_key_to_hid_byte_map[win32_key];
     }
+    rvvm_warn("Unmapped Win32 keycode %x", win32_key);
     return HID_KEY_NONE;
 }
 
@@ -163,7 +167,7 @@ static LRESULT CALLBACK win32_wndproc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARA
             return 0;
         case WM_KILLFOCUS:
             // This is an ugly fucking way to handle WM_KILLFOCUS via PeekMessage()
-            PostMessage(hwnd, uMsg, wParam, lParam);
+            PostMessage(hwnd, WM_KILLFOCUS, wParam, lParam);
             return 0;
     }
 
@@ -173,90 +177,163 @@ static LRESULT CALLBACK win32_wndproc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARA
     return DefWindowProc(hwnd, uMsg, wParam, lParam);
 }
 
+static void win32_adjust_client_rect(uint32_t* width, uint32_t* height)
+{
+    RECT rect = {
+        .right  = *width,
+        .bottom = *height,
+    };
+    AdjustWindowRectEx(&rect, WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, false, 0);
+    *width  = rect.right - rect.left;
+    *height = rect.bottom - rect.top;
+}
+
+static bool win32_window_set_scanout(gui_window_t* win, const fb_ctx_t* fb)
+{
+    win32_win_t* win32 = win->win_data;
+    if (win32 && win32->hwnd) {
+        if (fb->format != RGB_FMT_A8R8G8B8 && fb->format != RGB_FMT_R8G8B8 && fb->format != RGB_FMT_R5G6B5) {
+            // Invalid format
+            return false;
+        }
+        if (win->fb.width != fb->width || win->fb.height != fb->height) {
+            uint32_t flags  = SWP_DRAWFRAME | SWP_NOMOVE | SWP_NOZORDER | SWP_SHOWWINDOW;
+            uint32_t width  = fb->width;
+            uint32_t height = fb->height;
+            win32_adjust_client_rect(&width, &height);
+            if (!SetWindowPos(win32->hwnd, NULL, 0, 0, width, height, flags)) {
+                // Failed to resize window
+                return false;
+            }
+        }
+        win->fb = *fb;
+    }
+    return true;
+}
+
 static void win32_window_remove(gui_window_t* win)
 {
-    win32_data_t* data = win->win_data;
-    if (data->hwnd) {
-        ReleaseDC(data->hwnd, data->hdc);
-        DestroyWindow(data->hwnd);
+    win32_win_t* win32 = win->win_data;
+    if (win32) {
+        win->win_data = NULL;
+        if (win32->hdc) {
+            ReleaseDC(win32->hwnd, win32->hdc);
+        }
+        if (win32->hwnd) {
+            DestroyWindow(win32->hwnd);
+        }
+        safe_free(win32);
     }
-    vma_free(win->fb.buffer, framebuffer_size(&win->fb));
-    free(data);
 }
 
 static void win32_window_draw(gui_window_t* win)
 {
-    win32_data_t* data = win->win_data;
-    BITMAPINFO bmi = {
-        .bmiHeader = {
-            .biSize = sizeof(BITMAPINFOHEADER),
-            .biWidth = win->fb.width,
-            .biHeight = -win->fb.height,
-            .biPlanes = 1,
-            .biBitCount = 32,
-        },
-    };
-    StretchDIBits(data->hdc,                           //
-                  0, 0, win->fb.width, win->fb.height, //
-                  0, 0, win->fb.width, win->fb.height, //
-                  win->fb.buffer, &bmi, 0, SRCCOPY);
+    win32_win_t* win32 = win->win_data;
+    if (win32 && win32->hdc && win->fb.buffer) {
+        BITMAPINFO bmi = {
+            .bmiHeader = {
+                .biSize = sizeof(BITMAPINFOHEADER),
+                .biWidth = framebuffer_stride(&win->fb) / rgb_format_bytes(win->fb.format),
+                .biHeight = -win->fb.height,
+                .biPlanes = 1,
+                .biBitCount = rgb_format_bpp(win->fb.format),
+            },
+        };
+        SetDIBitsToDevice(win32->hdc, 0, 0, win->fb.width, win->fb.height, 0, 0, 0, //
+                          win->fb.height, win->fb.buffer, &bmi, DIB_RGB_COLORS);
+    }
 }
 
 static void win32_window_poll(gui_window_t* win)
 {
-    win32_data_t* data = win->win_data;
-    MSG           Msg  = {0};
-    while (PeekMessage(&Msg, data->hwnd, 0, 0, PM_REMOVE)) {
+    win32_win_t* win32 = win->win_data;
+    MSG          Msg   = {0};
+
+    while (win32 && win32->hwnd && PeekMessage(&Msg, win32->hwnd, 0, 0, PM_REMOVE)) {
         switch (Msg.message) {
             case WM_MOUSEMOVE: {
-                POINTS cur = MAKEPOINTS(Msg.lParam);
-                win->on_mouse_place(win, cur.x, cur.y);
+                if (win->on_mouse_place) {
+                    POINTS cur = MAKEPOINTS(Msg.lParam);
+                    win->on_mouse_place(win, cur.x, cur.y);
+                }
                 break;
             }
             case WM_KEYDOWN:
             case WM_SYSKEYDOWN: // For handling F10
                 // Disable autorepeat keypresses
-                if ((Msg.lParam & KF_REPEAT) == 0) {
+                if ((Msg.lParam & KF_REPEAT) == 0 && win->on_key_press) {
                     win->on_key_press(win, win32_key_to_hid(Msg.wParam));
                 }
                 break;
             case WM_KEYUP:
             case WM_SYSKEYUP:
-                if ((Msg.lParam & KF_REPEAT) == 0) {
+                if ((Msg.lParam & KF_REPEAT) == 0 && win->on_key_release) {
                     win->on_key_release(win, win32_key_to_hid(Msg.wParam));
                 }
                 break;
             case WM_LBUTTONDOWN:
-                win->on_mouse_press(win, HID_BTN_LEFT);
+                if (win->on_mouse_press) {
+                    win->on_mouse_press(win, HID_BTN_LEFT);
+                }
                 break;
             case WM_LBUTTONUP:
-                win->on_mouse_release(win, HID_BTN_LEFT);
+                if (win->on_mouse_release) {
+                    win->on_mouse_release(win, HID_BTN_LEFT);
+                }
                 break;
             case WM_RBUTTONDOWN:
-                win->on_mouse_press(win, HID_BTN_RIGHT);
+                if (win->on_mouse_press) {
+                    win->on_mouse_press(win, HID_BTN_RIGHT);
+                }
                 break;
             case WM_RBUTTONUP:
-                win->on_mouse_release(win, HID_BTN_RIGHT);
+                if (win->on_mouse_release) {
+                    win->on_mouse_release(win, HID_BTN_RIGHT);
+                }
                 break;
             case WM_MBUTTONDOWN:
-                win->on_mouse_press(win, HID_BTN_MIDDLE);
+                if (win->on_mouse_press) {
+                    win->on_mouse_press(win, HID_BTN_MIDDLE);
+                }
                 break;
             case WM_MBUTTONUP:
-                win->on_mouse_release(win, HID_BTN_MIDDLE);
+                if (win->on_mouse_release) {
+                    win->on_mouse_release(win, HID_BTN_MIDDLE);
+                }
                 break;
             case WM_MOUSEWHEEL:
-                win->on_mouse_scroll(win, -GET_WHEEL_DELTA_WPARAM(Msg.wParam) / WHEEL_DELTA);
+                if (win->on_mouse_scroll) {
+                    win->on_mouse_scroll(win, -GET_WHEEL_DELTA_WPARAM(Msg.wParam) / WHEEL_DELTA);
+                }
                 break;
             case WM_QUIT:
-                win->on_close(win);
+                if (win->on_close) {
+                    win->on_close(win);
+                }
                 break;
             case WM_KILLFOCUS:
-                win->on_focus_lost(win);
+                if (win->on_focus_lost) {
+                    win->on_focus_lost(win);
+                }
                 break;
             default:
                 DispatchMessage(&Msg);
                 break;
         }
+    }
+}
+
+static void win32_window_set_title(gui_window_t* win, const char* title)
+{
+    win32_win_t* win32 = win->win_data;
+    if (win32 && win32->hwnd) {
+#if defined(HOST_TARGET_WIN9X)
+        SetWindowTextA(win32->hwnd, title);
+#else
+        void* title_u16 = utf8_to_utf16(title);
+        SetWindowTextW(win32->hwnd, title_u16);
+        free(title_u16);
+#endif
     }
 }
 
@@ -277,38 +354,49 @@ bool win32_window_init(gui_window_t* win)
         return false;
     }
 
-    // Adjust window size
-    RECT rect = {
-        .right  = win->fb.width,
-        .bottom = win->fb.height,
-    };
-    AdjustWindowRectEx(&rect, WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, false, 0);
+    win32_win_t* win32 = safe_new_obj(win32_win_t);
+
+    win->win_data  = win32;
+    win->draw      = win32_window_draw;
+    win->poll      = win32_window_poll;
+    win->remove    = win32_window_remove;
+    win->set_title = win32_window_set_title;
+    // TODO: win32_window_grab_input
+
+    uint32_t width  = win->fb.width;
+    uint32_t height = win->fb.height;
+    win32_adjust_client_rect(&width, &height);
 
     // Create window
-    HWND hwnd = CreateWindow(WINDOW_CLASS_NAME, TEXT("RVVM"), WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE,
-                             CW_USEDEFAULT, CW_USEDEFAULT, (rect.right - rect.left), (rect.bottom - rect.top), NULL,
-                             NULL, GetModuleHandle(NULL), NULL);
-    if (hwnd == NULL) {
+    win32->hwnd = CreateWindow(WINDOW_CLASS_NAME, TEXT(""), WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE,
+                               CW_USEDEFAULT, CW_USEDEFAULT, width, height, NULL, NULL, GetModuleHandle(NULL), NULL);
+    if (!win32->hwnd) {
         rvvm_error("Failed to create window!");
         return false;
     }
 
-    // Initialize structures
-    win32_data_t* data = safe_new_obj(win32_data_t);
-    data->hwnd         = hwnd;
-    data->hdc          = GetDC(hwnd);
+    win32->hdc = GetDC(win32->hwnd);
 
-    win->win_data  = data;
-    win->fb.format = RGB_FMT_A8R8G8B8;
+    // Allocate framebuffer
     win->fb.buffer = vma_alloc(NULL, framebuffer_size(&win->fb), VMA_RDWR);
+    if (!win->fb.buffer) {
+        rvvm_error("vma_alloc() failed!");
+        return false;
+    }
 
-    // Initialize callbacks
-    win->draw   = win32_window_draw;
-    win->poll   = win32_window_poll;
-    win->remove = win32_window_remove;
-    // TODO: win32_window_grab_input, win32_window_set_title, relative mouse mode
+    win32_window_set_scanout(win, &win->fb);
 
     return true;
 }
 
 POP_OPTIMIZATION_SIZE
+
+#else
+
+bool win32_window_init(gui_window_t* win)
+{
+    UNUSED(win);
+    return false;
+}
+
+#endif
