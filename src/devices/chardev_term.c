@@ -151,13 +151,15 @@ static size_t term_read_raw(chardev_term_t* term, char* buffer, size_t size)
                 }
                 // Skip events
                 ReadConsoleInputW(console, ir, pos, &pos);
+#if defined(HOST_TARGET_WIN9X)
             } else if (ReadConsoleInputA(console, ir, size, &events)) {
-                // Fallback to ANSI input on 9x and similar
+                // Fallback to ANSI syscall (Win9x compat)
                 for (DWORD pos = 0; pos < events; ++pos) {
                     if (ir[pos].EventType == KEY_EVENT && ir[pos].Event.KeyEvent.bKeyDown && ret < size) {
                         buffer[ret++] = ir[pos].Event.KeyEvent.uChar.AsciiChar;
                     }
                 }
+#endif
             }
             safe_free(ir);
             return ret;
