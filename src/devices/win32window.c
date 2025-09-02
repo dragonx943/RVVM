@@ -255,11 +255,11 @@ static void win32_window_poll(gui_window_t* win)
                     POINTS cur = MAKEPOINTS(Msg.lParam);
                     win->on_mouse_place(win, cur.x, cur.y);
                 } else if (win32->grab && win->on_mouse_move) {
-                    POINTS  cur = MAKEPOINTS(Msg.lParam);
-                    int32_t x   = (cur.x - (win->fb.width >> 1));
-                    int32_t y   = (cur.y - (win->fb.height >> 1));
-                    if (x || y) {
-                        win->on_mouse_move(win, (x >> 1) + !(x >> 1), (y >> 1) + !(y >> 1));
+                    POINTS cur = MAKEPOINTS(Msg.lParam);
+                    int    dx  = (cur.x - (win->fb.width >> 1));
+                    int    dy  = (cur.y - (win->fb.height >> 1));
+                    if (dx || dy) {
+                        win->on_mouse_move(win, dx - (dx / 3), dy - (dy / 3));
                     }
                 }
                 break;
