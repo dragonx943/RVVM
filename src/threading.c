@@ -631,7 +631,7 @@ struct cond_var {
 
 static bool condvar_init_internal(cond_var_t* cond)
 {
-#if defined(HOST_TARGET_WIN32) && !defined(HOST_64BIT) && !defined(HOST_TARGET_WINCE)
+#if defined(HOST_TARGET_WIN9X)
     // Use ANSI syscall (Win9x compat)
     cond->event = CreateEventA(NULL, FALSE, FALSE, NULL);
     return !!cond->event;
