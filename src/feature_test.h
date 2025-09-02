@@ -13,20 +13,24 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 /*
  * Detect most POSIX/Win32 systems we ever wish to support
  *
- * - Any POSIX-compliant system defines HOST_TARGET_POSIX to latest POSIX version date
+ * - Any POSIX system defines HOST_TARGET_POSIX to expected POSIX version (200809L, etc)
+ *
+ * - Any BSD defines HOST_TARGET_BSD
+ * - Android defines HOST_TARGET_LINUX
+ * - HaikuOS defines HOST_TARGET_BEOS
+ * - Illumos defines HOST_TARGET_SOLARIS
+ * - FreeBSD, NetBSD, Apple define a major OS release
+ *
  * - Any Win32 flavor (NT, 9x, CE) defines HOST_TARGET_WIN32
- * - Windows CE additionally defines HOST_TARGET_WINCE
- * - Windows NT and it's small cousin 9x define HOST_TARGET_WINNT
- * - Any BSD system defines HOST_TARGET_BSD
- * - HOST_TARGET_ANDROID implies HOST_TARGET_LINUX
- * - HOST_TARGET_HAIKU implies HOST_TARGET_BEOS
- * - HOST_TARGET_ILLUMOS implies HOST_TARGET_SOLARIS
- * - FreeBSD, NetBSD, Apple define a major OS release instead of a bare literal `1`
+ * - Windows CE defines HOST_TARGET_WINCE
+ * - Windows NT defines HOST_TARGET_WINNT to minimum expected major NT version
+ * - Windows on i386 additionally defines HOST_TARGET_WIN9X
  */
 #undef HOST_TARGET_POSIX
 #undef HOST_TARGET_WIN32
 #undef HOST_TARGET_WINNT
 #undef HOST_TARGET_WINCE
+#undef HOST_TARGET_WIN9X
 #undef HOST_TARGET_COSMOPOLITAN
 #undef HOST_TARGET_EMSCRIPTEN
 #undef HOST_TARGET_SERENITY
@@ -58,13 +62,32 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #if defined(_WIN32)
 #define HOST_TARGET_WIN32 1
-#if defined(UNDER_CE)
+#if defined(__x86_64__) || defined(_M_X64)
+/*
+ * Windows NT 5.x+ on x86_64
+ */
+#define HOST_TARGET_WINNT 5
+#elif defined(__aarch64__) || defined(_M_ARM64)
+/*
+ * Windows NT 6.x+ on arm64
+ */
+#define HOST_TARGET_WINNT 6
+#elif defined(UNDER_CE) || defined(_WIN32_WCE)
+/*
+ * Windows CE
+ */
 #define HOST_TARGET_WINCE 1
 #else
 /*
- * Actually either NT or 9x
+ * Windows NT 3.x+ on i386/mips/powerpc/alpha
  */
-#define HOST_TARGET_WINNT 1
+#define HOST_TARGET_WINNT 3
+#if defined(__i386__) || defined(_M_IX86)
+/*
+ * Either WinNT or Win9x on i386, so ask for Win9x support
+ */
+#define HOST_TARGET_WIN9X 1
+#endif
 #endif
 #elif defined(__COSMOPOLITAN__)
 #define HOST_TARGET_POSIX        200809L
@@ -75,7 +98,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #elif defined(__serenity__)
 #define HOST_TARGET_POSIX    200809L
 #define HOST_TARGET_SERENITY 1
-#elif defined(__sun)
+#elif defined(__sun) && defined(__SVR4)
 #define HOST_TARGET_POSIX   200809L
 #define HOST_TARGET_SOLARIS 1
 #if defined(__illumos__)
@@ -195,6 +218,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #undef _POSIX_SOURCE
 #undef _XOPEN_SOURCE
 #undef _POSIX_C_SOURCE
+#undef _XOPEN_SOURCE_EXTENDED
 
 /*
  * Enable GNU & BSD extensions
