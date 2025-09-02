@@ -18,6 +18,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "compiler.h"
 #include "gui_window.h"
 
+PUSH_OPTIMIZATION_SIZE
+
 #if defined(HOST_TARGET_WIN32) || defined(HOST_TARGET_CYGWIN)
 
 #include "utils.h"
@@ -25,13 +27,12 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #include <windows.h>
 
-PUSH_OPTIMIZATION_SIZE
-
 #define WINDOW_CLASS_NAME TEXT("LEKKIT_FB_WINDOW")
 
 typedef struct {
     HWND hwnd;
     HDC  hdc;
+    bool grab;
 } win32_win_t;
 
 static ATOM window_atom = 0;
@@ -191,23 +192,21 @@ static void win32_adjust_client_rect(uint32_t* width, uint32_t* height)
 static bool win32_window_set_scanout(gui_window_t* win, const fb_ctx_t* fb)
 {
     win32_win_t* win32 = win->win_data;
-    if (win32 && win32->hwnd) {
-        if (fb->format != RGB_FMT_A8R8G8B8 && fb->format != RGB_FMT_R8G8B8 && fb->format != RGB_FMT_R5G6B5) {
-            // Invalid format
+    if (fb->format != RGB_FMT_A8R8G8B8 && fb->format != RGB_FMT_R8G8B8 && fb->format != RGB_FMT_R5G6B5) {
+        // Invalid format
+        return false;
+    }
+    if (win->fb.width != fb->width || win->fb.height != fb->height) {
+        uint32_t flags  = SWP_DRAWFRAME | SWP_NOMOVE | SWP_NOZORDER | SWP_SHOWWINDOW;
+        uint32_t width  = fb->width;
+        uint32_t height = fb->height;
+        win32_adjust_client_rect(&width, &height);
+        if (!SetWindowPos(win32->hwnd, NULL, 0, 0, width, height, flags)) {
+            // Failed to resize window
             return false;
         }
-        if (win->fb.width != fb->width || win->fb.height != fb->height) {
-            uint32_t flags  = SWP_DRAWFRAME | SWP_NOMOVE | SWP_NOZORDER | SWP_SHOWWINDOW;
-            uint32_t width  = fb->width;
-            uint32_t height = fb->height;
-            win32_adjust_client_rect(&width, &height);
-            if (!SetWindowPos(win32->hwnd, NULL, 0, 0, width, height, flags)) {
-                // Failed to resize window
-                return false;
-            }
-        }
-        win->fb = *fb;
     }
+    win->fb = *fb;
     return true;
 }
 
@@ -229,7 +228,7 @@ static void win32_window_remove(gui_window_t* win)
 static void win32_window_draw(gui_window_t* win)
 {
     win32_win_t* win32 = win->win_data;
-    if (win32 && win32->hdc && win->fb.buffer) {
+    if (win->fb.buffer) {
         BITMAPINFO bmi = {
             .bmiHeader = {
                 .biSize = sizeof(BITMAPINFOHEADER),
@@ -247,17 +246,23 @@ static void win32_window_draw(gui_window_t* win)
 static void win32_window_poll(gui_window_t* win)
 {
     win32_win_t* win32 = win->win_data;
-    MSG          Msg   = {0};
+    MSG          Msg   = ZERO_INIT;
 
-    while (win32 && win32->hwnd && PeekMessage(&Msg, win32->hwnd, 0, 0, PM_REMOVE)) {
+    while (PeekMessage(&Msg, win32->hwnd, 0, 0, PM_REMOVE)) {
         switch (Msg.message) {
-            case WM_MOUSEMOVE: {
-                if (win->on_mouse_place) {
+            case WM_MOUSEMOVE:
+                if (!win32->grab && win->on_mouse_place) {
                     POINTS cur = MAKEPOINTS(Msg.lParam);
                     win->on_mouse_place(win, cur.x, cur.y);
+                } else if (win32->grab && win->on_mouse_move) {
+                    POINTS  cur = MAKEPOINTS(Msg.lParam);
+                    int32_t x   = (cur.x - (win->fb.width >> 1));
+                    int32_t y   = (cur.y - (win->fb.height >> 1));
+                    if (x || y) {
+                        win->on_mouse_move(win, (x >> 1) + !(x >> 1), (y >> 1) + !(y >> 1));
+                    }
                 }
                 break;
-            }
             case WM_KEYDOWN:
             case WM_SYSKEYDOWN: // For handling F10
                 // Disable autorepeat keypresses
@@ -303,7 +308,7 @@ static void win32_window_poll(gui_window_t* win)
                 break;
             case WM_MOUSEWHEEL:
                 if (win->on_mouse_scroll) {
-                    win->on_mouse_scroll(win, -GET_WHEEL_DELTA_WPARAM(Msg.wParam) / WHEEL_DELTA);
+                    win->on_mouse_scroll(win, -GET_WHEEL_DELTA_WPARAM(Msg.wParam) / 120);
                 }
                 break;
             case WM_QUIT:
@@ -321,20 +326,32 @@ static void win32_window_poll(gui_window_t* win)
                 break;
         }
     }
+    if (win32->grab) {
+        POINT mid = {
+            .x = win->fb.width >> 1,
+            .y = win->fb.height >> 1,
+        };
+        ClientToScreen(win32->hwnd, &mid);
+        SetCursorPos(mid.x, mid.y);
+    }
 }
 
 static void win32_window_set_title(gui_window_t* win, const char* title)
 {
     win32_win_t* win32 = win->win_data;
-    if (win32 && win32->hwnd) {
 #if defined(HOST_TARGET_WIN9X)
-        SetWindowTextA(win32->hwnd, title);
+    SetWindowTextA(win32->hwnd, title);
 #else
-        void* title_u16 = utf8_to_utf16(title);
-        SetWindowTextW(win32->hwnd, title_u16);
-        free(title_u16);
+    void* title_u16 = utf8_to_utf16(title);
+    SetWindowTextW(win32->hwnd, title_u16);
+    free(title_u16);
 #endif
-    }
+}
+
+static void win32_window_grab_input(gui_window_t* win, bool grab)
+{
+    win32_win_t* win32 = win->win_data;
+    win32->grab        = grab;
 }
 
 bool win32_window_init(gui_window_t* win)
@@ -356,12 +373,12 @@ bool win32_window_init(gui_window_t* win)
 
     win32_win_t* win32 = safe_new_obj(win32_win_t);
 
-    win->win_data  = win32;
-    win->draw      = win32_window_draw;
-    win->poll      = win32_window_poll;
-    win->remove    = win32_window_remove;
-    win->set_title = win32_window_set_title;
-    // TODO: win32_window_grab_input
+    win->win_data   = win32;
+    win->draw       = win32_window_draw;
+    win->poll       = win32_window_poll;
+    win->remove     = win32_window_remove;
+    win->set_title  = win32_window_set_title;
+    win->grab_input = win32_window_grab_input;
 
     uint32_t width  = win->fb.width;
     uint32_t height = win->fb.height;
@@ -389,8 +406,6 @@ bool win32_window_init(gui_window_t* win)
     return true;
 }
 
-POP_OPTIMIZATION_SIZE
-
 #else
 
 bool win32_window_init(gui_window_t* win)
@@ -400,3 +415,5 @@ bool win32_window_init(gui_window_t* win)
 }
 
 #endif
+
+POP_OPTIMIZATION_SIZE
