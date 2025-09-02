@@ -102,7 +102,7 @@ static int64_t rvfile_win32_lseek(HANDLE handle, int64_t offset, DWORD whence)
 // NT3.x with NewShell lies about being NT4.0... So we can't trust it either way
 static bool rvfile_win32_has_threaded_io(void)
 {
-#if defined(HOST_64BIT)
+#if defined(HOST_TARGET_WINNT) && HOST_TARGET_WINNT >= 5
     return true;
 #elif defined(HOST_TARGET_WINCE)
     return false;
@@ -278,7 +278,7 @@ rvfile_t* rvopen(const char* filepath, uint8_t filemode)
         safe_free(filepath_u16);
     }
 
-#if !defined(HOST_64BIT) && !defined(HOST_TARGET_WINCE)
+#if defined(HOST_TARGET_WIN9X)
     if (!handle && GetLastError() == ERROR_CALL_NOT_IMPLEMENTED) {
         // Try ANSI CreateFileA() (Win9x compat)
         handle = CreateFileA(filepath, access, share, NULL, disp, attr, NULL);
