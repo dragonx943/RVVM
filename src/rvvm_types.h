@@ -19,6 +19,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include <inttypes.h>
 #endif
 
+#if defined(_WIN32) || !defined(PRIx64) || !defined(PRIu64)
+
 /*
  * Fix awful msvcrt PRI* macros implementation
  */
@@ -74,6 +76,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define PRIuPTR PRIPTR_PREFIX "u"
 #define PRIoPTR PRIPTR_PREFIX "o"
 #define PRIXPTR PRIPTR_PREFIX "X"
+
+#endif
 
 /*
  * Provide int128_t / uint128_t types
