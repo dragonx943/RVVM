@@ -12,6 +12,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #include "blk_io.h"
 #include "compiler.h"
+#include "mem_ops.h"
 #include "utils.h"
 #include "vma_ops.h"
 
@@ -181,8 +182,6 @@ static inline int vma_native_prot(uint32_t flags)
 #define VMA_MMAP_IMPL 1
 
 #else
-
-#include "mem_ops.h"
 
 #pragma message("Falling back to dummy VMA implementation")
 
