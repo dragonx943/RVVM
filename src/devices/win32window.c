@@ -215,6 +215,7 @@ static void win32_window_remove(gui_window_t* win)
     win32_win_t* win32 = win->win_data;
     if (win32) {
         win->win_data = NULL;
+        vma_free(win->fb.buffer, framebuffer_size(&win->fb));
         if (win32->hdc) {
             ReleaseDC(win32->hwnd, win32->hdc);
         }
