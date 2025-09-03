@@ -411,7 +411,7 @@ static void rvvm_set_manual_eventloop(bool manual)
 
 static void rvvm_wake_eventloop(void)
 {
-    scoped_spin_lock (&global_lock) {
+    scoped_spin_lock (&eventloop_lock) {
         condvar_wake(eventloop_cond);
     }
 }
