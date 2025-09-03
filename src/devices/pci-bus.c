@@ -9,103 +9,103 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
 #include "pci-bus.h"
+#include "bit_ops.h"
 #include "fdtlib.h"
-#include "vector.h"
+#include "mem_ops.h"
 #include "spinlock.h"
 #include "utils.h"
-#include "bit_ops.h"
-#include "mem_ops.h"
+#include "vector.h"
 
 /*
  * PCI Configuration Space Registers
  */
 
-#define PCI_REG_DEV_VEN_ID    0x0  // Device, Vendor ID
-#define PCI_REG_STATUS_CMD    0x4  // Status, Command
-#define PCI_REG_CLASS_REV     0x8  // Class, Subclass, Prog IF, revision
-#define PCI_REG_INFO          0xC  // BIST, Header type, Latency, Cache line size
-#define PCI_REG_BAR0          0x10 // BAR0 Base Address
-#define PCI_REG_BAR1          0x14 // BAR1 Base Address (Or upper 32 bits of BAR0)
-#define PCI_REG_BAR2          0x18 // BAR2 Base Address (Or upper 32 bits of BAR1)
-#define PCI_REG_BAR3          0x1C // BAR3 Base Address (Or upper 32 bits of BAR2)
-#define PCI_REG_BAR4          0x20 // BAR4 Base Address (Or upper 32 bits of BAR3)
-#define PCI_REG_BAR5          0x24 // BAR5 Base Address (Or upper 32 bits of BAR4)
-#define PCI_REG_SSID_SVID     0x2C // Subsystem ID, Subsystem Vendor ID
-#define PCI_REG_EXPANSION_ROM 0x30 // Expansion ROM Base Address
-#define PCI_REG_CAP_PTR       0x34 // Capabilities List Pointer
-#define PCI_REG_IRQ_PIN_LINE  0x3C // Interrupt PIN, Interrupt Line
+#define PCI_REG_DEV_VEN_ID           0x00 // Device, Vendor ID
+#define PCI_REG_STATUS_CMD           0x04 // Status, Command
+#define PCI_REG_CLASS_REV            0x08 // Class, Subclass, Prog IF, revision
+#define PCI_REG_INFO                 0x0C // BIST, Header type, Latency, Cache line size
+#define PCI_REG_BAR0                 0x10 // BAR0 Base Address
+#define PCI_REG_BAR1                 0x14 // BAR1 Base Address (Or upper 32 bits of BAR0)
+#define PCI_REG_BAR2                 0x18 // BAR2 Base Address (Or upper 32 bits of BAR1)
+#define PCI_REG_BAR3                 0x1C // BAR3 Base Address (Or upper 32 bits of BAR2)
+#define PCI_REG_BAR4                 0x20 // BAR4 Base Address (Or upper 32 bits of BAR3)
+#define PCI_REG_BAR5                 0x24 // BAR5 Base Address (Or upper 32 bits of BAR4)
+#define PCI_REG_SSID_SVID            0x2C // Subsystem ID, Subsystem Vendor ID
+#define PCI_REG_EXPANSION_ROM        0x30 // Expansion ROM Base Address
+#define PCI_REG_CAP_PTR              0x34 // Capabilities List Pointer
+#define PCI_REG_IRQ_PIN_LINE         0x3C // Interrupt PIN, Interrupt Line
 
 // Command bits
-#define PCI_CMD_IO_SPACE      0x1   // Accessible through IO ports
-#define PCI_CMD_MEM_SPACE     0x2   // Accessible through MMIO
-#define PCI_CMD_BUS_MASTER    0x4   // May use DMA
-#define PCI_CMD_INTX_DISABLE  0x400 // INTx Interrupt Disabled
+#define PCI_CMD_IO_SPACE             0x0001 // Accessible through IO ports
+#define PCI_CMD_MEM_SPACE            0x0002 // Accessible through MMIO
+#define PCI_CMD_BUS_MASTER           0x0004 // May use DMA
+#define PCI_CMD_INTX_DISABLE         0x0400 // INTx Interrupt Disabled
 
-#define PCI_CMD_DEFAULT (PCI_CMD_IO_SPACE | PCI_CMD_MEM_SPACE | PCI_CMD_BUS_MASTER)
-#define PCI_CMD_MASK    (PCI_CMD_IO_SPACE | PCI_CMD_MEM_SPACE | PCI_CMD_BUS_MASTER | PCI_CMD_INTX_DISABLE)
+#define PCI_CMD_DEFAULT              (PCI_CMD_IO_SPACE | PCI_CMD_MEM_SPACE | PCI_CMD_BUS_MASTER)
+#define PCI_CMD_MASK                 (PCI_CMD_IO_SPACE | PCI_CMD_MEM_SPACE | PCI_CMD_BUS_MASTER | PCI_CMD_INTX_DISABLE)
 
 // Status bits
-#define PCI_STATUS_INTX 0x8  // INTx Interrupt Status
-#define PCI_STATUS_CAP  0x10 // Capabilities List Present
+#define PCI_STATUS_INTX              0x08 // INTx Interrupt Status
+#define PCI_STATUS_CAP               0x10 // Capabilities List Present
 
 // Header type bits
-#define PCI_HEADER_PCI_PCI   0x1  // PCI-PCI Bridge
-#define PCI_HEADER_MULTIFUNC 0x80 // Multi-function device
+#define PCI_HEADER_PCI_PCI           0x01 // PCI-PCI Bridge
+#define PCI_HEADER_MULTIFUNC         0x80 // Multi-function device
 
 // BAR bits
-#define PCI_BAR_IO_SPACE 0x1
-#define PCI_BAR_64_BIT   0x4
-#define PCI_BAR_PREFETCH 0x8
+#define PCI_BAR_IO_SPACE             0x01
+#define PCI_BAR_64_BIT               0x04
+#define PCI_BAR_PREFETCH             0x08
 
 // Expansion ROM bits
-#define PCI_EXPANSION_ROM_ENABLED 0x1
+#define PCI_EXPANSION_ROM_ENABLED    0x01
 
 // PCI capabilities offset
-#define PCI_CAP_LIST_OFF 0x40 // Capabilities List Offset
+#define PCI_CAP_LIST_OFF             0x40 // Capabilities List Offset
 
 /*
  * PCI Capability Registers
  */
 
-#define PCI_REG_ENDPOINT 0x40 // Endpoint capability
+#define PCI_REG_ENDPOINT             0x40 // Endpoint capability
 
-#define PCI_REG_PMCSR    0x84 // Power Management Control/Status
+#define PCI_REG_PMCSR                0x84 // Power Management Control/Status
 
-#define PCI_REG_MSI      0x90 // MSI capability
-#define PCI_REG_MSI_AL   0x94 // MSI address low
-#define PCI_REG_MSI_AH   0x98 // MSI address high
-#define PCI_REG_MSI_DATA 0x9C // MSI data
-#define PCI_REG_MSI_MASK 0xA0 // MSI mask vector
-#define PCI_REG_MSI_PEND 0xA4 // MSI pending vector
+#define PCI_REG_MSI                  0x90 // MSI capability
+#define PCI_REG_MSI_AL               0x94 // MSI address low
+#define PCI_REG_MSI_AH               0x98 // MSI address high
+#define PCI_REG_MSI_DATA             0x9C // MSI data
+#define PCI_REG_MSI_MASK             0xA0 // MSI mask vector
+#define PCI_REG_MSI_PEND             0xA4 // MSI pending vector
 
-#define PCI_REG_MSIX     0xB0 // MSI-X capability
-#define PCI_REG_MSIX_TBL 0xB4 // MSI-X table offset/BAR
-#define PCI_REG_MSIX_PBO 0xB8 // MSI-X pending bits offset/BAR
+#define PCI_REG_MSIX                 0xB0 // MSI-X capability
+#define PCI_REG_MSIX_TBL             0xB4 // MSI-X table offset/BAR
+#define PCI_REG_MSIX_PBO             0xB8 // MSI-X pending bits offset/BAR
 
 // PCI Express capability port type
-#define PCIE_CAP_PORT_ENDPOINT       0x0
-#define PCIE_CAP_ROOT_PORT           0x4
-#define PCIE_CAP_UPSTREAM_SWITCH     0x5
-#define PCIE_CAP_DOWNSTREAM_SWITCH   0x6
-#define PCIE_CAP_INTEGRATED_ENDPOINT 0x9
+#define PCIE_CAP_PORT_ENDPOINT       0x00
+#define PCIE_CAP_ROOT_PORT           0x04
+#define PCIE_CAP_UPSTREAM_SWITCH     0x05
+#define PCIE_CAP_DOWNSTREAM_SWITCH   0x06
+#define PCIE_CAP_INTEGRATED_ENDPOINT 0x09
 
 // Power management
-#define PCI_PMCSR_PS 0x3
+#define PCI_PMCSR_PS                 0x03
 
 // MSI-X interrupts
-#define PCI_MSIX_MAX_IRQS 32
-#define PCI_MSIX_TBL_SIZE (((PCI_MSIX_MAX_IRQS + 1) >> 1) << 3)
-#define PCI_MSIX_PBA_SIZE ((PCI_MSIX_MAX_IRQS + 0x1F) >> 5)
-#define PCI_MSIX_BAR_SIZE (PCI_MSIX_TBL_SIZE + PCI_MSIX_PBA_SIZE)
+#define PCI_MSIX_MAX_IRQS            32
+#define PCI_MSIX_TBL_SIZE            (((PCI_MSIX_MAX_IRQS + 1) >> 1) << 3)
+#define PCI_MSIX_PBA_SIZE            ((PCI_MSIX_MAX_IRQS + 0x1F) >> 5)
+#define PCI_MSIX_BAR_SIZE            (PCI_MSIX_TBL_SIZE + PCI_MSIX_PBA_SIZE)
 
-#define PCI_MSIX_ENABLED 0x80000000
-#define PCI_MSIX_MASKED  0x40000000
-#define PCI_MSIX_VALID   0xC0000000
+#define PCI_MSIX_ENABLED             0x80000000
+#define PCI_MSIX_MASKED              0x40000000
+#define PCI_MSIX_VALID               0xC0000000
 
 // MSI interrupts
-#define PCI_MSI_ENABLED 0x00010000 // MSI Enabled
-#define PCI_MSI_DATA    0xFFFF     // MSI Data (16-bit)
-#define PCI_MSI_BIT     0x1        // MSI Pending/Masked bit
+#define PCI_MSI_ENABLED              0x00010000 // MSI Enabled
+#define PCI_MSI_DATA                 0x0000FFFF // MSI Data (16-bit)
+#define PCI_MSI_BIT                  0x00000001 // MSI Pending/Masked bit
 
 static const uint32_t pci_express_caps_ro[] = {
     // [40] PCI Express (v2) Endpoint, IntMsgNum 0
@@ -147,10 +147,10 @@ static const uint32_t pci_express_caps_ro[] = {
 };
 
 struct rvvm_pci_function {
-    pci_bus_t* bus;
+    pci_bus_t*       bus;
     rvvm_mmio_dev_t* bar[PCI_FUNC_BARS];
     rvvm_mmio_dev_t* expansion_rom;
-    pci_bus_addr_t addr;
+    pci_bus_addr_t   addr;
 
     // Atomic variables
     uint32_t command;
@@ -187,17 +187,17 @@ struct rvvm_pci_function {
 };
 
 struct rvvm_pci_device {
-    pci_bus_t* bus;
-    pci_func_t* func[PCI_DEV_FUNCS];
+    pci_bus_t*     bus;
+    pci_func_t*    func[PCI_DEV_FUNCS];
     pci_bus_addr_t addr;
 };
 
 struct rvvm_pci_bus {
     rvvm_machine_t* machine;
-    rvvm_intc_t* intc;
+    rvvm_intc_t*    intc;
 
     vector_t(pci_dev_t*) dev;
-    spinlock_t lock;
+    spinlock_t           lock;
 
     rvvm_irq_t irqs[PCI_BUS_IRQS];
 
@@ -249,9 +249,9 @@ static bool pci_func_send_msi_irq(pci_func_t* func)
         uint32_t command = atomic_load_uint32_relax(&func->command);
         if (likely(command & PCI_CMD_BUS_MASTER)) {
             // Bus mastering enabled
-            uint32_t data = atomic_load_uint32_relax(&func->msi_data);
+            uint32_t    data = atomic_load_uint32_relax(&func->msi_data);
             rvvm_addr_t addr = atomic_load_uint32_relax(&func->msi_addr_low)
-                  | ((uint64_t)atomic_load_uint32_relax(&func->msi_addr_high) << 32);
+                             | ((uint64_t)atomic_load_uint32_relax(&func->msi_addr_high) << 32);
 
             if (likely(!(atomic_load_uint32_relax(&func->msi_mask)))) {
                 // Perform an MSI write
@@ -286,10 +286,10 @@ static bool pci_func_send_msix_irq(pci_func_t* func, uint32_t msi_id)
         uint32_t command = atomic_load_uint32_relax(&func->command);
         if (likely((command & PCI_CMD_BUS_MASTER) && (msi_id < PCI_MSIX_MAX_IRQS))) {
             // Bus mastering enabled, valid MSI-X vector
-            uint32_t mask = atomic_load_uint32_relax(&func->msix[(msi_id << 2) + 3]);
-            uint32_t data = atomic_load_uint32_relax(&func->msix[(msi_id << 2) + 2]);
+            uint32_t    mask = atomic_load_uint32_relax(&func->msix[(msi_id << 2) + 3]);
+            uint32_t    data = atomic_load_uint32_relax(&func->msix[(msi_id << 2) + 2]);
             rvvm_addr_t addr = atomic_load_uint32_relax(&func->msix[(msi_id << 2)])
-                  | ((uint64_t)atomic_load_uint32_relax(&func->msix[(msi_id << 2) + 1]) << 32);
+                             | ((uint64_t)atomic_load_uint32_relax(&func->msix[(msi_id << 2) + 1]) << 32);
 
             if (likely(!(msix_control & PCI_MSIX_MASKED) && !(mask & 1))) {
                 // Perform an MSI write
@@ -350,8 +350,8 @@ static void pci_func_update_msix_mask(pci_func_t* func)
 static bool pci_msix_bar_read(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint8_t size)
 {
     pci_func_t* func = dev->data;
-    size_t reg = offset >> 2;
-    uint32_t val = atomic_load_uint32_relax(&func->msix[reg]);
+    size_t      reg  = offset >> 2;
+    uint32_t    val  = atomic_load_uint32_relax(&func->msix[reg]);
     UNUSED(size);
     write_uint32_le(data, val);
     return true;
@@ -360,8 +360,8 @@ static bool pci_msix_bar_read(rvvm_mmio_dev_t* dev, void* data, size_t offset, u
 static bool pci_msix_bar_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint8_t size)
 {
     pci_func_t* func = dev->data;
-    size_t reg = offset >> 2;
-    uint32_t val = read_uint32_le(data);
+    size_t      reg  = offset >> 2;
+    uint32_t    val  = read_uint32_le(data);
     UNUSED(size);
     if (reg < PCI_MSIX_TBL_SIZE && (reg & 3) == 3 && !(val & 1)) {
         if (atomic_swap_uint32(&func->msix[reg], val) & 1) {
@@ -380,11 +380,11 @@ static void msix_bar_remove(rvvm_mmio_dev_t* dev)
 }
 
 static const rvvm_mmio_type_t pci_msix_dev_type = {
-    .name = "msix_bar",
+    .name   = "msix_bar",
     .remove = msix_bar_remove,
 };
 
-// Free a PCI function description that we've failed to attach
+// Free a PCI function description that failed to attach
 static void pci_free_func_desc(const pci_func_desc_t* desc)
 {
     if (desc) {
@@ -394,7 +394,7 @@ static void pci_free_func_desc(const pci_func_desc_t* desc)
     }
 }
 
-// Free a PCI device description that we've failed to attach
+// Free a PCI device description that failed to attach
 static void pci_free_dev_desc(const pci_dev_desc_t* desc)
 {
     if (desc) {
@@ -426,7 +426,7 @@ static inline bool pci_set_bus_dev_internal(pci_bus_t* bus, pci_bus_addr_t bus_a
     return false;
 }
 
-// Free a PCI function (Must be called under locking), omit removing mmio on machine cleanup
+// Free a PCI function (Must be called under bus->lock), omit removing mmio on machine cleanup
 static void pci_free_func_internal(pci_func_t* func, bool remove_mmio)
 {
     if (func) {
@@ -440,7 +440,7 @@ static void pci_free_func_internal(pci_func_t* func, bool remove_mmio)
     }
 }
 
-// Free a PCI device (Must be called under locking), omit removing mmio on machine cleanup
+// Free a PCI device (Must be called under bus->lock), omit removing mmio on machine cleanup
 static void pci_free_dev_internal(pci_dev_t* dev, bool remove_mmio)
 {
     if (dev) {
@@ -454,14 +454,17 @@ static void pci_free_dev_internal(pci_dev_t* dev, bool remove_mmio)
 // Assign MMIO address for a BAR
 static rvvm_addr_t pci_assign_mmio_addr(pci_bus_t* bus, size_t bar_size)
 {
-    size_t align_size = bit_next_pow2(EVAL_MAX(bar_size, 0x1000));
     rvvm_addr_t addr = bus->mem_addr;
+    rvvm_addr_t size = bit_next_pow2(EVAL_MAX(bar_size, 0x1000));
+    if (size > bus->mem_len) {
+        rvvm_error("PCI BAR doesn't fit into PCI memory space");
+    }
     while (true) {
-        rvvm_addr_t tmp = rvvm_mmio_zone_auto(bus->machine, addr, align_size);
+        rvvm_addr_t tmp = rvvm_mmio_zone_auto(bus->machine, addr, size);
         if (tmp == addr) {
             break;
         }
-        addr = tmp + ((align_size - tmp) & (align_size - 1));
+        addr = tmp + ((size - tmp) & (size - 1));
     }
     return addr;
 }
@@ -476,7 +479,7 @@ static rvvm_mmio_dev_t* pci_attach_bar(pci_bus_t* bus, rvvm_mmio_dev_t bar)
 static pci_func_t* pci_attach_func_internal(pci_bus_t* bus, const pci_func_desc_t* desc, pci_bus_addr_t bus_addr)
 {
     pci_func_t* func = safe_new_obj(pci_func_t);
-    func->bus = bus;
+    func->bus        = bus;
 
     func->vendor_id  = desc->vendor_id;
     func->device_id  = desc->device_id;
@@ -485,7 +488,7 @@ static pci_func_t* pci_attach_func_internal(pci_bus_t* bus, const pci_func_desc_
     func->rev        = desc->rev;
     func->irq_pin    = desc->irq_pin;
 
-    func->addr  = bus_addr;
+    func->addr = bus_addr;
 
     func->command  = PCI_CMD_DEFAULT;
     func->irq_line = pci_func_intx_irq(func);
@@ -501,10 +504,10 @@ static pci_func_t* pci_attach_func_internal(pci_bus_t* bus, const pci_func_desc_
         } else if (!rvvm_has_arg("no_msix") && func->irq_pin && bar_id >= 4 && !func->msix_bar) {
             // Try to attach MSI-X BAR (Unless it's a host bridge)
             rvvm_mmio_dev_t msix_bar = {
-                .size = sizeof(func->msix),
-                .data = func,
-                .type = &pci_msix_dev_type,
-                .read = pci_msix_bar_read,
+                .size  = sizeof(func->msix),
+                .data  = func,
+                .type  = &pci_msix_dev_type,
+                .read  = pci_msix_bar_read,
                 .write = pci_msix_bar_write,
             };
             func->bar[bar_id] = pci_attach_bar(bus, msix_bar);
@@ -550,10 +553,10 @@ static inline rvvm_mmio_dev_t* pci_effective_bar(pci_func_t* func, size_t bar_id
 
 static bool pci_bus_read(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint8_t size)
 {
-    pci_bus_t* bus = ecam->data;
+    pci_bus_t*     bus      = ecam->data;
     pci_bus_addr_t bus_addr = offset >> 12;
-    size_t reg = offset & 0xFFC;
-    uint32_t val = 0;
+    size_t         reg      = offset & 0xFFC;
+    uint32_t       val      = 0;
     UNUSED(size);
 
     pci_func_t* func = pci_get_bus_func(bus, bus_addr);
@@ -588,10 +591,10 @@ static bool pci_bus_read(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint8
             break;
         case PCI_REG_INFO: {
             // Advertise 64-byte cache lines
-            val = 16;
+            val            = 16;
             pci_dev_t* dev = pci_get_bus_device(bus, bus_addr);
             for (size_t func_id = 0; func_id < PCI_DEV_FUNCS; ++func_id) {
-                if (pci_get_device_func(dev, func_id) && (func_id != (bus_addr & 0x7))) {
+                if (pci_get_device_func(dev, func_id) && (func_id != (bus_addr & 0x07))) {
                     // This is a multi-function device
                     val |= (PCI_HEADER_MULTIFUNC << 16);
                     break;
@@ -614,7 +617,7 @@ static bool pci_bus_read(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint8
         case PCI_REG_BAR5: {
             size_t bar_id = (reg - PCI_REG_BAR0) >> 2;
             // Only BAR0 & BAR1 exist for a PCI-PCI bridge
-            if (func->class_code != 0x0604 || bar_id < 2) {
+            if (func->class_code != 0x0604 || bar_id < 0x02) {
                 rvvm_mmio_dev_t* bar = pci_effective_bar(func, bar_id);
                 if (bar) {
                     if (pci_bar_is_upper_half(func, bar_id)) {
@@ -632,13 +635,13 @@ static bool pci_bus_read(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint8
                 // PCIe Root Ports within 00:XX.x cover every other bus in the system
                 uint8_t secondary_bus = (bus_addr >> 3) + (bus_addr & 0x7);
                 switch (bar_id) {
-                    case 0x2:
+                    case 0x02:
                         val = (secondary_bus << 16) | (secondary_bus << 8);
                         break;
-                    case 0x3:
+                    case 0x03:
                         val = atomic_load_uint32_relax(&func->bridge_io);
                         break;
-                    case 0x4:
+                    case 0x04:
                         val = atomic_load_uint32_relax(&func->bridge_mem);
                         break;
                 }
@@ -646,7 +649,7 @@ static bool pci_bus_read(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint8
             break;
         }
         case PCI_REG_SSID_SVID:
-            val = 0x510010dc;
+            val = 0x510010DC;
             break;
         case PCI_REG_EXPANSION_ROM:
             if (func->expansion_rom) {
@@ -715,10 +718,10 @@ static bool pci_bus_read(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint8
 
 static bool pci_bus_write(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint8_t size)
 {
-    pci_bus_t* bus = ecam->data;
+    pci_bus_t*     bus      = ecam->data;
     pci_bus_addr_t bus_addr = offset >> 12;
-    size_t reg = offset & 0xFFC;
-    uint32_t val = read_uint32_le(data);
+    size_t         reg      = offset & 0xFFC;
+    uint32_t       val      = read_uint32_le(data);
     UNUSED(size);
 
     pci_func_t* func = pci_get_bus_func(bus, bus_addr);
@@ -744,7 +747,7 @@ static bool pci_bus_write(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint
         case PCI_REG_BAR5: {
             size_t bar_id = (reg - PCI_REG_BAR0) >> 2;
             // Only BAR0 & BAR1 exist for a PCI-PCI bridge
-            if (func->class_code != 0x0604 || bar_id < 2) {
+            if (func->class_code != 0x0604 || bar_id < 0x02) {
                 rvvm_mmio_dev_t* bar = pci_effective_bar(func, bar_id);
                 if (bar) {
                     rvvm_addr_t bar_addr = bar->addr;
@@ -759,15 +762,14 @@ static bool pci_bus_write(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint
 
                     // Align address to BAR size (Must be power of 2)
                     bar->addr = bar_addr & ~(bar_size - 1);
-
                     atomic_fence();
                 }
             } else {
                 switch (bar_id) {
-                    case 0x3:
+                    case 0x03:
                         atomic_store_uint32_relax(&func->bridge_io, val);
                         break;
-                    case 0x4:
+                    case 0x04:
                         atomic_store_uint32_relax(&func->bridge_mem, val);
                         break;
                 }
@@ -776,8 +778,8 @@ static bool pci_bus_write(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint
         }
         case PCI_REG_EXPANSION_ROM:
             if (func->expansion_rom) {
-                rvvm_addr_t rom_addr = val & ~0xFFFU;
-                rvvm_addr_t rom_size = bit_next_pow2(func->expansion_rom->size);
+                rvvm_addr_t rom_addr      = val & ~0xFFFU;
+                rvvm_addr_t rom_size      = bit_next_pow2(func->expansion_rom->size);
                 func->expansion_rom->addr = rom_addr & ~(rom_size - 1);
                 atomic_fence();
             }
@@ -809,7 +811,7 @@ static bool pci_bus_write(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint
             break;
 
         case PCI_REG_MSIX: {
-            uint32_t prev =  atomic_swap_uint32(&func->msix_control, val & PCI_MSIX_VALID);
+            uint32_t prev = atomic_swap_uint32(&func->msix_control, val & PCI_MSIX_VALID);
             if ((prev & PCI_MSIX_MASKED) && !(val & PCI_MSIX_MASKED)) {
                 pci_func_update_msix_mask(func);
             }
@@ -823,7 +825,7 @@ static bool pci_bus_write(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint
 static void pci_bus_remove(rvvm_mmio_dev_t* ecam)
 {
     pci_bus_t* bus = ecam->data;
-    vector_foreach(bus->dev, i) {
+    vector_foreach (bus->dev, i) {
         pci_free_dev_internal(vector_at(bus->dev, i), false);
     }
     vector_free(bus->dev);
@@ -831,35 +833,36 @@ static void pci_bus_remove(rvvm_mmio_dev_t* ecam)
 }
 
 static const rvvm_mmio_type_t pci_bus_type = {
-    .name = "pci_bus",
+    .name   = "pci_bus",
     .remove = pci_bus_remove,
 };
 
-PUBLIC pci_bus_t* pci_bus_init(rvvm_machine_t* machine, rvvm_intc_t* intc, const rvvm_irq_t* irqs,
-                               rvvm_addr_t ecam_addr, size_t bus_count,
-                               rvvm_addr_t io_addr,   size_t io_len,
-                               rvvm_addr_t mem_addr,  size_t mem_len)
+PUBLIC pci_bus_t* pci_bus_init(rvvm_machine_t* machine,                   //
+                               rvvm_intc_t* intc, const rvvm_irq_t* irqs, //
+                               rvvm_addr_t ecam_addr, size_t bus_count,   //
+                               rvvm_addr_t io_addr, size_t io_len,        //
+                               rvvm_addr_t mem_addr, size_t mem_len)
 {
     pci_bus_t* bus = safe_new_obj(pci_bus_t);
-    bus->machine = machine;
-    bus->intc = intc;
+    bus->machine   = machine;
+    bus->intc      = intc;
 
     for (size_t i = 0; i < PCI_BUS_IRQS; ++i) {
         bus->irqs[i] = irqs[i];
     }
 
-    bus->io_addr = io_addr;
-    bus->io_len = io_len;
+    bus->io_addr  = io_addr;
+    bus->io_len   = io_len;
     bus->mem_addr = mem_addr;
-    bus->mem_len = mem_len;
+    bus->mem_len  = mem_len;
 
     rvvm_mmio_dev_t pci_bus_mmio = {
-        .addr = ecam_addr,
-        .size = (bus_count << 20),
-        .data = bus,
-        .type = &pci_bus_type,
-        .read = pci_bus_read,
-        .write = pci_bus_write,
+        .addr        = ecam_addr,
+        .size        = (bus_count << 20),
+        .data        = bus,
+        .type        = &pci_bus_type,
+        .read        = pci_bus_read,
+        .write       = pci_bus_write,
         .min_op_size = 4,
         .max_op_size = 4,
     };
@@ -871,12 +874,20 @@ PUBLIC pci_bus_t* pci_bus_init(rvvm_machine_t* machine, rvvm_intc_t* intc, const
     }
 
     // Host Bridge: SiFive, Inc. FU740-C000 RISC-V SoC PCI Express x8
-    pci_func_desc_t bridge_desc = { .vendor_id = 0xF15E, .class_code = 0x0600, };
+    pci_func_desc_t bridge_desc = {
+        .vendor_id  = 0xF15E,
+        .class_code = 0x0600,
+    };
     pci_attach_func(bus, &bridge_desc);
 
     if (rvvm_has_arg("pcie_ports")) {
         // Root Ports
-        pci_func_desc_t root_port_desc = { .vendor_id = 0x1556, .device_id = 0xbe00, .class_code = 0x0604, .irq_pin = PCI_IRQ_PIN_INTA, };
+        pci_func_desc_t root_port_desc = {
+            .vendor_id  = 0x1556,
+            .device_id  = 0xBE00,
+            .class_code = 0x0604,
+            .irq_pin    = PCI_IRQ_PIN_INTA,
+        };
         for (pci_bus_addr_t bus_addr = 1; bus_addr < PCI_DEV_FUNCS; ++bus_addr) {
             pci_attach_func_at(bus, &root_port_desc, bus_addr);
         }
@@ -884,9 +895,9 @@ PUBLIC pci_bus_t* pci_bus_init(rvvm_machine_t* machine, rvvm_intc_t* intc, const
 
     rvvm_set_pci_bus(machine, bus);
 
-#ifdef USE_FDT
+#if defined(USE_FDT)
     struct fdt_node* imsic_fdt = fdt_node_find_reg_any(rvvm_get_fdt_soc(machine), "imsics_s");
-    struct fdt_node* pci_fdt = fdt_node_create_reg("pci", pci_bus_mmio.addr);
+    struct fdt_node* pci_fdt   = fdt_node_create_reg("pci", pci_bus_mmio.addr);
     fdt_node_add_prop_reg(pci_fdt, "reg", pci_bus_mmio.addr, pci_bus_mmio.size);
     fdt_node_add_prop_str(pci_fdt, "compatible", "pci-host-ecam-generic");
     fdt_node_add_prop_str(pci_fdt, "device_type", "pci");
@@ -896,14 +907,17 @@ PUBLIC pci_bus_t* pci_bus_init(rvvm_machine_t* machine, rvvm_intc_t* intc, const
         fdt_node_add_prop_u32(pci_fdt, "msi-parent", fdt_node_get_phandle(imsic_fdt));
     }
 
-    uint32_t bus_range[] = { 0, bus_count - 1, };
+    uint32_t bus_range[] = {
+        0,
+        bus_count - 1,
+    };
     fdt_node_add_prop_cells(pci_fdt, "bus-range", bus_range, STATIC_ARRAY_SIZE(bus_range));
 
     fdt_node_add_prop_u32(pci_fdt, "#address-cells", 3);
     fdt_node_add_prop_u32(pci_fdt, "#size-cells", 2);
     fdt_node_add_prop_u32(pci_fdt, "#interrupt-cells", 1);
 
-    #define FDT_ADDR(addr) (((uint64_t)(addr)) >> 32), ((uint32_t)(addr))
+#define FDT_ADDR(addr) (((uint64_t)(addr)) >> 32), ((uint32_t)(addr))
 
     // Range header: ((cacheable) << 30 | (space) << 24 | (bus) << 16 | (dev) << 11 | (fun) << 8 | (reg))
     uint32_t ranges[] = {
@@ -914,14 +928,14 @@ PUBLIC pci_bus_t* pci_bus_init(rvvm_machine_t* machine, rvvm_intc_t* intc, const
 
     // Crossing-style IRQ routing for IRQ balancing
     // INTA of dev 2 routes the same way as INTB of dev 1, etc
-    uint32_t intc_handle = rvvm_fdt_intc_phandle(intc);
-    vector_t(uint32_t) irq_map = {0};
+    uint32_t           intc_handle = rvvm_fdt_intc_phandle(intc);
+    vector_t(uint32_t) irq_map     = ZERO_INIT;
 
     for (uint32_t dev_id = 0; dev_id < PCI_BUS_IRQS; ++dev_id) {
-        for (uint32_t irq_pin = 1; irq_pin <= PCI_BUS_IRQS; ++ irq_pin) {
-            rvvm_irq_t irq = pci_bus_intx_irq(bus, dev_id, irq_pin);
-            uint32_t cells[8] = {0};
-            size_t count = rvvm_fdt_irq_cells(intc, irq, cells, STATIC_ARRAY_SIZE(cells));
+        for (uint32_t irq_pin = 1; irq_pin <= PCI_BUS_IRQS; ++irq_pin) {
+            rvvm_irq_t irq      = pci_bus_intx_irq(bus, dev_id, irq_pin);
+            uint32_t   cells[8] = ZERO_INIT;
+            size_t     count    = rvvm_fdt_irq_cells(intc, irq, cells, STATIC_ARRAY_SIZE(cells));
 
             // PCI address
             vector_push_back(irq_map, dev_id << 11);
@@ -944,7 +958,7 @@ PUBLIC pci_bus_t* pci_bus_init(rvvm_machine_t* machine, rvvm_intc_t* intc, const
     fdt_node_add_prop_cells(pci_fdt, "interrupt-map", vector_buffer(irq_map), vector_size(irq_map));
     vector_free(irq_map);
 
-    uint32_t irq_mask[] = { 0x1800, 0, 0, 7, };
+    uint32_t irq_mask[] = {0x1800, 0x0000, 0x0000, 0x0007};
     fdt_node_add_prop_cells(pci_fdt, "interrupt-map-mask", irq_mask, STATIC_ARRAY_SIZE(irq_mask));
 
     fdt_node_add_child(rvvm_get_fdt_soc(machine), pci_fdt);
@@ -954,15 +968,15 @@ PUBLIC pci_bus_t* pci_bus_init(rvvm_machine_t* machine, rvvm_intc_t* intc, const
 
 PUBLIC pci_bus_t* pci_bus_init_auto(rvvm_machine_t* machine)
 {
-    rvvm_intc_t* intc = rvvm_get_intc(machine);
-    rvvm_irq_t irqs[PCI_BUS_IRQS] = {0};
-    size_t bus_count = 256;
-    rvvm_addr_t addr = rvvm_mmio_zone_auto(machine, PCI_ECAM_ADDR_DEFAULT, bus_count << 20);
+    rvvm_intc_t* intc               = rvvm_get_intc(machine);
+    rvvm_irq_t   irqs[PCI_BUS_IRQS] = ZERO_INIT;
+    size_t       bus_count          = 256;
+    rvvm_addr_t  addr               = rvvm_mmio_zone_auto(machine, PCI_ECAM_ADDR_DEFAULT, bus_count << 20);
     for (size_t i = 0; i < PCI_BUS_IRQS; ++i) {
         irqs[i] = rvvm_alloc_irq(intc);
     }
-    return pci_bus_init(machine, intc, irqs, addr, bus_count,
-                        PCI_IO_ADDR_DEFAULT,  PCI_IO_SIZE_DEFAULT,
+    return pci_bus_init(machine, intc, irqs, addr, bus_count,     //
+                        PCI_IO_ADDR_DEFAULT, PCI_IO_SIZE_DEFAULT, //
                         PCI_MEM_ADDR_DEFAULT, PCI_MEM_SIZE_DEFAULT);
 }
 
@@ -976,7 +990,7 @@ PUBLIC pci_dev_t* pci_attach_func(pci_bus_t* bus, const pci_func_desc_t* desc)
 
 PUBLIC pci_dev_t* pci_attach_multifunc(pci_bus_t* bus, const pci_dev_desc_t* desc)
 {
-    for (pci_bus_addr_t bus_addr = 0x0; bus_addr < 0x100; bus_addr += PCI_DEV_FUNCS) {
+    for (pci_bus_addr_t bus_addr = 0x00; bus_addr < 0x100; bus_addr += PCI_DEV_FUNCS) {
         if (!pci_get_bus_device(bus, bus_addr)) {
             // Found a free integrated PCI slot
             return pci_attach_multifunc_at(bus, desc, bus_addr);
@@ -997,8 +1011,8 @@ PUBLIC pci_dev_t* pci_attach_multifunc(pci_bus_t* bus, const pci_dev_desc_t* des
 
 PUBLIC pci_dev_t* pci_attach_func_at(pci_bus_t* bus, const pci_func_desc_t* desc, pci_bus_addr_t bus_addr)
 {
-    pci_dev_t* dev = pci_get_bus_device(bus, bus_addr);
-    size_t func_id = bus_addr & 0x7;
+    pci_dev_t* dev     = pci_get_bus_device(bus, bus_addr);
+    size_t     func_id = bus_addr & 0x07;
     if (dev) {
         // Inject a function into an existing device
         pci_func_t* func = pci_attach_func_internal(bus, desc, bus_addr);
@@ -1008,76 +1022,82 @@ PUBLIC pci_dev_t* pci_attach_func_at(pci_bus_t* bus, const pci_func_desc_t* desc
             return NULL;
         }
 
-        // Pause the vCPUs and attach the device
-        spin_lock(&bus->lock);
-        bool was_running = rvvm_pause_machine(bus->machine);
-        if (dev->func[func_id]) {
-            // Another function already in the slot
-            rvvm_error("PCI function %02x:%02x.%01x is busy!", (bus_addr >> 8) & 0xFF, (bus_addr >> 3) & 0x1F, (uint32_t)func_id);
-            pci_free_func_internal(func, true);
-            dev = NULL;
-        } else {
-            dev->func[func_id] = func;
+        scoped_spin_lock (&bus->lock) {
+            // Pause the vCPUs and attach the device
+            bool was_running = rvvm_pause_machine(bus->machine);
+            if (dev->func[func_id]) {
+                // Another function already in the slot
+                rvvm_error("PCI function %02x:%02x.%01x is busy!", //
+                           (bus_addr >> 8) & 0xFF, (bus_addr >> 3) & 0x1F, (uint32_t)func_id);
+                pci_free_func_internal(func, true);
+                dev = NULL;
+            } else {
+                dev->func[func_id] = func;
+            }
+            if (was_running) {
+                rvvm_start_machine(bus->machine);
+            }
         }
-        if (was_running) rvvm_start_machine(bus->machine);
-        spin_unlock(&bus->lock);
         return dev;
     } else {
         // Create a new device
-        pci_dev_desc_t dev_desc = {0};
-        dev_desc.func[func_id] = desc;
+        pci_dev_desc_t dev_desc = ZERO_INIT;
+        dev_desc.func[func_id]  = desc;
         return pci_attach_multifunc_at(bus, &dev_desc, bus_addr & ~0x7U);
     }
 }
 
 PUBLIC pci_dev_t* pci_attach_multifunc_at(pci_bus_t* bus, const pci_dev_desc_t* desc, pci_bus_addr_t bus_addr)
 {
-    if (bus == NULL) {
-        pci_free_dev_desc(desc);
-        return NULL;
-    }
+    if (bus) {
+        pci_dev_t* dev = safe_new_obj(pci_dev_t);
+        dev->bus       = bus;
+        dev->addr      = bus_addr;
 
-    pci_dev_t* dev = safe_new_obj(pci_dev_t);
-    dev->bus = bus;
-    dev->addr = bus_addr;
-
-    for (size_t func_id = 0; func_id < PCI_DEV_FUNCS; ++func_id) {
-        if (desc->func[func_id]) {
-            pci_func_t* func = pci_attach_func_internal(bus, desc->func[func_id], bus_addr + func_id);
-            dev->func[func_id] = func;
-            if (!func) {
-                // Failed to attach function
-                pci_free_dev_internal(dev, true);
-                return NULL;
+        for (size_t func_id = 0; func_id < PCI_DEV_FUNCS; ++func_id) {
+            if (desc->func[func_id]) {
+                pci_func_t* func   = pci_attach_func_internal(bus, desc->func[func_id], bus_addr + func_id);
+                dev->func[func_id] = func;
+                if (!func) {
+                    // Failed to attach function
+                    pci_free_dev_internal(dev, true);
+                    return NULL;
+                }
             }
         }
+
+        scoped_spin_lock (&bus->lock) {
+            // Pause the vCPUs and attach the device
+            bool was_running = rvvm_pause_machine(bus->machine);
+            if (!pci_set_bus_dev_internal(bus, bus_addr, dev)) {
+                // Another device already in the slot
+                rvvm_error("PCI slot %02x:%02x.0 is busy!", //
+                           (bus_addr >> 8) & 0xFF, (bus_addr >> 3) & 0x1F);
+                pci_free_dev_internal(dev, true);
+                dev = NULL;
+            }
+            if (was_running) {
+                rvvm_start_machine(bus->machine);
+            }
+        }
+
+        return dev;
     }
 
-    // Pause the vCPUs and attach the device
-    spin_lock(&bus->lock);
-    bool was_running = rvvm_pause_machine(bus->machine);
-    if (!pci_set_bus_dev_internal(bus, bus_addr, dev)) {
-        // Another device already in the slot
-        rvvm_error("PCI slot %02x:%02x.0 is busy!", (bus_addr >> 8) & 0xFF, (bus_addr >> 3) & 0x1F);
-        pci_free_dev_internal(dev, true);
-        dev = NULL;
-    }
-    if (was_running) rvvm_start_machine(bus->machine);
-    spin_unlock(&bus->lock);
-
-    return dev;
+    pci_free_dev_desc(desc);
+    return NULL;
 }
 
 PUBLIC pci_dev_t* pci_get_bus_device(pci_bus_t* bus, pci_bus_addr_t bus_addr)
 {
-    size_t dev_id = pci_bus_addr_to_id_internal(bus_addr);
-    pci_dev_t* dev = NULL;
+    size_t     dev_id = pci_bus_addr_to_id_internal(bus_addr);
+    pci_dev_t* dev    = NULL;
     if (bus && pci_bus_addr_valid(bus_addr)) {
-        spin_lock(&bus->lock);
-        if (dev_id < vector_size(bus->dev)) {
-            dev = vector_at(bus->dev, dev_id);
+        scoped_spin_lock (&bus->lock) {
+            if (dev_id < vector_size(bus->dev)) {
+                dev = vector_at(bus->dev, dev_id);
+            }
         }
-        spin_unlock(&bus->lock);
     }
     return dev;
 }
@@ -1087,7 +1107,7 @@ PUBLIC pci_func_t* pci_get_bus_func(pci_bus_t* bus, pci_bus_addr_t bus_addr)
     if (bus) {
         pci_dev_t* dev = pci_get_bus_device(bus, bus_addr);
         if (dev) {
-            return pci_get_device_func(dev, bus_addr & 0x7);
+            return pci_get_device_func(dev, bus_addr & 0x07);
         }
     }
     return NULL;
@@ -1106,14 +1126,16 @@ PUBLIC pci_bus_addr_t pci_get_func_bus_addr(pci_func_t* func)
 PUBLIC void pci_remove_device(pci_dev_t* dev)
 {
     if (dev) {
-        // Pause the vCPUs and remove the device
         pci_bus_t* bus = dev->bus;
-        spin_lock(&bus->lock);
-        bool was_running = rvvm_pause_machine(bus->machine);
-        pci_set_bus_dev_internal(bus, pci_get_device_bus_addr(dev), NULL);
-        pci_free_dev_internal(dev, true);
-        if (was_running) rvvm_start_machine(bus->machine);
-        spin_unlock(&bus->lock);
+        scoped_spin_lock (&bus->lock) {
+            // Pause the vCPUs and remove the device
+            bool was_running = rvvm_pause_machine(bus->machine);
+            pci_set_bus_dev_internal(bus, pci_get_device_bus_addr(dev), NULL);
+            pci_free_dev_internal(dev, true);
+            if (was_running) {
+                rvvm_start_machine(bus->machine);
+            }
+        }
     }
 }
 
