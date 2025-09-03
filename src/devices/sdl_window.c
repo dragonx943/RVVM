@@ -758,7 +758,6 @@ static void sdl_window_remove(gui_window_t* win)
 {
     sdl_window_t* sdl = win->win_data;
     if (sdl) {
-        win->win_data = NULL;
         // Free texture
         sdl_set_scanout(win, NULL);
         // Free framebuffer VMA
@@ -783,6 +782,7 @@ static void sdl_window_remove(gui_window_t* win)
             }
         }
         free(sdl);
+        win->win_data = NULL;
     }
 }
 
