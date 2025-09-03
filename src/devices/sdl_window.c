@@ -7,19 +7,20 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-// Needed for setenv() when not passing -std=gnu..
-#define _GNU_SOURCE
-#define _BSD_SOURCE
-#define _DEFAULT_SOURCE
+#include "feature_test.h"
 
+#include "dlib.h"
 #include "gui_window.h"
-#include "compiler.h"
+#include "utils.h"
+#include "vector.h"
+#include "vma_ops.h"
 
-SOURCE_OPTIMIZATION_SIZE
+PUSH_OPTIMIZATION_SIZE
 
-#if !defined(USE_FULL_LINKING) && (defined(__EMSCRIPTEN__) || defined(_MSC_VER) || defined(__redox__))
-// Emscripten, MSVC and Redox OS can't handle dynamic library loading
-#define USE_FULL_LINKING
+#if !defined(USE_FULL_LINKING) /**/                                                                                    \
+    && (defined(COMPILER_IS_MSVC) || defined(HOST_TARGET_EMSCRIPTEN) || defined(HOST_TARGET_REDOX))
+// MSVC compiler, Emscripten and Redox OS can't handle dynamic library loading
+#define USE_FULL_LINKING 1
 #endif
 
 #if defined(USE_SDL) && USE_SDL == 1 && CHECK_INCLUDE(SDL/SDL.h, 1)
@@ -51,12 +52,7 @@ SOURCE_OPTIMIZATION_SIZE
  * SDL1 / SDL2 / SDL3 support glue
  */
 
-#ifdef USE_SDL
-
-#include "dlib.h"
-#include "vma_ops.h"
-#include "vector.h"
-#include "utils.h"
+#if defined(USE_SDL)
 
 // Resolve symbols at runtime
 #define SDL_DLIB_SYM(sym) static __typeof__(sym)* MACRO_CONCAT(sym, _dlib) = NULL;
@@ -190,7 +186,7 @@ static const hid_key_t sdl_key_to_hid_byte_map[] = {
     [SDLK_KP0]          = HID_KEY_KP0,
     [SDLK_KP_PERIOD]    = HID_KEY_KPDOT,
     [SDLK_MENU]         = HID_KEY_MENU,
-#ifdef __EMSCRIPTEN__
+#if defined(HOST_TARGET_EMSCRIPTEN)
     // I dunno why, I don't want to know why,
     // but some Emscripten SDL keycodes are plain wrong..
     [0xbb] = HID_KEY_EQUAL,
@@ -415,17 +411,16 @@ SDL_DLIB_SYM(SDL_PollEvent)
  */
 
 typedef struct {
-    fb_ctx_t fb;
 #if USE_SDL >= 2
     SDL_Window*   window;
     SDL_Renderer* renderer;
     SDL_Texture*  texture;
 #else
-    SDL_Surface*  window;
-    SDL_Surface*  texture;
+    SDL_Surface* window;
+    SDL_Surface* texture;
 #endif
-    bool     grab;
     uint32_t id;
+    bool     grab;
 } sdl_window_t;
 
 static vector_t(gui_window_t*) sdl_windows = {0};
@@ -441,14 +436,14 @@ static hid_key_t sdl_key_to_hid(uint32_t sdl_key)
 
 static gui_window_t* sdl_find_window(uint32_t window_id)
 {
-    vector_foreach(sdl_windows, i) {
+    vector_foreach (sdl_windows, i) {
         gui_window_t* win = vector_at(sdl_windows, i);
         sdl_window_t* sdl = win->win_data;
         if (sdl->id == window_id) {
             return win;
         }
     }
-    rvvm_warn("Invalid SDL window in event");
+    DO_ONCE(rvvm_warn("Invalid " SDL_LIB_NAME " window in event"));
     return NULL;
 }
 
@@ -456,13 +451,13 @@ static void sdl_handle_keyboard(SDL_Event* event, bool press)
 {
 #if USE_SDL == 3
     gui_window_t* win = sdl_find_window(event->key.windowID);
-    hid_key_t key = sdl_key_to_hid(event->key.scancode);
+    hid_key_t     key = sdl_key_to_hid(event->key.scancode);
 #elif USE_SDL == 2
     gui_window_t* win = sdl_find_window(event->key.windowID);
-    hid_key_t key = sdl_key_to_hid(event->key.keysym.scancode);
+    hid_key_t     key = sdl_key_to_hid(event->key.keysym.scancode);
 #else
     gui_window_t* win = sdl_find_window(0);
-    hid_key_t key = sdl_key_to_hid(event->key.keysym.sym);
+    hid_key_t     key = sdl_key_to_hid(event->key.keysym.sym);
 #endif
     if (win) {
         if (win && press && win->on_key_press) {
@@ -563,8 +558,9 @@ static void sdl_handle_window(SDL_Event* event, bool close)
     }
 }
 
-static bool sdl_set_framebuffer(sdl_window_t* sdl, const fb_ctx_t* fb)
+static bool sdl_set_scanout(gui_window_t* win, const fb_ctx_t* fb)
 {
+    sdl_window_t* sdl = win->win_data;
 #if USE_SDL >= 2
     SDL_Texture* texture = NULL;
 #else
@@ -572,34 +568,43 @@ static bool sdl_set_framebuffer(sdl_window_t* sdl, const fb_ctx_t* fb)
 #endif
 
     if (fb) {
+        // Create new texture with requested pixel format
 #if USE_SDL >= 2
         switch (fb->format) {
             case RGB_FMT_R5G6B5:
-                texture = SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_RGB565, SDL_TEXTUREACCESS_STREAMING, fb->width, fb->height);
+                texture = SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_RGB565, //
+                                            SDL_TEXTUREACCESS_STREAMING, fb->width, fb->height);
                 break;
             case RGB_FMT_R8G8B8:
-                texture = SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_BGR24, SDL_TEXTUREACCESS_STREAMING, fb->width, fb->height);
+                texture = SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_BGR24, //
+                                            SDL_TEXTUREACCESS_STREAMING, fb->width, fb->height);
                 break;
             case RGB_FMT_A8R8G8B8:
-                texture = SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, fb->width, fb->height);
+                texture = SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_XRGB8888, //
+                                            SDL_TEXTUREACCESS_STREAMING, fb->width, fb->height);
                 break;
             case RGB_FMT_A8B8G8R8:
-                texture = SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_XBGR8888, SDL_TEXTUREACCESS_STREAMING, fb->width, fb->height);
+                texture = SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_XBGR8888, //
+                                            SDL_TEXTUREACCESS_STREAMING, fb->width, fb->height);
                 break;
         }
 #else
         switch (fb->format) {
             case RGB_FMT_R5G6B5:
-                texture = SDL_CreateRGBSurfaceFrom(fb->buffer, fb->width, fb->height, 16, framebuffer_stride(fb), 0xF800, 0x7E0, 0x1F, 0);
+                texture = SDL_CreateRGBSurfaceFrom(fb->buffer, fb->width, fb->height, 16, //
+                                                   framebuffer_stride(fb), 0xF800, 0x7E0, 0x1F, 0);
                 break;
             case RGB_FMT_R8G8B8:
-                texture = SDL_CreateRGBSurfaceFrom(fb->buffer, fb->width, fb->height, 24, framebuffer_stride(fb), 0xFF0000, 0xFF00, 0xFF, 0);
+                texture = SDL_CreateRGBSurfaceFrom(fb->buffer, fb->width, fb->height, 24, //
+                                                   framebuffer_stride(fb), 0xFF0000, 0xFF00, 0xFF, 0);
                 break;
             case RGB_FMT_A8R8G8B8:
-                texture = SDL_CreateRGBSurfaceFrom(fb->buffer, fb->width, fb->height, 32, framebuffer_stride(fb), 0xFF0000, 0xFF00, 0xFF, 0);
+                texture = SDL_CreateRGBSurfaceFrom(fb->buffer, fb->width, fb->height, 32, //
+                                                   framebuffer_stride(fb), 0xFF0000, 0xFF00, 0xFF, 0);
                 break;
             case RGB_FMT_A8B8G8R8:
-                texture = SDL_CreateRGBSurfaceFrom(fb->buffer, fb->width, fb->height, 32, framebuffer_stride(fb), 0xFF, 0xFF00, 0xFF0000, 0);
+                texture = SDL_CreateRGBSurfaceFrom(fb->buffer, fb->width, fb->height, 32, //
+                                                   framebuffer_stride(fb), 0xFF, 0xFF00, 0xFF0000, 0);
                 break;
         }
 #endif
@@ -607,6 +612,7 @@ static bool sdl_set_framebuffer(sdl_window_t* sdl, const fb_ctx_t* fb)
 
     if (texture || !fb) {
         if (sdl->texture) {
+            // Destroy previous texture
 #if USE_SDL >= 2
             SDL_DestroyTexture(sdl->texture);
 #else
@@ -614,16 +620,18 @@ static bool sdl_set_framebuffer(sdl_window_t* sdl, const fb_ctx_t* fb)
 #endif
         }
         sdl->texture = texture;
-
-        if (texture && fb && (fb->width != sdl->fb.width || fb->height != sdl->fb.height)) {
-            sdl->fb = *fb;
+        if (texture && fb) {
+            // Update window size or recreate it
 #if USE_SDL >= 2
-            if (sdl->window) {
+            if (sdl->window && (fb->width != win->fb.width || fb->height != win->fb.height)) {
                 SDL_SetWindowSize(sdl->window, fb->width, fb->height);
             }
 #else
-            sdl->window = SDL_SetVideoMode(fb->width, fb->height, rgb_format_bpp(fb->format), SDL_ANYFORMAT);
+            if (!sdl->window || fb->width != win->fb.width || fb->height != win->fb.height) {
+                sdl->window = SDL_SetVideoMode(fb->width, fb->height, rgb_format_bpp(fb->format), SDL_ANYFORMAT);
+            }
 #endif
+            win->fb = *fb;
         }
     }
 
@@ -633,14 +641,13 @@ static bool sdl_set_framebuffer(sdl_window_t* sdl, const fb_ctx_t* fb)
 static void sdl_window_draw(gui_window_t* win)
 {
     sdl_window_t* sdl = win->win_data;
-
     if (sdl && sdl->window && sdl->texture) {
 #if USE_SDL == 3
-        SDL_UpdateTexture(sdl->texture, NULL, sdl->fb.buffer, framebuffer_stride(&sdl->fb));
+        SDL_UpdateTexture(sdl->texture, NULL, win->fb.buffer, framebuffer_stride(&win->fb));
         SDL_RenderTexture(sdl->renderer, sdl->texture, NULL, NULL);
         SDL_RenderPresent(sdl->renderer);
 #elif USE_SDL == 2
-        SDL_UpdateTexture(sdl->texture, NULL, sdl->fb.buffer, framebuffer_stride(&sdl->fb));
+        SDL_UpdateTexture(sdl->texture, NULL, win->fb.buffer, framebuffer_stride(&win->fb));
         SDL_RenderCopy(sdl->renderer, sdl->texture, NULL, NULL);
         SDL_RenderPresent(sdl->renderer);
 #else
@@ -720,7 +727,7 @@ static void sdl_window_poll(gui_window_t* win)
 static void sdl_window_grab_input(gui_window_t* win, bool grab)
 {
     sdl_window_t* sdl = win->win_data;
-    if (sdl) {
+    if (sdl->grab != grab && sdl->window) {
         sdl->grab = grab;
 #if USE_SDL == 3
         SDL_SetWindowMouseGrab(sdl->window, grab);
@@ -738,7 +745,7 @@ static void sdl_window_grab_input(gui_window_t* win, bool grab)
 static void sdl_window_set_title(gui_window_t* win, const char* title)
 {
     sdl_window_t* sdl = win->win_data;
-    if (sdl) {
+    if (sdl->window) {
 #if USE_SDL >= 2
         SDL_SetWindowTitle(sdl->window, title);
 #else
@@ -751,11 +758,11 @@ static void sdl_window_remove(gui_window_t* win)
 {
     sdl_window_t* sdl = win->win_data;
     if (sdl) {
-        sdl_window_grab_input(win, false);
-        sdl_set_framebuffer(sdl, NULL);
-        if (win->fb.buffer) {
-            vma_free(win->fb.buffer, framebuffer_size(&win->fb));
-        }
+        // Free texture
+        sdl_set_scanout(win, NULL);
+        // Free framebuffer VMA
+        vma_free(win->fb.buffer, framebuffer_size(&win->fb));
+        // Free renderer/window context
 #if USE_SDL >= 2
         if (sdl->renderer) {
             SDL_DestroyRenderer(sdl->renderer);
@@ -768,7 +775,7 @@ static void sdl_window_remove(gui_window_t* win)
             SDL_FreeSurface(sdl->window);
         }
 #endif
-        vector_foreach_back(sdl_windows, i) {
+        vector_foreach_back (sdl_windows, i) {
             if (vector_at(sdl_windows, i) == win) {
                 vector_erase(sdl_windows, i);
                 break;
@@ -778,11 +785,11 @@ static void sdl_window_remove(gui_window_t* win)
     }
 }
 
-#define SDL_DLIB_RESOLVE(lib, sym) \
-do { \
-    sym = dlib_resolve(lib, #sym); \
-    libsdl_avail = libsdl_avail && !!sym; \
-} while (0)
+#define SDL_DLIB_RESOLVE(lib, sym)                                                                                     \
+    do {                                                                                                               \
+        sym          = dlib_resolve(lib, #sym);                                                                        \
+        libsdl_avail = libsdl_avail && !!sym;                                                                          \
+    } while (0)
 
 static bool sdl_init(void)
 {
@@ -838,11 +845,11 @@ static bool sdl_init(void)
 #endif
 
     if (!libsdl_avail) {
-        rvvm_info("Failed to load lib" SDL_LIB_NAME);
+        rvvm_error("Failed to load lib" SDL_LIB_NAME ", check your installation");
         return false;
     }
 
-#if defined(__linux__)
+#if defined(HOST_TARGET_LINUX)
     // Force X11 over Wayland
     // SDL Wayland backend doesn't support software rendering,
     // and Nvidia driver isn't compatible with isolation (See #178)
@@ -855,7 +862,7 @@ static bool sdl_init(void)
 #else
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
 #endif
-        rvvm_error("Failed to initialize SDL");
+        rvvm_error("Failed to initialize " SDL_LIB_NAME);
         return false;
     }
 
@@ -887,37 +894,32 @@ bool sdl_window_init(gui_window_t* win)
 
 #if USE_SDL == 1
     if (vector_size(sdl_windows)) {
-        rvvm_error("Only 1 window is supported on SDL1");
+        rvvm_error("SDL1 supports only a single window");
         return false;
     }
 #endif
 
-    win->fb.buffer = vma_alloc(NULL, framebuffer_size(&win->fb), VMA_RDWR);
-    if (!win->fb.buffer) {
-        rvvm_error("vma_alloc() failed!");
-        return false;
-    }
-
     sdl_window_t* sdl = safe_new_obj(sdl_window_t);
-    win->win_data = sdl;
 
+    win->win_data   = sdl;
     win->draw       = sdl_window_draw;
     win->poll       = sdl_window_poll;
     win->remove     = sdl_window_remove;
-    win->grab_input = sdl_window_grab_input;
     win->set_title  = sdl_window_set_title;
+    win->grab_input = sdl_window_grab_input;
 
 #if USE_SDL == 3
     sdl->window = SDL_CreateWindow("", win->fb.width, win->fb.height, 0);
 #elif USE_SDL == 2
-    sdl->window = SDL_CreateWindow("", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, win->fb.width, win->fb.height, SDL_WINDOW_SHOWN);
+    sdl->window = SDL_CreateWindow("", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, //
+                                   win->fb.width, win->fb.height, SDL_WINDOW_SHOWN);
 #endif
+
 #if USE_SDL >= 2
     if (!sdl->window) {
         rvvm_error("SDL_CreateWindow() failed!");
         return false;
     }
-
     sdl->id = SDL_GetWindowID(sdl->window);
 #endif
 
@@ -929,6 +931,7 @@ bool sdl_window_init(gui_window_t* win)
         sdl->renderer = SDL_CreateRenderer(sdl->window, -1, 0);
     }
 #endif
+
 #if USE_SDL >= 2
     if (!sdl->renderer) {
         rvvm_error("SDL_CreateRenderer() failed!");
@@ -936,8 +939,14 @@ bool sdl_window_init(gui_window_t* win)
     }
 #endif
 
-    if (!sdl_set_framebuffer(sdl, &win->fb)) {
-        rvvm_error("sdl_set_framebuffer() failed!");
+    win->fb.buffer = vma_alloc(NULL, framebuffer_size(&win->fb), VMA_RDWR);
+    if (!win->fb.buffer) {
+        rvvm_error("vma_alloc() failed!");
+        return false;
+    }
+
+    if (!sdl_set_scanout(win, &win->fb)) {
+        rvvm_error("sdl_set_scanout() failed!");
         return false;
     }
 
@@ -961,3 +970,5 @@ bool sdl_window_init(gui_window_t* win)
 }
 
 #endif
+
+POP_OPTIMIZATION_SIZE
