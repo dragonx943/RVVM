@@ -12,13 +12,12 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #include "blk_io.h"
 #include "compiler.h"
-#include "mem_ops.h"
 #include "utils.h"
 #include "vma_ops.h"
 
 PUSH_OPTIMIZATION_SIZE
 
-#if defined(HOST_TARGET_WIN32)
+#if !defined(USE_VMA_DUMMY) && defined(HOST_TARGET_WIN32)
 
 // Win32 VMA implementation using VirtualAlloc(), VirtualFree(), VirtualProtect(), MapViewOfFile(), etc
 #include <windows.h>
@@ -115,7 +114,7 @@ static void seh_suspend_access_violation(void)
 
 #endif
 
-#elif defined(HOST_TARGET_POSIX) && HOST_TARGET_POSIX >= 199309L
+#elif !defined(USE_VMA_DUMMY) && defined(HOST_TARGET_POSIX) && HOST_TARGET_POSIX >= 199309L
 
 // POSIX 1003.1b-1993 VMA implementation using mmap(), munmap(), madvise(), etc
 #include <fcntl.h>    // For open(), O_*
@@ -183,7 +182,9 @@ static inline int vma_native_prot(uint32_t flags)
 
 #else
 
-#warning No native VMA support!
+#include "mem_ops.h"
+
+#pragma message("Falling back to dummy VMA implementation")
 
 #endif
 
@@ -453,6 +454,7 @@ static void* vma_mmap_aligned_internal(void* addr, size_t size, uint32_t flags, 
     // Generic libc implementation using calloc()
     // No support for VMA_SHARED, VMA_EXEC, VMA_FIXED
     UNUSED(addr);
+    UNUSED(offset);
     if (!(flags & (VMA_SHARED | VMA_EXEC | VMA_FIXED)) && !file) {
         ret = calloc(size, 1);
     }
