@@ -51,7 +51,7 @@ PUSH_OPTIMIZATION_SIZE
 
 static size_t vfio_rw_file(const char* path, void* rd, const void* wr, size_t size)
 {
-    rvfile_t* file = rvopen(path, wr ? RVFILE_RW : 0);
+    rvfile_t* file = rvopen(path, wr ? RVFILE_WRITE : RVFILE_READ);
     size_t    ret  = rvfilesize(file);
     if (size && wr) {
         ret = rvwrite(file, wr, size, 0);
@@ -432,14 +432,15 @@ static bool vfio_try_attach(vfio_func_t* vfio, rvvm_machine_t* machine, const ch
         }
         bool region_valid = region_info.size && (region_info.flags & VFIO_REGION_INFO_FLAG_MMAP);
         if ((region_info.flags & VFIO_REGION_INFO_FLAG_CAPS) && i >= 4) {
-            rvvm_info("Skipping MSI-X BAR %d", i);
+            rvvm_info("Skipping MSI-X BAR %u", i);
             region_valid = false;
         }
         if (region_valid) {
-            void* bar
-                = mmap(NULL, region_info.size, PROT_READ | PROT_WRITE, MAP_SHARED, vfio->device, region_info.offset);
-            rvvm_info("VFIO PCI BAR %d: size 0x%lx, offset 0x%lx, flags 0x%x", i, (unsigned long)region_info.size,
-                      (unsigned long)region_info.offset, (uint32_t)region_info.flags);
+            void* bar = mmap(NULL, region_info.size, PROT_READ | PROT_WRITE, MAP_SHARED, //
+                             vfio->device, region_info.offset);
+            rvvm_info("VFIO PCI BAR %u: size %#.8llx, offset %#.8llx, flags %#x", i, //
+                      (unsigned long long)region_info.size,                          //
+                      (unsigned long long)region_info.offset, (uint32_t)region_info.flags);
             vfio->func_desc.bar[i].type = &vfio_bar_type;
             vfio->func_desc.bar[i].data = data;
 
