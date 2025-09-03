@@ -20,26 +20,29 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  * File API
  */
 
-#define RVFILE_RW       0x1  // Open file in read/write mode
-#define RVFILE_CREAT    0x2  // Create file if it doesn't exist (for RW only)
-#define RVFILE_EXCL     0x4  // Prevent other processes from opening this file
-#define RVFILE_TRUNC    0x8  // Truncate file conents upon opening (for RW only)
-#define RVFILE_DIRECT   0x10 // Direct read/write DMA with the underlying storage
-#define RVFILE_SYNC     0x20 // Disable writeback buffering
+// Flags for rvopen()
+#define RVFILE_READ     0x01 // Permit reading the file (Implicit without RVFILE_WRITE)
+#define RVFILE_WRITE    0x02 // Permit writing the file
+#define RVFILE_RW       0x03 // Open file in read/write mode
+#define RVFILE_CREAT    0x04 // Create file if it doesn't exist (for RW only)
+#define RVFILE_EXCL     0x08 // Prevent other processes from opening this file
+#define RVFILE_TRUNC    0x10 // Truncate file conents upon opening (for RW only)
+#define RVFILE_DIRECT   0x20 // Direct read/write DMA with the underlying storage
+#define RVFILE_SYNC     0x40 // Disable writeback buffering
 
-#define RVFILE_SEEK_SET 0x0 // Set file cursor
-#define RVFILE_SEEK_CUR 0x1 // Move file cursor
-#define RVFILE_SEEK_END 0x2 // Set file cursor relative to end
+// Modes for rvseek()
+#define RVFILE_SEEK_SET 0x00 // Set file cursor position relative to file beginning
+#define RVFILE_SEEK_CUR 0x01 // Set file cursor position relative to current position
+#define RVFILE_SEEK_END 0x02 // Set file cursor position relative to file end
 
-// Pass as offset to rvread()/rvwrite() to use file position (cursor),
-// reposition with rvseek()/rvtell().
+// Pass as offset to rvread()/rvwrite() to use file position, seek via rvseek()/rvtell()
 // NOTE: Not thread safe, use with care!
 #define RVFILE_POSITION ((uint64_t)-1)
 
 typedef struct blk_io_rvfile rvfile_t;
 
 // Open a binary file, returns NULL on failure
-rvfile_t* rvopen(const char* filepath, uint8_t filemode);
+rvfile_t* rvopen(const char* filepath, uint32_t filemode);
 
 // Close a file handle
 void rvclose(rvfile_t* file);
@@ -53,7 +56,7 @@ size_t rvread(rvfile_t* file, void* dst, size_t size, uint64_t offset);
 size_t rvwrite(rvfile_t* file, const void* src, size_t size, uint64_t offset);
 
 // Seek/tell for positioned IO (Not thread safe)
-bool     rvseek(rvfile_t* file, int64_t offset, uint8_t startpos);
+bool     rvseek(rvfile_t* file, int64_t offset, uint32_t startpos);
 uint64_t rvtell(rvfile_t* file);
 
 // Trim (punch a hole) in file, leaving zeroes and releasing space on the host
@@ -79,14 +82,17 @@ void* rvfile_get_win32_handle(rvfile_t* file);
  * It's illegal to seek out of device bounds, resizing the device is also impossible.
  */
 
+// Block device access flags
+#define BLKDEV_READ     RVFILE_READ
+#define BLKDEV_WRITE    RVFILE_WRITE
 #define BLKDEV_RW       RVFILE_RW
 
+// Block device seeking
 #define BLKDEV_SEEK_SET RVFILE_SEEK_SET
 #define BLKDEV_SEEK_CUR RVFILE_SEEK_CUR
 #define BLKDEV_SEEK_END RVFILE_SEEK_END
 
 #define BLKDEV_POSITION RVFILE_POSITION
-#define BLKDEV_CUR      BLKDEV_POSITION // Deprecated
 
 typedef struct {
     const char* name;
@@ -107,7 +113,7 @@ struct blkdev_t {
 };
 
 // Open a block device image
-blkdev_t* blk_open(const char* filename, uint8_t opts);
+blkdev_t* blk_open(const char* filename, uint32_t opts);
 
 // Close a block device handle
 void blk_close(blkdev_t* dev);
@@ -132,7 +138,7 @@ static inline uint64_t blk_tell(blkdev_t* dev)
 }
 
 // Seek drive head (For seekable devices like ATA)
-static inline bool blk_seek(blkdev_t* dev, int64_t offset, uint8_t startpos)
+static inline bool blk_seek(blkdev_t* dev, int64_t offset, uint32_t startpos)
 {
     if (dev) {
         if (startpos == BLKDEV_SEEK_CUR) {

@@ -173,12 +173,8 @@ static inline void rvfile_grow_internal(rvfile_t* file, uint64_t length)
     } while (!atomic_cas_uint64(&file->size, file_size, length));
 }
 
-rvfile_t* rvopen(const char* filepath, uint8_t filemode)
+rvfile_t* rvopen(const char* filepath, uint32_t filemode)
 {
-    if (filemode & ~RVFILE_LEGAL_FLAGS) {
-        return NULL;
-    }
-
 #if defined(HOST_TARGET_WINCE)
     /*
      * Windows CE doesn't support relative file paths, nor current working directory
@@ -209,8 +205,12 @@ rvfile_t* rvopen(const char* filepath, uint8_t filemode)
 
 #if defined(POSIX_FILE_IMPL)
     int open_flags = O_CLOEXEC | O_NOATIME;
-    if (filemode & RVFILE_RW) {
-        open_flags |= O_RDWR;
+    if (filemode & RVFILE_WRITE) {
+        if (filemode & RVFILE_READ) {
+            open_flags |= O_RDWR;
+        } else {
+            open_flags |= O_WRONLY;
+        }
         if (filemode & RVFILE_CREAT) {
             open_flags |= O_CREAT;
             if (filemode & RVFILE_EXCL) {
@@ -232,18 +232,20 @@ rvfile_t* rvopen(const char* filepath, uint8_t filemode)
 
     int fd = open(filepath, open_flags, 0600);
     if (fd < 0) {
+        rvvm_debug("Failed to open \"%s\"", filepath);
         return NULL;
     }
 
     if ((filemode & RVFILE_EXCL) && !rvfile_try_lock_fd(fd)) {
-        rvvm_error("File %s is busy", filepath);
+        rvvm_error("Failed to open \"%s\": File is busy", filepath);
         close(fd);
         return NULL;
     }
 
     uint64_t size = lseek(fd, 0, SEEK_END);
     if (size >= ((((uint64_t)1) << 63) - 1)) {
-        // Failed to get file size or is a directory
+        // Failed to get file size (Is a directory/pipe/etc)
+        rvvm_error("Failed to open \"%s\": File is not seekable", filepath);
         close(fd);
         return NULL;
     }
@@ -253,31 +255,36 @@ rvfile_t* rvopen(const char* filepath, uint8_t filemode)
     file->fd       = fd;
 
 #elif defined(WIN32_FILE_IMPL)
-    DWORD access = GENERIC_READ | ((filemode & RVFILE_RW) ? GENERIC_WRITE : 0);
-    DWORD share  = (filemode & RVFILE_EXCL) ? 0 : (FILE_SHARE_READ | FILE_SHARE_WRITE);
-    DWORD disp   = OPEN_EXISTING;
-    DWORD attr   = FILE_ATTRIBUTE_NORMAL;
-    if (filemode & RVFILE_RW) {
-        if (filemode & (RVFILE_SYNC | RVFILE_DIRECT)) {
-            attr = FILE_FLAG_WRITE_THROUGH;
-        }
+    void*  path_u16 = utf8_to_utf16(filepath);
+    HANDLE handle   = NULL;
+    DWORD  access   = 0;
+    DWORD  share    = FILE_SHARE_READ | FILE_SHARE_WRITE;
+    DWORD  disp     = OPEN_EXISTING;
+    DWORD  attr     = FILE_ATTRIBUTE_NORMAL;
+    if ((filemode & RVFILE_READ) || !(filemode & RVFILE_WRITE)) {
+        access |= GENERIC_READ;
+    }
+    if (filemode & RVFILE_WRITE) {
+        access |= GENERIC_WRITE;
         if (filemode & RVFILE_CREAT) {
             disp = OPEN_ALWAYS;
             if (filemode & RVFILE_EXCL) {
                 disp = CREATE_NEW;
             }
-        } else {
-            if (filemode & RVFILE_TRUNC) {
-                disp = TRUNCATE_EXISTING;
-            }
+        } else if (filemode & RVFILE_TRUNC) {
+            disp = TRUNCATE_EXISTING;
+        }
+        if (filemode & RVFILE_EXCL) {
+            share = 0;
+        }
+        if (filemode & (RVFILE_SYNC | RVFILE_DIRECT)) {
+            attr = FILE_FLAG_WRITE_THROUGH;
         }
     }
 
-    HANDLE    handle       = INVALID_HANDLE_VALUE;
-    uint16_t* filepath_u16 = utf8_to_utf16(filepath);
-    if (filepath_u16) {
-        handle = CreateFileW((wchar_t*)filepath_u16, access, share, NULL, disp, attr, NULL);
-        safe_free(filepath_u16);
+    if (path_u16) {
+        handle = CreateFileW((wchar_t*)path_u16, access, share, NULL, disp, attr, NULL);
+        safe_free(path_u16);
     }
 
 #if defined(HOST_TARGET_WIN9X)
@@ -289,7 +296,7 @@ rvfile_t* rvopen(const char* filepath, uint8_t filemode)
 
     if (!handle || handle == INVALID_HANDLE_VALUE) {
         if (GetLastError() == ERROR_SHARING_VIOLATION) {
-            rvvm_error("File %s is busy", filepath);
+            rvvm_error("Failed to open \"%s\": File is busy", filepath);
         }
         return NULL;
     }
@@ -312,6 +319,7 @@ rvfile_t* rvopen(const char* filepath, uint8_t filemode)
 
     if (size == -1) {
         // Failed to get file size
+        rvvm_error("Failed to open \"%s\": File is not seekable", filepath);
         CloseHandle(handle);
         return NULL;
     }
@@ -327,51 +335,49 @@ rvfile_t* rvopen(const char* filepath, uint8_t filemode)
     file->handle   = handle;
 
 #else
-    const char* open_mode = "rb";
-    FILE*       fp        = NULL;
-    if (filemode & RVFILE_RW) {
-        open_mode = "rb+";
+    FILE* fp = NULL;
+    if (filemode & RVFILE_WRITE) {
         if ((filemode & RVFILE_CREAT) && (filemode & RVFILE_TRUNC) && !(filemode & RVFILE_EXCL)) {
-            // Just force non-exclusive file creation + truncation
-            open_mode = "wb+";
-        } else if ((filemode & RVFILE_CREAT) || (filemode & RVFILE_TRUNC)) {
-            fp = fopen(filepath, open_mode);
-            if (fp && (filemode & RVFILE_CREAT) && (filemode & RVFILE_EXCL)) {
-                // File already exists, but we requested exclusive creation
-                fclose(fp);
-                return NULL;
-            } else if (fp && (filemode & RVFILE_TRUNC)) {
-                // Truncate file if it already exists
-                fclose(fp);
-                fp        = NULL;
-                open_mode = "wb+";
-            } else if (!fp && (filemode & RVFILE_CREAT)) {
-                // Create the file if missing
-                open_mode = "wb+";
+            // Non-exclusive file creation & truncation
+            fp = fopen(filepath, (filemode & RVFILE_READ) ? "wb+" : "wb");
+        } else {
+            fp = fopen(filepath, "rb+");
+            if (fp) {
+                if ((filemode & RVFILE_CREAT) && (filemode & RVFILE_EXCL)) {
+                    // File already exists, but we requested exclusive creation
+                    fclose(fp);
+                    return NULL;
+                } else if (filemode & RVFILE_TRUNC) {
+                    // Truncate file if it already exists
+                    fclose(fp);
+                    fp = fopen(filepath, (filemode & RVFILE_READ) ? "wb+" : "wb");
+                }
+            } else if (filemode & RVFILE_CREAT) {
+                // Create file by opening in append mode
+                fp = fopen(filepath, "ab");
+                if (fp) {
+                    fclose(fp);
+                    fp = fopen(filepath, "rb+");
+                }
             }
         }
+    } else {
+        fp = fopen(filepath, "rb");
     }
 
-    if (!fp) {
-        fp = fopen(filepath, open_mode);
-    }
     if (!fp) {
         return NULL;
     }
 
-    if (fseek(fp, 0, SEEK_END)) {
-        fclose(fp);
-        return NULL;
-    }
-
-    int64_t size = ftell(fp);
-    if (size == -1LL) {
+    int64_t size = fseek(fp, 0, SEEK_END) ? -1 : ftell(fp);
+    if (size < 0) {
+        rvvm_error("Failed to open \"%s\": File is not seekable", filepath);
         fclose(fp);
         return NULL;
     }
 
 #if defined(_IONBF)
-    // Disable stdio buffering altogether for coherence sake with mmap() and other opened instances
+    // Disable stdio buffering for coherence with mmap() and file cache
     setvbuf(fp, NULL, _IONBF, 0);
 #endif
 
@@ -644,7 +650,7 @@ bool rvtrim(rvfile_t* file, uint64_t offset, uint64_t size)
     return false;
 }
 
-bool rvseek(rvfile_t* file, int64_t offset, uint8_t startpos)
+bool rvseek(rvfile_t* file, int64_t offset, uint32_t startpos)
 {
     if (likely(file)) {
         if (startpos == RVFILE_SEEK_CUR) {
@@ -853,7 +859,7 @@ static const blkdev_type_t blkdev_type_raw = {
     .trim  = blk_raw_trim,
 };
 
-static blkdev_t* blk_raw_open(const char* filename, uint8_t filemode)
+static blkdev_t* blk_raw_open(const char* filename, uint32_t filemode)
 {
     rvfile_t* file = rvopen(filename, filemode);
     if (!file) {
@@ -866,7 +872,7 @@ static blkdev_t* blk_raw_open(const char* filename, uint8_t filemode)
     return dev;
 }
 
-blkdev_t* blk_dedup_open(const char* filename, uint8_t filemode);
+blkdev_t* blk_dedup_open(const char* filename, uint32_t filemode);
 
 static bool check_file_ext(const char* filename, const char* ext)
 {
@@ -882,9 +888,9 @@ static bool check_file_ext(const char* filename, const char* ext)
     return occurence && rvvm_strcmp(occurence, ext);
 }
 
-blkdev_t* blk_open(const char* filename, uint8_t opts)
+blkdev_t* blk_open(const char* filename, uint32_t opts)
 {
-    uint8_t filemode = (opts & BLKDEV_RW) ? (RVFILE_RW | RVFILE_EXCL) : 0;
+    uint32_t filemode = opts | ((opts & BLKDEV_WRITE) ? RVFILE_EXCL : 0);
     if (check_file_ext(filename, ".bdv")) {
         return NULL;
     }
