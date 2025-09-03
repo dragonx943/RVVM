@@ -184,7 +184,7 @@ static void ata_cmd_identify(ata_dev_t* ata)
 
 static void ata_read_sector(ata_dev_t* ata)
 {
-    if (blk_read(ata->blk, ata->buf, ATA_SECTOR_SIZE, BLKDEV_CUR)) {
+    if (blk_read(ata->blk, ata->buf, ATA_SECTOR_SIZE, BLKDEV_POSITION)) {
         ata->bytes_to_rw = ATA_SECTOR_SIZE;
         ata->status      = ATA_STATUS_RDY | ATA_STATUS_DRQ;
         ata_send_interrupt(ata);
@@ -196,7 +196,7 @@ static void ata_read_sector(ata_dev_t* ata)
 
 static void ata_write_sector(ata_dev_t* ata)
 {
-    if (blk_write(ata->blk, ata->buf, ATA_SECTOR_SIZE, BLKDEV_CUR)) {
+    if (blk_write(ata->blk, ata->buf, ATA_SECTOR_SIZE, BLKDEV_POSITION)) {
         ata_send_interrupt(ata);
     } else {
         // IO failed
@@ -554,12 +554,12 @@ static void ata_process_prdt(ata_dev_t* ata)
 
         // Read/write data to/from RAM
         if (is_read) {
-            if (blk_read(ata->blk, buffer, buf_size, BLKDEV_CUR) != buf_size) {
+            if (blk_read(ata->blk, buffer, buf_size, BLKDEV_POSITION) != buf_size) {
                 // IO error
                 break;
             }
         } else {
-            if (blk_write(ata->blk, buffer, buf_size, BLKDEV_CUR) != buf_size) {
+            if (blk_write(ata->blk, buffer, buf_size, BLKDEV_POSITION) != buf_size) {
                 // IO error
                 break;
             }
