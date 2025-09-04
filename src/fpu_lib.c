@@ -337,7 +337,8 @@ static uint32_t fpu_pump_rounding_mode_internal(uint32_t mode)
 uint32_t fpu_get_exceptions(void)
 {
 #if defined(FENV_TLS_IMPL)
-    return fpu_exceptions | fpu_pump_exceptions_internal(0, FPU_LIB_FLAGS_ALL);
+    fpu_exceptions |= fpu_pump_exceptions_internal(0, FPU_LIB_FLAGS_ALL);
+    return fpu_exceptions;
 #else
     return fpu_pump_exceptions_internal(0, 0);
 #endif
@@ -347,10 +348,10 @@ void fpu_set_exceptions(uint32_t new_exceptions)
 {
     new_exceptions &= FPU_LIB_FLAGS_ALL;
 #if defined(FENV_TLS_IMPL)
-    fpu_exceptions = new_exceptions;
     fpu_pump_exceptions_internal(0, FPU_LIB_FLAGS_ALL);
+    fpu_exceptions = new_exceptions;
 #else
-    fpu_pump_exceptions_internal(new_exceptions, FPU_LIB_FLAGS_ALL & ~new_exceptions);
+    fpu_pump_exceptions_internal(new_exceptions, ~new_exceptions);
 #endif
 }
 
@@ -368,8 +369,8 @@ void fpu_clear_exceptions(uint32_t clr_exceptions)
 {
     clr_exceptions &= FPU_LIB_FLAGS_ALL;
 #if defined(FENV_TLS_IMPL)
+    fpu_exceptions |= fpu_pump_exceptions_internal(0, FPU_LIB_FLAGS_ALL);
     fpu_exceptions &= ~clr_exceptions;
-    fpu_exceptions |= fpu_pump_exceptions_internal(0, clr_exceptions) & ~clr_exceptions;
 #else
     fpu_pump_exceptions_internal(0, clr_exceptions);
 #endif
