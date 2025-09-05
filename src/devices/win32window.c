@@ -27,15 +27,23 @@ PUSH_OPTIMIZATION_SIZE
 
 #include <windows.h>
 
-#define WINDOW_CLASS_NAME TEXT("LEKKIT_FB_WINDOW")
+#define WINDOW_CLASS_NAME TEXT("LEKKIT_GUI_WINDOW")
 
 typedef struct {
+    // Window handle
     HWND hwnd;
-    HDC  hdc;
-    bool grab;
-} win32_win_t;
 
-static ATOM window_atom = 0;
+    // Device context handle
+    HDC hdc;
+
+    // Last scanout context
+    fb_ctx_t fb;
+
+    // Input grab flag
+    bool grab;
+} win32_window_t;
+
+static ATOM win32_atom = 0;
 
 static const hid_key_t win32_key_to_hid_byte_map[] = {
     [0x41] = HID_KEY_A,
@@ -189,33 +197,12 @@ static void win32_adjust_client_rect(uint32_t* width, uint32_t* height)
     *height = rect.bottom - rect.top;
 }
 
-static bool win32_window_set_scanout(gui_window_t* win, const fb_ctx_t* fb)
-{
-    win32_win_t* win32 = win->win_data;
-    if (fb->format != RGB_FMT_A8R8G8B8 && fb->format != RGB_FMT_R8G8B8 && fb->format != RGB_FMT_R5G6B5) {
-        // Invalid format
-        return false;
-    }
-    if (win->fb.width != fb->width || win->fb.height != fb->height) {
-        uint32_t flags  = SWP_DRAWFRAME | SWP_NOMOVE | SWP_NOZORDER | SWP_SHOWWINDOW;
-        uint32_t width  = fb->width;
-        uint32_t height = fb->height;
-        win32_adjust_client_rect(&width, &height);
-        if (!SetWindowPos(win32->hwnd, NULL, 0, 0, width, height, flags)) {
-            // Failed to resize window
-            return false;
-        }
-    }
-    win->fb = *fb;
-    return true;
-}
-
 static void win32_window_remove(gui_window_t* win)
 {
-    win32_win_t* win32 = win->win_data;
+    win32_window_t* win32 = gui_backend_get_data(win);
+    gui_backend_set_data(win, NULL);
     if (win32) {
-        win->win_data = NULL;
-        vma_free(win->fb.buffer, framebuffer_size(&win->fb));
+        vma_free(gui_backend_get_vram(win), gui_backend_get_vram_size(win));
         if (win32->hdc) {
             ReleaseDC(win32->hwnd, win32->hdc);
         }
@@ -228,99 +215,92 @@ static void win32_window_remove(gui_window_t* win)
 
 static void win32_window_draw(gui_window_t* win)
 {
-    win32_win_t* win32 = win->win_data;
-    if (win->fb.buffer) {
+    win32_window_t* win32 = gui_backend_get_data(win);
+    const fb_ctx_t* fb    = gui_backend_get_scanout(win);
+    if (fb && fb->buffer) {
         BITMAPINFO bmi = {
             .bmiHeader = {
                 .biSize = sizeof(BITMAPINFOHEADER),
-                .biWidth = framebuffer_stride(&win->fb) / rgb_format_bytes(win->fb.format),
-                .biHeight = -win->fb.height,
+                .biWidth = framebuffer_stride(fb) / rgb_format_bytes(fb->format),
+                .biHeight = -fb->height,
                 .biPlanes = 1,
-                .biBitCount = rgb_format_bpp(win->fb.format),
+                .biBitCount = rgb_format_bpp(fb->format),
             },
         };
-        SetDIBitsToDevice(win32->hdc, 0, 0, win->fb.width, win->fb.height, 0, 0, 0, //
-                          win->fb.height, win->fb.buffer, &bmi, DIB_RGB_COLORS);
+        if (win32->fb.width != fb->width || win32->fb.height != fb->height) {
+            // Resize window
+            uint32_t flags  = SWP_DRAWFRAME | SWP_NOMOVE | SWP_NOZORDER | SWP_SHOWWINDOW;
+            uint32_t width  = fb->width;
+            uint32_t height = fb->height;
+            win32_adjust_client_rect(&width, &height);
+            SetWindowPos(win32->hwnd, NULL, 0, 0, width, height, flags);
+        }
+        SetDIBitsToDevice(win32->hdc, 0, 0, fb->width, fb->height, 0, 0, 0, //
+                          fb->height, fb->buffer, &bmi, DIB_RGB_COLORS);
+        win32->fb = *fb;
     }
 }
 
 static void win32_window_poll(gui_window_t* win)
 {
-    win32_win_t* win32 = win->win_data;
-    MSG          Msg   = ZERO_INIT;
+    win32_window_t* win32 = gui_backend_get_data(win);
 
+    MSG Msg = ZERO_INIT;
     while (PeekMessage(&Msg, win32->hwnd, 0, 0, PM_REMOVE)) {
         switch (Msg.message) {
             case WM_MOUSEMOVE:
-                if (!win32->grab && win->on_mouse_place) {
-                    POINTS cur = MAKEPOINTS(Msg.lParam);
-                    win->on_mouse_place(win, cur.x, cur.y);
-                } else if (win32->grab && win->on_mouse_move) {
-                    POINTS cur = MAKEPOINTS(Msg.lParam);
-                    int    dx  = (cur.x - (win->fb.width >> 1));
-                    int    dy  = (cur.y - (win->fb.height >> 1));
-                    if (dx || dy) {
-                        win->on_mouse_move(win, dx - (dx / 3), dy - (dy / 3));
+                if (win32->grab) {
+                    const fb_ctx_t* fb = gui_backend_get_scanout(win);
+                    if (fb) {
+                        POINTS cur = MAKEPOINTS(Msg.lParam);
+                        int    dx  = (cur.x - (fb->width >> 1));
+                        int    dy  = (cur.y - (fb->height >> 1));
+                        gui_backend_on_mouse_move(win, dx - (dx / 3), dy - (dy / 3));
                     }
+                } else {
+                    POINTS cur = MAKEPOINTS(Msg.lParam);
+                    gui_backend_on_mouse_place(win, cur.x, cur.y);
                 }
                 break;
             case WM_KEYDOWN:
             case WM_SYSKEYDOWN: // For handling F10
                 // Disable autorepeat keypresses
-                if ((Msg.lParam & KF_REPEAT) == 0 && win->on_key_press) {
-                    win->on_key_press(win, win32_key_to_hid(Msg.wParam));
+                if (!(Msg.lParam & KF_REPEAT)) {
+                    gui_backend_on_key_press(win, win32_key_to_hid(Msg.wParam));
                 }
                 break;
             case WM_KEYUP:
             case WM_SYSKEYUP:
-                if ((Msg.lParam & KF_REPEAT) == 0 && win->on_key_release) {
-                    win->on_key_release(win, win32_key_to_hid(Msg.wParam));
+                if (!(Msg.lParam & KF_REPEAT)) {
+                    gui_backend_on_key_release(win, win32_key_to_hid(Msg.wParam));
                 }
                 break;
             case WM_LBUTTONDOWN:
-                if (win->on_mouse_press) {
-                    win->on_mouse_press(win, HID_BTN_LEFT);
-                }
+                gui_backend_on_mouse_press(win, HID_BTN_LEFT);
                 break;
             case WM_LBUTTONUP:
-                if (win->on_mouse_release) {
-                    win->on_mouse_release(win, HID_BTN_LEFT);
-                }
+                gui_backend_on_mouse_release(win, HID_BTN_LEFT);
                 break;
             case WM_RBUTTONDOWN:
-                if (win->on_mouse_press) {
-                    win->on_mouse_press(win, HID_BTN_RIGHT);
-                }
+                gui_backend_on_mouse_press(win, HID_BTN_RIGHT);
                 break;
             case WM_RBUTTONUP:
-                if (win->on_mouse_release) {
-                    win->on_mouse_release(win, HID_BTN_RIGHT);
-                }
+                gui_backend_on_mouse_release(win, HID_BTN_RIGHT);
                 break;
             case WM_MBUTTONDOWN:
-                if (win->on_mouse_press) {
-                    win->on_mouse_press(win, HID_BTN_MIDDLE);
-                }
+                gui_backend_on_mouse_press(win, HID_BTN_MIDDLE);
                 break;
             case WM_MBUTTONUP:
-                if (win->on_mouse_release) {
-                    win->on_mouse_release(win, HID_BTN_MIDDLE);
-                }
+                gui_backend_on_mouse_release(win, HID_BTN_MIDDLE);
                 break;
             case WM_MOUSEWHEEL:
-                if (win->on_mouse_scroll) {
-                    win->on_mouse_scroll(win, -GET_WHEEL_DELTA_WPARAM(Msg.wParam) / 120);
-                }
+                gui_backend_on_mouse_scroll(win, -GET_WHEEL_DELTA_WPARAM(Msg.wParam) / 120);
                 break;
             case WM_QUIT:
-                if (win->on_close) {
-                    win->on_close(win);
-                }
+                gui_backend_on_close(win);
                 break;
             case WM_KILLFOCUS:
-                if (win->on_focus_lost) {
-                    win->on_focus_lost(win);
-                }
+                gui_backend_on_focus_lost(win);
                 break;
             default:
                 DispatchMessage(&Msg);
@@ -328,18 +308,21 @@ static void win32_window_poll(gui_window_t* win)
         }
     }
     if (win32->grab) {
-        POINT mid = {
-            .x = win->fb.width >> 1,
-            .y = win->fb.height >> 1,
-        };
-        ClientToScreen(win32->hwnd, &mid);
-        SetCursorPos(mid.x, mid.y);
+        const fb_ctx_t* fb = gui_backend_get_scanout(win);
+        if (fb) {
+            POINT mid = {
+                .x = fb->width >> 1,
+                .y = fb->height >> 1,
+            };
+            ClientToScreen(win32->hwnd, &mid);
+            SetCursorPos(mid.x, mid.y);
+        }
     }
 }
 
 static void win32_window_set_title(gui_window_t* win, const char* title)
 {
-    win32_win_t* win32 = win->win_data;
+    win32_window_t* win32 = gui_backend_get_data(win);
 #if defined(HOST_TARGET_WIN9X)
     SetWindowTextA(win32->hwnd, title);
 #else
@@ -351,12 +334,26 @@ static void win32_window_set_title(gui_window_t* win, const char* title)
 
 static void win32_window_grab_input(gui_window_t* win, bool grab)
 {
-    win32_win_t* win32 = win->win_data;
-    win32->grab        = grab;
+    win32_window_t* win32 = gui_backend_get_data(win);
+    win32->grab           = grab;
 }
+
+static const gui_backend_cb_t win32_window_cb = {
+    .remove     = win32_window_remove,
+    .draw       = win32_window_draw,
+    .poll       = win32_window_poll,
+    .set_title  = win32_window_set_title,
+    .grab_input = win32_window_grab_input,
+};
 
 bool win32_window_init(gui_window_t* win)
 {
+    win32_window_t* win32 = safe_new_obj(win32_window_t);
+
+    gui_backend_register(win, &win32_window_cb);
+    gui_backend_set_data(win, win32);
+
+    // Create window class atom
     DO_ONCE_SCOPED {
         // Initialize window atom
         WNDCLASS wc = {
@@ -364,45 +361,44 @@ bool win32_window_init(gui_window_t* win)
             .hInstance     = GetModuleHandle(NULL),
             .lpszClassName = WINDOW_CLASS_NAME,
         };
-        window_atom = RegisterClass(&wc);
+        win32_atom = RegisterClass(&wc);
     };
-
-    if (!window_atom) {
-        rvvm_warn("Failed to register window class!");
+    if (!win32_atom) {
+        rvvm_error("Failed to register window class");
         return false;
     }
 
-    win32_win_t* win32 = safe_new_obj(win32_win_t);
+    // Allocate VRAM (Probably better done in GUI middleware later)
+    size_t vram_size = gui_backend_get_vram_size(win);
+    void*  vram      = vma_alloc(NULL, vram_size, VMA_RDWR);
+    if (vram) {
+        gui_backend_set_vram(win, vram, vram_size);
+    } else {
+        rvvm_error("vma_alloc() failed!");
+        return false;
+    }
 
-    win->win_data   = win32;
-    win->draw       = win32_window_draw;
-    win->poll       = win32_window_poll;
-    win->remove     = win32_window_remove;
-    win->set_title  = win32_window_set_title;
-    win->grab_input = win32_window_grab_input;
+    // Get initial window size
+    const fb_ctx_t* fb = gui_backend_get_scanout(win);
 
-    uint32_t width  = win->fb.width;
-    uint32_t height = win->fb.height;
+    // Adjust window rectangle
+    uint32_t width  = fb ? fb->width : 640;
+    uint32_t height = fb ? fb->height : 480;
     win32_adjust_client_rect(&width, &height);
 
     // Create window
     win32->hwnd = CreateWindow(WINDOW_CLASS_NAME, TEXT(""), WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE,
                                CW_USEDEFAULT, CW_USEDEFAULT, width, height, NULL, NULL, GetModuleHandle(NULL), NULL);
-    if (!win32->hwnd) {
+
+    // Obtain device context
+    if (win32->hwnd) {
+        win32->hdc = GetDC(win32->hwnd);
+    }
+
+    if (!win32->hwnd || !win32->hwnd) {
         rvvm_error("Failed to create window!");
         return false;
     }
-
-    win32->hdc = GetDC(win32->hwnd);
-
-    // Allocate framebuffer
-    win->fb.buffer = vma_alloc(NULL, framebuffer_size(&win->fb), VMA_RDWR);
-    if (!win->fb.buffer) {
-        rvvm_error("vma_alloc() failed!");
-        return false;
-    }
-
-    win32_window_set_scanout(win, &win->fb);
 
     return true;
 }
