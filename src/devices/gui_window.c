@@ -259,6 +259,13 @@ static const rvvm_mmio_type_t rvvm_framebuffer_dev_type = {
  * GUI abstraction layer
  */
 
+static inline void gui_backend_free(gui_window_t* win)
+{
+    if (win && win->remove) {
+        win->remove(win);
+    }
+}
+
 static bool gui_window_init_backend(gui_window_t* win)
 {
     const char* gui = rvvm_getarg("gui");
@@ -266,26 +273,31 @@ static bool gui_window_init_backend(gui_window_t* win)
     if ((!gui || rvvm_strcmp(gui, "haiku")) && haiku_window_init(win)) {
         return true;
     }
+    gui_backend_free(win);
 #endif
 #if defined(USE_WAYLAND)
     if ((!gui || rvvm_strcmp(gui, "wayland")) && wayland_window_init(win)) {
         return true;
     }
+    gui_backend_free(win);
 #endif
 #if defined(USE_X11)
     if ((!gui || rvvm_strcmp(gui, "x11")) && x11_window_init(win)) {
         return true;
     }
+    gui_backend_free(win);
 #endif
 #if defined(USE_SDL)
     if ((!gui || rvvm_strcmp(gui, "sdl")) && sdl_window_init(win)) {
         return true;
     }
+    gui_backend_free(win);
 #endif
 #if defined(USE_WIN32_GUI)
     if ((!gui || rvvm_strcmp(gui, "win32")) && win32_window_init(win)) {
         return true;
     }
+    gui_backend_free(win);
 #endif
     rvvm_error("No suitable windowing backends found!");
     UNUSED(win);
