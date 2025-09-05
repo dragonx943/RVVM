@@ -12,7 +12,14 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #include "rvvmlib.h"
 
-#define RGB_FMT_INVALID  0x0
+/*
+ * Pixel formats encode bytes per pixel in lower 4 bits.
+ *
+ * The remaining bits specify pixel encoding variation,
+ * where preferred format has all other bits set to zero.
+ */
+
+#define RGB_FMT_INVALID  0x00
 #define RGB_FMT_R5G6B5   0x02
 #define RGB_FMT_R8G8B8   0x03
 #define RGB_FMT_A8R8G8B8 0x04 //!< Little-endian: BGRA, Big-endian: ARGB (Recommended)
@@ -21,29 +28,10 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //! Pixel RGB format
 typedef uint8_t rgb_fmt_t;
 
-//! Framebuffer context description
-typedef struct {
-    void*     buffer; //!< Buffer in host memory
-    uint32_t  width;  //!< Width in pixels
-    uint32_t  height; //!< Height in pixels
-    uint32_t  stride; //!< Line alignment. Set to 0 if unsure.
-    rgb_fmt_t format; //!< Pixel format
-} fb_ctx_t;
-
-/*
- * Pixel format handling
- */
-
 //! Get bytes per pixel for a format
 static inline size_t rgb_format_bytes(rgb_fmt_t format)
 {
-    switch (format) {
-        case RGB_FMT_R5G6B5:   return 2;
-        case RGB_FMT_R8G8B8:   return 3;
-        case RGB_FMT_A8R8G8B8: return 4;
-        case RGB_FMT_A8B8G8R8: return 4;
-    }
-    return 0;
+    return format & 0x0F;
 }
 
 //! Get bits per pixel (bpp) for a format
@@ -55,30 +43,57 @@ static inline size_t rgb_format_bpp(rgb_fmt_t format)
 //! Get pixel format from bpp
 static inline rgb_fmt_t rgb_format_from_bpp(size_t bpp)
 {
-    switch (bpp) {
-        case 16: return RGB_FMT_R5G6B5;
-        case 24: return RGB_FMT_R8G8B8;
-        // Default to ARGB when bpp = 32, this is what most guests and hosts expect
-        case 32: return RGB_FMT_A8R8G8B8;
-    }
-    return RGB_FMT_INVALID;
+    return (bpp >> 3) & 0x0F;
 }
 
 /*
  * Framebuffer API
  */
 
+//! Framebuffer context description
+typedef struct {
+    void*     buffer; //!< Buffer in process memory
+    uint32_t  width;  //!< Width  (In pixels)
+    uint32_t  height; //!< Height (In pixels)
+    uint32_t  stride; //!< Line alignment. Set to 0 if unsure.
+    rgb_fmt_t format; //!< Pixel format enum
+} fb_ctx_t;
+
+//! Get frame buffer
+static inline void* framebuffer_buffer(const fb_ctx_t* fb)
+{
+    return fb ? fb->buffer : NULL;
+}
+
+//! Get framebuffer pixel format
+static inline rgb_fmt_t framebuffer_format(const fb_ctx_t* fb)
+{
+    return fb ? fb->format : RGB_FMT_INVALID;
+}
+
 //! Calculate effective framebuffer stride
 static inline size_t framebuffer_stride(const fb_ctx_t* fb)
 {
-    return fb->stride ? fb->stride : fb->width * rgb_format_bytes(fb->format);
+    if (fb && fb->stride) {
+        return fb->stride;
+    } else if (fb) {
+        return fb->width * rgb_format_bytes(fb->format);
+    }
+    return 0;
 }
 
 //! Calculate framebuffer region size
 static inline size_t framebuffer_size(const fb_ctx_t* fb)
 {
-    return framebuffer_stride(fb) * fb->height;
+    if (fb) {
+        return framebuffer_stride(fb) * fb->height;
+    }
+    return 0;
 }
+
+/*
+ * Simple-framebuffer device
+ */
 
 //! \brief   Attach framebuffer context to the machine.
 //! \warning The buffer is not freed automatically.
