@@ -217,7 +217,7 @@ static void win32_window_remove(gui_window_t* win)
 // NOTE: Windows seems to not accept BI_BITFIELDS for 24bpp, which makes BGR888 support a no-go
 static bool win32_handle_formats(BITMAPINFO* bmi, const rvvm_fb_t* fb)
 {
-    DWORD* mask = (DWORD*)&bmi->bmiColors;
+    DWORD* mask = (DWORD*)(void*)&bmi->bmiColors;
     switch (rvvm_fb_format(fb)) {
         case RVVM_RGB_XRGB1555:
             mask[0] = 0x7C00;
@@ -263,10 +263,8 @@ static void win32_window_draw(gui_window_t* win)
     win32_window_t*  win32 = gui_backend_get_data(win);
     const rvvm_fb_t* fb    = gui_backend_get_scanout(win);
     if (rvvm_fb_buffer(fb)) {
-        uint8_t buf[sizeof(BITMAPINFOHEADER) + (sizeof(DWORD) * 3)] = ZERO_INIT;
-
         // Bitmap info structure
-        BITMAPINFO* bmi = (BITMAPINFO*)buf;
+        BITMAPINFO* bmi = (BITMAPINFO*)safe_calloc(1, sizeof(BITMAPINFO) + (sizeof(DWORD) * 3));
 
         // Initialize bitmap info
         bmi->bmiHeader.biSize     = sizeof(BITMAPINFOHEADER);
@@ -292,6 +290,7 @@ static void win32_window_draw(gui_window_t* win)
         // Draw framebuffer
         SetDIBitsToDevice(win32->hdc, 0, 0, rvvm_fb_width(fb), rvvm_fb_height(fb), 0, 0, 0, //
                           rvvm_fb_height(fb), rvvm_fb_buffer(fb), bmi, DIB_RGB_COLORS);
+        safe_free(bmi);
         win32->fb = *fb;
     }
 }
