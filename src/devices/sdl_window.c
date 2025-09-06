@@ -9,13 +9,14 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #include "feature_test.h"
 
-#include "dlib.h"
+#include "compiler.h"
 #include "gui_window.h"
-#include "utils.h"
-#include "vector.h"
-#include "vma_ops.h"
 
 PUSH_OPTIMIZATION_SIZE
+
+/*
+ * Check library availability
+ */
 
 #if !defined(USE_FULL_LINKING) /**/                                                                                    \
     && (defined(COMPILER_IS_MSVC) || defined(HOST_TARGET_EMSCRIPTEN) || defined(HOST_TARGET_REDOX))
@@ -43,9 +44,8 @@ PUSH_OPTIMIZATION_SIZE
 
 #elif defined(USE_SDL)
 // No SDL headers available
-#warning Disabling USE_SDL as <SDL.h> is unavailable
+#pragma message("Disabling SDL support as <SDL.h> is unavailable")
 #undef USE_SDL
-
 #endif
 
 /*
@@ -53,6 +53,11 @@ PUSH_OPTIMIZATION_SIZE
  */
 
 #if defined(USE_SDL)
+
+#include "dlib.h"
+#include "utils.h"
+#include "vector.h"
+#include "vma_ops.h"
 
 // Resolve symbols at runtime
 #define SDL_DLIB_SYM(sym) static __typeof__(sym)* MACRO_CONCAT(sym, _dlib) = NULL;
@@ -397,18 +402,44 @@ static const hid_key_t sdl_key_to_hid_byte_map[] = {
 #if !defined(USE_FULL_LINKING)
 
 SDL_DLIB_SYM(SDL_Init)
-SDL_DLIB_SYM(SDL_ShowCursor)
 SDL_DLIB_SYM(SDL_PollEvent)
+SDL_DLIB_SYM(SDL_QuitSubSystem)
+SDL_DLIB_SYM(SDL_ShowCursor)
 
-#define SDL_Init       SDL_Init_dlib
-#define SDL_ShowCursor SDL_ShowCursor_dlib
-#define SDL_PollEvent  SDL_PollEvent_dlib
+#define SDL_Init          SDL_Init_dlib
+#define SDL_PollEvent     SDL_PollEvent_dlib
+#define SDL_QuitSubSystem SDL_QuitSubSystem_dlib
+#define SDL_ShowCursor    SDL_ShowCursor_dlib
 
 #endif
 
 /*
  * SDL backend implementation
  */
+
+#if USE_SDL == 3
+#define SDL_INIT_SUCCESS 1
+#else
+#define SDL_INIT_SUCCESS  0
+#define SDL_RenderTexture SDL_RenderCopy
+#endif
+
+// D'oh the frickin endianness issues!
+#if defined(HOST_BIG_ENDIAN)
+#define SDL_PIXELFORMAT_BGRX32 SDL_PIXELFORMAT_BGRX8888
+#define SDL_PIXELFORMAT_RGBX32 SDL_PIXELFORMAT_RGBX8888
+#define SDL_PIXELFORMAT_XRGB32 SDL_PIXELFORMAT_XRGB8888
+#define SDL_PIXELFORMAT_XBGR32 SDL_PIXELFORMAT_XBGR8888
+#else
+#define SDL_PIXELFORMAT_BGRX32 SDL_PIXELFORMAT_XRGB8888
+#define SDL_PIXELFORMAT_RGBX32 SDL_PIXELFORMAT_XBGR8888
+#define SDL_PIXELFORMAT_XRGB32 SDL_PIXELFORMAT_BGRX8888
+#define SDL_PIXELFORMAT_XBGR32 SDL_PIXELFORMAT_RGBX8888
+#endif
+
+#define SDL_PIXELFORMAT_XRGB1555    0x15130F02U
+#define SDL_PIXELFORMAT_XRGB2101010 0x16172004U
+#define SDL_PIXELFORMAT_XBGR2101010 0x16572004U
 
 typedef struct {
 #if USE_SDL >= 2
@@ -419,8 +450,15 @@ typedef struct {
     SDL_Surface* window;
     SDL_Surface* texture;
 #endif
+
+    // Last scanout context
+    rvvm_fb_t fb;
+
+    // Window ID
     uint32_t id;
-    bool     grab;
+
+    // Input grab flag
+    bool grab;
 } sdl_window_t;
 
 static vector_t(gui_window_t*) sdl_windows = {0};
@@ -443,7 +481,6 @@ static gui_window_t* sdl_find_window(uint32_t window_id)
             return win;
         }
     }
-    DO_ONCE(rvvm_warn("Invalid " SDL_LIB_NAME " window in event"));
     return NULL;
 }
 
@@ -459,12 +496,10 @@ static void sdl_handle_keyboard(SDL_Event* event, bool press)
     gui_window_t* win = sdl_find_window(0);
     hid_key_t     key = sdl_key_to_hid(event->key.keysym.sym);
 #endif
-    if (win) {
-        if (win && press && win->on_key_press) {
-            win->on_key_press(win, key);
-        } else if (win && !press && win->on_key_press) {
-            win->on_key_release(win, key);
-        }
+    if (press) {
+        gui_backend_on_key_press(win, key);
+    } else {
+        gui_backend_on_key_release(win, key);
     }
 }
 
@@ -475,13 +510,11 @@ static void sdl_handle_mouse_moution(SDL_Event* event)
 #else
     gui_window_t* win = sdl_find_window(0);
 #endif
-    if (win && win->on_mouse_move) {
-        sdl_window_t* sdl = win->win_data;
-        if (sdl->grab) {
-            win->on_mouse_move(win, event->motion.xrel, event->motion.yrel);
-        } else {
-            win->on_mouse_place(win, event->motion.x, event->motion.y);
-        }
+    sdl_window_t* sdl = gui_backend_get_data(win);
+    if (sdl && sdl->grab) {
+        gui_backend_on_mouse_move(win, event->motion.xrel, event->motion.yrel);
+    } else {
+        gui_backend_on_mouse_place(win, event->motion.x, event->motion.y);
     }
 }
 
@@ -492,42 +525,34 @@ static void sdl_handle_mouse_btn(SDL_Event* event, bool press)
 #else
     gui_window_t* win = sdl_find_window(0);
 #endif
-    if (win) {
-        switch (event->button.button) {
-            case SDL_BUTTON_LEFT:
-                if (press && win->on_mouse_press) {
-                    win->on_mouse_press(win, HID_BTN_LEFT);
-                } else if (!press && win->on_mouse_release) {
-                    win->on_mouse_release(win, HID_BTN_LEFT);
-                }
-                return;
-            case SDL_BUTTON_MIDDLE:
-                if (press && win->on_mouse_press) {
-                    win->on_mouse_press(win, HID_BTN_MIDDLE);
-                } else if (!press && win->on_mouse_release) {
-                    win->on_mouse_release(win, HID_BTN_MIDDLE);
-                }
-                return;
-            case SDL_BUTTON_RIGHT:
-                if (press && win->on_mouse_press) {
-                    win->on_mouse_press(win, HID_BTN_RIGHT);
-                } else if (!press && win->on_mouse_release) {
-                    win->on_mouse_release(win, HID_BTN_RIGHT);
-                }
-                return;
+    hid_btns_t btns = 0;
+    switch (event->button.button) {
+        case SDL_BUTTON_LEFT:
+            btns = HID_BTN_LEFT;
+            break;
+        case SDL_BUTTON_MIDDLE:
+            btns = HID_BTN_MIDDLE;
+            break;
+        case SDL_BUTTON_RIGHT:
+            btns = HID_BTN_RIGHT;
+            break;
 #if USE_SDL == 1
-            case SDL_BUTTON_WHEELUP:
-                if (press && win->on_mouse_scroll) {
-                    win->on_mouse_scroll(win, HID_SCROLL_UP);
-                }
-                return;
-            case SDL_BUTTON_WHEELDOWN:
-                if (press && win->on_mouse_scroll) {
-                    win->on_mouse_scroll(win, HID_SCROLL_DOWN);
-                }
-                return;
+        case SDL_BUTTON_WHEELUP:
+            if (press) {
+                gui_backend_on_mouse_scroll(win, HID_SCROLL_UP);
+            }
+            return;
+        case SDL_BUTTON_WHEELDOWN:
+            if (press) {
+                gui_backend_on_mouse_scroll(win, HID_SCROLL_DOWN);
+            }
+            return;
 #endif
-        }
+    }
+    if (press) {
+        gui_backend_on_mouse_press(win, btns);
+    } else {
+        gui_backend_on_mouse_release(win, btns);
     }
 }
 
@@ -536,9 +561,7 @@ static void sdl_handle_mouse_btn(SDL_Event* event, bool press)
 static void sdl_handle_mouse_scroll(SDL_Event* event)
 {
     gui_window_t* win = sdl_find_window(event->wheel.windowID);
-    if (win && win->on_mouse_scroll) {
-        win->on_mouse_scroll(win, event->wheel.y);
-    }
+    gui_backend_on_mouse_scroll(win, event->wheel.y);
 }
 
 #endif
@@ -551,109 +574,173 @@ static void sdl_handle_window(SDL_Event* event, bool close)
     gui_window_t* win = sdl_find_window(0);
     UNUSED(event);
 #endif
-    if (win && !close && win->on_focus_lost) {
-        win->on_focus_lost(win);
-    } else if (win && close && win->on_close) {
-        win->on_close(win);
+    if (close) {
+        gui_backend_on_close(win);
+    } else {
+        gui_backend_on_focus_lost(win);
     }
 }
 
-static bool sdl_set_scanout(gui_window_t* win, const fb_ctx_t* fb)
+static void sdl_window_remove(gui_window_t* win)
 {
-    sdl_window_t* sdl = win->win_data;
-#if USE_SDL >= 2
-    SDL_Texture* texture = NULL;
-#else
-    SDL_Surface* texture = NULL;
-#endif
-
-    if (fb) {
-        // Create new texture with requested pixel format
-#if USE_SDL >= 2
-        switch (fb->format) {
-            case RGB_FMT_R5G6B5:
-                texture = SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_RGB565, //
-                                            SDL_TEXTUREACCESS_STREAMING, fb->width, fb->height);
+    sdl_window_t* sdl = gui_backend_get_data(win);
+    gui_backend_set_data(win, NULL);
+    if (sdl) {
+        // Remove from window list
+        vector_foreach_back (sdl_windows, i) {
+            if (vector_at(sdl_windows, i) == win) {
+                vector_erase(sdl_windows, i);
                 break;
-            case RGB_FMT_R8G8B8:
-                texture = SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_BGR24, //
-                                            SDL_TEXTUREACCESS_STREAMING, fb->width, fb->height);
-                break;
-            case RGB_FMT_A8R8G8B8:
-                texture = SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_XRGB8888, //
-                                            SDL_TEXTUREACCESS_STREAMING, fb->width, fb->height);
-                break;
-            case RGB_FMT_A8B8G8R8:
-                texture = SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_XBGR8888, //
-                                            SDL_TEXTUREACCESS_STREAMING, fb->width, fb->height);
-                break;
+            }
         }
-#else
-        switch (fb->format) {
-            case RGB_FMT_R5G6B5:
-                texture = SDL_CreateRGBSurfaceFrom(fb->buffer, fb->width, fb->height, 16, //
-                                                   framebuffer_stride(fb), 0xF800, 0x7E0, 0x1F, 0);
-                break;
-            case RGB_FMT_R8G8B8:
-                texture = SDL_CreateRGBSurfaceFrom(fb->buffer, fb->width, fb->height, 24, //
-                                                   framebuffer_stride(fb), 0xFF0000, 0xFF00, 0xFF, 0);
-                break;
-            case RGB_FMT_A8R8G8B8:
-                texture = SDL_CreateRGBSurfaceFrom(fb->buffer, fb->width, fb->height, 32, //
-                                                   framebuffer_stride(fb), 0xFF0000, 0xFF00, 0xFF, 0);
-                break;
-            case RGB_FMT_A8B8G8R8:
-                texture = SDL_CreateRGBSurfaceFrom(fb->buffer, fb->width, fb->height, 32, //
-                                                   framebuffer_stride(fb), 0xFF, 0xFF00, 0xFF0000, 0);
-                break;
-        }
-#endif
-    }
-
-    if (texture || !fb) {
+        // Free SDL objects
+#if USE_SDL >= 2
         if (sdl->texture) {
-            // Destroy previous texture
-#if USE_SDL >= 2
             SDL_DestroyTexture(sdl->texture);
+        }
+        if (sdl->renderer) {
+            SDL_DestroyRenderer(sdl->renderer);
+        }
+        if (sdl->window) {
+            SDL_DestroyWindow(sdl->window);
+        }
 #else
+        if (sdl->texture) {
             SDL_FreeSurface(sdl->texture);
-#endif
         }
-        sdl->texture = texture;
-        if (texture && fb) {
-            // Update window size or recreate it
-#if USE_SDL >= 2
-            if (sdl->window && (fb->width != win->fb.width || fb->height != win->fb.height)) {
-                SDL_SetWindowSize(sdl->window, fb->width, fb->height);
-            }
-#else
-            if (!sdl->window || fb->width != win->fb.width || fb->height != win->fb.height) {
-                sdl->window = SDL_SetVideoMode(fb->width, fb->height, rgb_format_bpp(fb->format), SDL_ANYFORMAT);
-            }
 #endif
-            win->fb = *fb;
+        if (!vector_size(sdl_windows)) {
+            // Bye, SDL!
+            SDL_QuitSubSystem(SDL_INIT_VIDEO);
         }
+        // Free VRAM VMA
+        vma_free(gui_backend_get_vram(win), gui_backend_get_vram_size(win));
+        safe_free(sdl);
     }
+}
 
-    return sdl->window && texture;
+static void* sdl_create_texture(sdl_window_t* sdl, const rvvm_fb_t* fb)
+{
+#if USE_SDL >= 2
+    switch (rvvm_fb_format(fb)) {
+        case RVVM_RGB_XRGB1555:
+            return SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_XRGB1555, //
+                                     SDL_TEXTUREACCESS_STREAMING, rvvm_fb_width(fb), rvvm_fb_height(fb));
+        case RVVM_RGB_RGB565:
+            return SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_RGB565, //
+                                     SDL_TEXTUREACCESS_STREAMING, rvvm_fb_width(fb), rvvm_fb_height(fb));
+        case RVVM_RGB_RGB888:
+            return SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_BGR24, //
+                                     SDL_TEXTUREACCESS_STREAMING, rvvm_fb_width(fb), rvvm_fb_height(fb));
+        case RVVM_RGB_XRGB8888:
+            return SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_BGRX32, //
+                                     SDL_TEXTUREACCESS_STREAMING, rvvm_fb_width(fb), rvvm_fb_height(fb));
+        case RVVM_RGB_BGR888:
+            return SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_RGB24, //
+                                     SDL_TEXTUREACCESS_STREAMING, rvvm_fb_width(fb), rvvm_fb_height(fb));
+        case RVVM_RGB_XBGR8888:
+            return SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_RGBX32, //
+                                     SDL_TEXTUREACCESS_STREAMING, rvvm_fb_width(fb), rvvm_fb_height(fb));
+        case RVVM_RGB_BGRX8888:
+            return SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_XRGB32, //
+                                     SDL_TEXTUREACCESS_STREAMING, rvvm_fb_width(fb), rvvm_fb_height(fb));
+        case RVVM_RGB_RGBX8888:
+            return SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_XBGR32, //
+                                     SDL_TEXTUREACCESS_STREAMING, rvvm_fb_width(fb), rvvm_fb_height(fb));
+        case RVVM_RGB_XRGB2101010:
+            return SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_XRGB2101010, //
+                                     SDL_TEXTUREACCESS_STREAMING, rvvm_fb_width(fb), rvvm_fb_height(fb));
+        case RVVM_RGB_XBGR2101010:
+            return SDL_CreateTexture(sdl->renderer, SDL_PIXELFORMAT_XBGR2101010, //
+                                     SDL_TEXTUREACCESS_STREAMING, rvvm_fb_width(fb), rvvm_fb_height(fb));
+    }
+#else
+    UNUSED(sdl);
+    switch (rvvm_fb_format(fb)) {
+        case RVVM_RGB_XRGB1555:
+            return SDL_CreateRGBSurfaceFrom(rvvm_fb_buffer(fb), rvvm_fb_width(fb), rvvm_fb_height(fb), //
+                                            15, rvvm_fb_stride(fb), 0x7C00U, 0x3E0U, 0x1FU, 0);
+        case RVVM_RGB_RGB565:
+            return SDL_CreateRGBSurfaceFrom(rvvm_fb_buffer(fb), rvvm_fb_width(fb), rvvm_fb_height(fb), //
+                                            16, rvvm_fb_stride(fb), 0xF800U, 0x7E0U, 0x1FU, 0);
+        case RVVM_RGB_RGB888:
+            return SDL_CreateRGBSurfaceFrom(rvvm_fb_buffer(fb), rvvm_fb_width(fb), rvvm_fb_height(fb), //
+                                            24, rvvm_fb_stride(fb), 0xFF0000U, 0xFF00U, 0xFFU, 0);
+        case RVVM_RGB_XRGB8888:
+            return SDL_CreateRGBSurfaceFrom(rvvm_fb_buffer(fb), rvvm_fb_width(fb), rvvm_fb_height(fb), //
+                                            32, rvvm_fb_stride(fb), 0xFF0000U, 0xFF00U, 0xFFU, 0);
+        case RVVM_RGB_BGR888:
+            return SDL_CreateRGBSurfaceFrom(rvvm_fb_buffer(fb), rvvm_fb_width(fb), rvvm_fb_height(fb), //
+                                            24, rvvm_fb_stride(fb), 0xFFU, 0xFF00U, 0xFF0000U, 0);
+        case RVVM_RGB_XBGR8888:
+            return SDL_CreateRGBSurfaceFrom(rvvm_fb_buffer(fb), rvvm_fb_width(fb), rvvm_fb_height(fb), //
+                                            32, rvvm_fb_stride(fb), 0xFFU, 0xFF00U, 0xFF0000U, 0);
+        case RVVM_RGB_BGRX8888:
+            return SDL_CreateRGBSurfaceFrom(rvvm_fb_buffer(fb), rvvm_fb_width(fb), rvvm_fb_height(fb), //
+                                            32, rvvm_fb_stride(fb), 0xFF00U, 0xFF0000U, 0xFF000000U, 0);
+        case RVVM_RGB_RGBX8888:
+            return SDL_CreateRGBSurfaceFrom(rvvm_fb_buffer(fb), rvvm_fb_width(fb), rvvm_fb_height(fb), //
+                                            32, rvvm_fb_stride(fb), 0xFF000000U, 0xFF0000U, 0xFF00U, 0);
+        case RVVM_RGB_XRGB2101010:
+            return SDL_CreateRGBSurfaceFrom(rvvm_fb_buffer(fb), rvvm_fb_width(fb), rvvm_fb_height(fb), //
+                                            32, rvvm_fb_stride(fb), 0x3FF00000U, 0xFFC00U, 0x3FFU, 0);
+        case RVVM_RGB_XBGR2101010:
+            return SDL_CreateRGBSurfaceFrom(rvvm_fb_buffer(fb), rvvm_fb_width(fb), rvvm_fb_height(fb), //
+                                            32, rvvm_fb_stride(fb), 0x3FFU, 0xFFC00U, 0x3FF00000U, 0);
+    }
+#endif
+    return NULL;
 }
 
 static void sdl_window_draw(gui_window_t* win)
 {
-    sdl_window_t* sdl = win->win_data;
-    if (sdl && sdl->window && sdl->texture) {
-#if USE_SDL == 3
-        SDL_UpdateTexture(sdl->texture, NULL, win->fb.buffer, framebuffer_stride(&win->fb));
+    sdl_window_t*    sdl = gui_backend_get_data(win);
+    const rvvm_fb_t* fb  = gui_backend_get_scanout(win);
+    if (sdl->window && rvvm_fb_buffer(fb)) {
+        // Resize window if needed
+        if (!rvvm_fb_same_res(fb, &sdl->fb)) {
+#if USE_SDL >= 2
+            SDL_SetWindowSize(sdl->window, rvvm_fb_width(fb), rvvm_fb_height(fb));
+#else
+            SDL_Surface* new_win = SDL_SetVideoMode(rvvm_fb_width(fb), rvvm_fb_height(fb), //
+                                                    0, SDL_SWSURFACE | SDL_ANYFORMAT);
+            if (new_win) {
+                sdl->window = new_win;
+            }
+#endif
+        }
+        // Recreate texture if needed
+#if USE_SDL >= 2
+        if (!rvvm_fb_same_layout(fb, &sdl->fb)) {
+            SDL_Texture* new_tex = sdl_create_texture(sdl, fb);
+            if (new_tex) {
+                if (sdl->texture) {
+                    SDL_DestroyTexture(sdl->texture);
+                }
+                sdl->texture = new_tex;
+            }
+        }
+#else
+        if (!rvvm_fb_same_layout(fb, &sdl->fb) || rvvm_fb_buffer(fb) != rvvm_fb_buffer(&sdl->fb)) {
+            SDL_Surface* new_tex = sdl_create_texture(sdl, fb);
+            if (new_tex) {
+                if (sdl->texture) {
+                    SDL_FreeSurface(sdl->texture);
+                }
+                sdl->texture = new_tex;
+            }
+        }
+#endif
+        // Render to window
+#if USE_SDL >= 2
+        SDL_UpdateTexture(sdl->texture, NULL, rvvm_fb_buffer(fb), rvvm_fb_stride(fb));
         SDL_RenderTexture(sdl->renderer, sdl->texture, NULL, NULL);
-        SDL_RenderPresent(sdl->renderer);
-#elif USE_SDL == 2
-        SDL_UpdateTexture(sdl->texture, NULL, win->fb.buffer, framebuffer_stride(&win->fb));
-        SDL_RenderCopy(sdl->renderer, sdl->texture, NULL, NULL);
         SDL_RenderPresent(sdl->renderer);
 #else
         SDL_BlitSurface(sdl->texture, NULL, sdl->window, NULL);
         SDL_Flip(sdl->window);
 #endif
+        sdl->fb = *fb;
     }
 }
 
@@ -724,9 +811,21 @@ static void sdl_window_poll(gui_window_t* win)
     }
 }
 
+static void sdl_window_set_title(gui_window_t* win, const char* title)
+{
+    sdl_window_t* sdl = gui_backend_get_data(win);
+    if (sdl->window) {
+#if USE_SDL >= 2
+        SDL_SetWindowTitle(sdl->window, title);
+#else
+        SDL_WM_SetCaption(title, NULL);
+#endif
+    }
+}
+
 static void sdl_window_grab_input(gui_window_t* win, bool grab)
 {
-    sdl_window_t* sdl = win->win_data;
+    sdl_window_t* sdl = gui_backend_get_data(win);
     if (sdl->grab != grab && sdl->window) {
         sdl->grab = grab;
 #if USE_SDL == 3
@@ -742,49 +841,7 @@ static void sdl_window_grab_input(gui_window_t* win, bool grab)
     }
 }
 
-static void sdl_window_set_title(gui_window_t* win, const char* title)
-{
-    sdl_window_t* sdl = win->win_data;
-    if (sdl->window) {
-#if USE_SDL >= 2
-        SDL_SetWindowTitle(sdl->window, title);
-#else
-        SDL_WM_SetCaption(title, NULL);
-#endif
-    }
-}
-
-static void sdl_window_remove(gui_window_t* win)
-{
-    sdl_window_t* sdl = win->win_data;
-    if (sdl) {
-        // Free texture
-        sdl_set_scanout(win, NULL);
-        // Free framebuffer VMA
-        vma_free(win->fb.buffer, framebuffer_size(&win->fb));
-        // Free renderer/window context
-#if USE_SDL >= 2
-        if (sdl->renderer) {
-            SDL_DestroyRenderer(sdl->renderer);
-        }
-        if (sdl->window) {
-            SDL_DestroyWindow(sdl->window);
-        }
-#else
-        if (sdl->window) {
-            SDL_FreeSurface(sdl->window);
-        }
-#endif
-        vector_foreach_back (sdl_windows, i) {
-            if (vector_at(sdl_windows, i) == win) {
-                vector_erase(sdl_windows, i);
-                break;
-            }
-        }
-        free(sdl);
-        win->win_data = NULL;
-    }
-}
+#if !defined(USE_FULL_LINKING)
 
 #define SDL_DLIB_RESOLVE(lib, sym)                                                                                     \
     do {                                                                                                               \
@@ -792,10 +849,10 @@ static void sdl_window_remove(gui_window_t* win)
         libsdl_avail = libsdl_avail && !!sym;                                                                          \
     } while (0)
 
-static bool sdl_init(void)
+static bool sdl_init_libs(void)
 {
     bool libsdl_avail = true;
-#if !defined(USE_FULL_LINKING)
+
     dlib_ctx_t* libsdl = dlib_open(SDL_LIB_NAME, DLIB_NAME_PROBE);
 
 #if USE_SDL >= 2
@@ -820,15 +877,11 @@ static bool sdl_init(void)
     SDL_DLIB_RESOLVE(libsdl, SDL_SetWindowMouseGrab);
     SDL_DLIB_RESOLVE(libsdl, SDL_SetWindowKeyboardGrab);
     SDL_DLIB_RESOLVE(libsdl, SDL_SetWindowRelativeMouseMode);
-#endif
-
-#if USE_SDL == 2
+#elif USE_SDL == 2
     SDL_DLIB_RESOLVE(libsdl, SDL_RenderCopy);
     SDL_DLIB_RESOLVE(libsdl, SDL_SetWindowGrab);
     SDL_DLIB_RESOLVE(libsdl, SDL_SetRelativeMouseMode);
-#endif
-
-#if USE_SDL == 1
+#elif USE_SDL == 1
     SDL_DLIB_RESOLVE(libsdl, SDL_SetVideoMode);
     SDL_DLIB_RESOLVE(libsdl, SDL_CreateRGBSurfaceFrom);
     SDL_DLIB_RESOLVE(libsdl, SDL_UpperBlit);
@@ -839,16 +892,33 @@ static bool sdl_init(void)
 #endif
 
     SDL_DLIB_RESOLVE(libsdl, SDL_Init);
-    SDL_DLIB_RESOLVE(libsdl, SDL_ShowCursor);
     SDL_DLIB_RESOLVE(libsdl, SDL_PollEvent);
+    SDL_DLIB_RESOLVE(libsdl, SDL_QuitSubSystem);
+    SDL_DLIB_RESOLVE(libsdl, SDL_ShowCursor);
 
     dlib_close(libsdl);
+    return libsdl_avail;
+}
+
 #endif
 
-    if (!libsdl_avail) {
-        rvvm_error("Failed to load lib" SDL_LIB_NAME ", check your installation");
-        return false;
-    }
+static const gui_backend_cb_t sdl_window_cb = {
+    .remove     = sdl_window_remove,
+    .draw       = sdl_window_draw,
+    .poll       = sdl_window_poll,
+    .set_title  = sdl_window_set_title,
+    .grab_input = sdl_window_grab_input,
+};
+
+bool sdl_window_init(gui_window_t* win)
+{
+    static bool sdl_avail = false;
+
+    // Register SDL backend
+    sdl_window_t* sdl = safe_new_obj(sdl_window_t);
+
+    gui_backend_register(win, &sdl_window_cb);
+    gui_backend_set_data(win, sdl);
 
 #if defined(HOST_TARGET_LINUX)
     // Force X11 over Wayland
@@ -858,73 +928,71 @@ static bool sdl_init(void)
     setenv("SDL_VIDEO_DRIVER", "x11,wayland,kmsdrm,directfb,fbcon", true);
 #endif
 
-#if USE_SDL == 3
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
-#else
-    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-#endif
-        rvvm_error("Failed to initialize " SDL_LIB_NAME);
-        return false;
+#if !defined(USE_FULL_LINKING)
+    DO_ONCE_SCOPED {
+        // Load libSDL
+        sdl_avail = sdl_init_libs();
+        if (!sdl_avail) {
+            rvvm_error("Failed to load lib" SDL_LIB_NAME ", check your installation");
+        }
     }
-
-#if USE_SDL >= 2 && defined(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR)
-    if (rvvm_strcmp(SDL_GetCurrentVideoDriver(), "x11")) {
-        // Prevent messing with the compositor
-        SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");
-        // Force software rendering, because it's actually faster in our case,
-        // and because Nvidia driver isn't compatible with isolation (See #178)
-        SDL_SetHint(SDL_HINT_FRAMEBUFFER_ACCELERATION, "0");
-        SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
-    }
-#endif
-
-#if USE_SDL >= 2 && defined(SDL_HINT_GRAB_KEYBOARD)
-    SDL_SetHint(SDL_HINT_GRAB_KEYBOARD, "1");
-#endif
-
-    return true;
-}
-
-bool sdl_window_init(gui_window_t* win)
-{
-    static bool sdl_avail = false;
-    DO_ONCE(sdl_avail = sdl_init());
     if (!sdl_avail) {
         return false;
     }
+#endif
 
+    // Perform SDL Video subsystem init if needed
+    if (!vector_size(sdl_windows)) {
+        if (SDL_Init(SDL_INIT_VIDEO) != SDL_INIT_SUCCESS) {
+            rvvm_error("Failed to initialize " SDL_LIB_NAME);
+            return false;
+        }
+        // Set SDL hints
+#if USE_SDL >= 2 && defined(SDL_HINT_GRAB_KEYBOARD)
+        SDL_SetHint(SDL_HINT_GRAB_KEYBOARD, "1");
+#endif
+#if USE_SDL >= 2 && defined(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR)
+        if (rvvm_strcmp(SDL_GetCurrentVideoDriver(), "x11")) {
+            // Prevent messing with the compositor
+            SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");
+#if defined(SDL_HINT_FRAMEBUFFER_ACCELERATION) && defined(SDL_HINT_RENDER_DRIVER)
+            // Force software rendering, because it's actually faster in our case,
+            // and because Nvidia driver isn't compatible with isolation (See #178)
+            SDL_SetHint(SDL_HINT_FRAMEBUFFER_ACCELERATION, "0");
+            SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
+#endif
+        }
+#endif
 #if USE_SDL == 1
-    if (vector_size(sdl_windows)) {
+    } else {
         rvvm_error("SDL1 supports only a single window");
         return false;
-    }
 #endif
+    }
 
-    sdl_window_t* sdl = safe_new_obj(sdl_window_t);
-
-    win->win_data   = sdl;
-    win->draw       = sdl_window_draw;
-    win->poll       = sdl_window_poll;
-    win->remove     = sdl_window_remove;
-    win->set_title  = sdl_window_set_title;
-    win->grab_input = sdl_window_grab_input;
-
+    // Create SDL window
+    const rvvm_fb_t* fb = gui_backend_get_scanout(win);
 #if USE_SDL == 3
-    sdl->window = SDL_CreateWindow("", win->fb.width, win->fb.height, 0);
+    sdl->window = SDL_CreateWindow("", rvvm_fb_width(fb), rvvm_fb_height(fb), 0);
 #elif USE_SDL == 2
     sdl->window = SDL_CreateWindow("", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, //
-                                   win->fb.width, win->fb.height, SDL_WINDOW_SHOWN);
+                                   rvvm_fb_width(fb), rvvm_fb_height(fb), SDL_WINDOW_SHOWN);
+#else
+    sdl->window = SDL_SetVideoMode(rvvm_fb_width(fb), rvvm_fb_height(fb), 0, SDL_SWSURFACE | SDL_ANYFORMAT);
 #endif
-
-#if USE_SDL >= 2
     if (!sdl->window) {
-        rvvm_error("SDL_CreateWindow() failed!");
+        rvvm_error("Failed to create " SDL_LIB_NAME " Window");
         return false;
     }
+
+#if USE_SDL >= 2
+    // Obtain window ID for handling multi-window input events
     sdl->id = SDL_GetWindowID(sdl->window);
 #endif
 
+#if USE_SDL >= 2
 #if USE_SDL == 3
+    // Create SDL renderer
     sdl->renderer = SDL_CreateRenderer(sdl->window, NULL);
 #elif USE_SDL == 2
     sdl->renderer = SDL_CreateRenderer(sdl->window, -1, SDL_RENDERER_SOFTWARE);
@@ -932,27 +1000,25 @@ bool sdl_window_init(gui_window_t* win)
         sdl->renderer = SDL_CreateRenderer(sdl->window, -1, 0);
     }
 #endif
-
-#if USE_SDL >= 2
     if (!sdl->renderer) {
-        rvvm_error("SDL_CreateRenderer() failed!");
+        rvvm_error("Failed to create " SDL_LIB_NAME " Renderer");
         return false;
     }
 #endif
 
-    win->fb.buffer = vma_alloc(NULL, framebuffer_size(&win->fb), VMA_RDWR);
-    if (!win->fb.buffer) {
+    // Allocate VRAM (Probably better done in GUI middleware later)
+    size_t vram_size = gui_backend_get_vram_size(win);
+    void*  vram      = vma_alloc(NULL, vram_size, VMA_RDWR);
+    if (vram) {
+        gui_backend_set_vram(win, vram, vram_size);
+    } else {
         rvvm_error("vma_alloc() failed!");
-        return false;
-    }
-
-    if (!sdl_set_scanout(win, &win->fb)) {
-        rvvm_error("sdl_set_scanout() failed!");
         return false;
     }
 
     vector_push_back(sdl_windows, win);
 
+    // Hide cursor
 #if USE_SDL == 3
     SDL_HideCursor();
 #else
