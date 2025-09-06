@@ -169,7 +169,10 @@ typedef struct {
     struct zwp_keyboard_shortcuts_inhibitor_v1* kbd_inhibit;
 
     // Last scanout context
-    fb_ctx_t fb;
+    rvvm_fb_t fb;
+
+    // XDG Surface configured
+    bool xdg_configured;
 } wl_window_t;
 
 /*
@@ -664,12 +667,13 @@ static void xdg_surface_on_configure(void* data, struct xdg_surface* xdg_surface
         scoped_spin_lock (&wl_lock) {
             // I have no idea what this does... Makes surface opaque?
             struct wl_region* region = wl_compositor_create_region(wl_compositor);
-            wl_region_add(region, 0, 0, wl->fb.width, wl->fb.height);
+            wl_region_add(region, 0, 0, rvvm_fb_width(&wl->fb), rvvm_fb_height(&wl->fb));
             wl_surface_set_opaque_region(wl->surface, region);
             wl_surface_commit(wl->surface);
             wl_region_destroy(region);
             // Must be called, otherwise window isn't visible
             xdg_surface_ack_configure(xdg_surface, serial);
+            wl->xdg_configured = true;
         }
     }
 }
@@ -1032,15 +1036,29 @@ static void wayland_window_remove(gui_window_t* win)
     }
 }
 
-static int wayland_window_format(const fb_ctx_t* fb)
+static int32_t wayland_window_format(const rvvm_fb_t* fb)
 {
-    switch (fb->format) {
-        case RGB_FMT_A8R8G8B8:
-            return 1;
-        case RGB_FMT_A8B8G8R8:
-            return 0x30334258;
-        case RGB_FMT_R8G8B8:
-            return 0x34324752;
+    switch (rvvm_fb_format(fb)) {
+        case RVVM_RGB_XRGB1555: // NOTE: Doesn't actually work on KWin :c
+            return WL_SHM_FORMAT_XRGB1555;
+        case RVVM_RGB_RGB565: // NOTE: Doesn't actually work on KWin :c
+            return WL_SHM_FORMAT_RGB565;
+        case RVVM_RGB_RGB888:
+            return WL_SHM_FORMAT_RGB888;
+        case RVVM_RGB_XRGB8888:
+            return WL_SHM_FORMAT_XRGB8888;
+        case RVVM_RGB_BGR888:
+            return WL_SHM_FORMAT_BGR888;
+        case RVVM_RGB_XBGR8888: // NOTE: Doesn't actually work on KWin :c
+            return WL_SHM_FORMAT_XBGR8888;
+        case RVVM_RGB_BGRX8888: // NOTE: Doesn't actually work on KWin :c
+            return WL_SHM_FORMAT_BGRX8888;
+        case RVVM_RGB_RGBX8888: // NOTE: Doesn't actually work on KWin :c
+            return WL_SHM_FORMAT_RGBX8888;
+        case RVVM_RGB_XRGB2101010:
+            return WL_SHM_FORMAT_XRGB2101010;
+        case RVVM_RGB_XBGR2101010:
+            return WL_SHM_FORMAT_XBGR2101010;
     }
     return -1;
 }
@@ -1048,26 +1066,23 @@ static int wayland_window_format(const fb_ctx_t* fb)
 // Check and resize wl_surface / recreate wl_buffer
 static bool wayland_window_update_scanout(gui_window_t* win)
 {
-    wl_window_t*    wl = gui_backend_get_data(win);
-    const fb_ctx_t* fb = gui_backend_get_scanout(win);
-    if (fb) {
-        if (!framebuffer_same_res(fb, &wl->fb)) {
+    wl_window_t*     wl = gui_backend_get_data(win);
+    const rvvm_fb_t* fb = gui_backend_get_scanout(win);
+    if (rvvm_fb_buffer(fb)) {
+        if (!rvvm_fb_same_res(fb, &wl->fb)) {
             // Resize window
-            xdg_toplevel_set_min_size(wl->xdg_toplevel, fb->width, fb->height);
-            xdg_toplevel_set_max_size(wl->xdg_toplevel, fb->width, fb->height);
+            xdg_toplevel_set_min_size(wl->xdg_toplevel, rvvm_fb_width(fb), rvvm_fb_height(fb));
+            xdg_toplevel_set_max_size(wl->xdg_toplevel, rvvm_fb_width(fb), rvvm_fb_height(fb));
         }
-        if (!framebuffer_same_layout(fb, &wl->fb) || fb->buffer != wl->fb.buffer) {
+        if (!rvvm_fb_same_layout(fb, &wl->fb) || rvvm_fb_buffer(fb) != rvvm_fb_buffer(&wl->fb)) {
             // Recreate wl_buffer
-            size_t offset = 0;
-            int    format = wayland_window_format(fb);
-            if (fb->buffer) {
-                offset = ((size_t)fb->buffer) - ((size_t)gui_backend_get_vram(win));
-            }
+            size_t  offset = ((size_t)rvvm_fb_buffer(fb)) - ((size_t)gui_backend_get_vram(win));
+            int32_t format = wayland_window_format(fb);
             if (format < 0) {
                 return false;
             }
             struct wl_buffer* new_buffer = wl_shm_pool_create_buffer( //
-                wl->shm_pool, offset, fb->width, fb->height, framebuffer_stride(fb), format);
+                wl->shm_pool, offset, rvvm_fb_width(fb), rvvm_fb_height(fb), rvvm_fb_stride(fb), format);
             if (new_buffer) {
                 if (wl->buffer) {
                     wl_buffer_destroy(wl->buffer);
@@ -1088,7 +1103,7 @@ static void wayland_window_draw(gui_window_t* win)
     scoped_spin_lock (&wl_lock) {
         wl_window_t* wl = gui_backend_get_data(win);
         wayland_window_update_scanout(win);
-        if (wl->surface && wl->buffer) {
+        if (wl->surface && wl->buffer && wl->xdg_configured) {
             wl_surface_attach(wl->surface, wl->buffer, 0, 0);
             wl_surface_damage_buffer(wl->surface, 0, 0, wl->fb.width, wl->fb.height);
             wl_surface_commit(wl->surface);
@@ -1227,7 +1242,7 @@ bool wayland_window_init(gui_window_t* win)
 
     // Update window size & buffer
     if (!wayland_window_update_scanout(win)) {
-        rvvm_info("Incompatible scanout pixel format for Wayland");
+        rvvm_info("Incompatible pixel format for Wayland");
         return false;
     }
 
