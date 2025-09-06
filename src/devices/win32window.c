@@ -37,7 +37,7 @@ typedef struct {
     HDC hdc;
 
     // Last scanout context
-    fb_ctx_t fb;
+    rvvm_fb_t fb;
 
     // Input grab flag
     bool grab;
@@ -213,30 +213,85 @@ static void win32_window_remove(gui_window_t* win)
     }
 }
 
+// NOTE: Must be called with reserved space in bmi->bmiColors
+// NOTE: Windows seems to not accept BI_BITFIELDS for 24bpp, which makes BGR888 support a no-go
+static bool win32_handle_formats(BITMAPINFO* bmi, const rvvm_fb_t* fb)
+{
+    DWORD* mask = (DWORD*)&bmi->bmiColors;
+    switch (rvvm_fb_format(fb)) {
+        case RVVM_RGB_XRGB1555:
+            mask[0] = 0x7C00;
+            mask[1] = 0x03E0;
+            mask[2] = 0x001F;
+            return true;
+        case RVVM_RGB_RGB565:
+            mask[0] = 0xF800;
+            mask[1] = 0x07E0;
+            mask[2] = 0x001F;
+            return true;
+        case RVVM_RGB_XBGR8888:
+            mask[0] = 0x000000FFU;
+            mask[1] = 0x0000FF00U;
+            mask[2] = 0x00FF0000U;
+            return true;
+        case RVVM_RGB_BGRX8888:
+            mask[0] = 0x0000FF00U;
+            mask[1] = 0x00FF0000U;
+            mask[2] = 0xFF000000U;
+            return true;
+        case RVVM_RGB_RGBX8888:
+            mask[0] = 0xFF000000U;
+            mask[1] = 0x00FF0000U;
+            mask[2] = 0x0000FF00U;
+            return true;
+        case RVVM_RGB_XRGB2101010:
+            mask[0] = 0x3FF00000U;
+            mask[1] = 0x000FFC00U;
+            mask[2] = 0x000003FFU;
+            return true;
+        case RVVM_RGB_XBGR2101010:
+            mask[0] = 0x000003FFU;
+            mask[1] = 0x000FFC00U;
+            mask[2] = 0x3FF00000U;
+            return true;
+    }
+    return false;
+}
+
 static void win32_window_draw(gui_window_t* win)
 {
-    win32_window_t* win32 = gui_backend_get_data(win);
-    const fb_ctx_t* fb    = gui_backend_get_scanout(win);
-    if (fb && fb->buffer) {
-        BITMAPINFO bmi = {
-            .bmiHeader = {
-                .biSize = sizeof(BITMAPINFOHEADER),
-                .biWidth = framebuffer_stride(fb) / rgb_format_bytes(fb->format),
-                .biHeight = -fb->height,
-                .biPlanes = 1,
-                .biBitCount = rgb_format_bpp(fb->format),
-            },
-        };
-        if (win32->fb.width != fb->width || win32->fb.height != fb->height) {
-            // Resize window
+    win32_window_t*  win32 = gui_backend_get_data(win);
+    const rvvm_fb_t* fb    = gui_backend_get_scanout(win);
+    if (rvvm_fb_buffer(fb)) {
+        uint8_t buf[sizeof(BITMAPINFOHEADER) + (sizeof(DWORD) * 3)] = ZERO_INIT;
+
+        // Bitmap info structure
+        BITMAPINFO* bmi = (BITMAPINFO*)buf;
+
+        // Initialize bitmap info
+        bmi->bmiHeader.biSize     = sizeof(BITMAPINFOHEADER);
+        bmi->bmiHeader.biWidth    = rvvm_fb_stride(fb) / rvvm_fb_rgb_bytes(fb);
+        bmi->bmiHeader.biHeight   = -rvvm_fb_height(fb);
+        bmi->bmiHeader.biPlanes   = 1;
+        bmi->bmiHeader.biBitCount = rvvm_fb_rgb_bpp(fb);
+
+        // Handle special framebuffer formats
+        if (win32_handle_formats(bmi, fb)) {
+            bmi->bmiHeader.biCompression = BI_BITFIELDS;
+        }
+
+        // Resize window if needed
+        if (!rvvm_fb_same_res(fb, &win32->fb)) {
             uint32_t flags  = SWP_DRAWFRAME | SWP_NOMOVE | SWP_NOZORDER | SWP_SHOWWINDOW;
-            uint32_t width  = fb->width;
-            uint32_t height = fb->height;
+            uint32_t width  = rvvm_fb_width(fb);
+            uint32_t height = rvvm_fb_height(fb);
             win32_adjust_client_rect(&width, &height);
             SetWindowPos(win32->hwnd, NULL, 0, 0, width, height, flags);
         }
-        SetDIBitsToDevice(win32->hdc, 0, 0, fb->width, fb->height, 0, 0, 0, //
-                          fb->height, fb->buffer, &bmi, DIB_RGB_COLORS);
+
+        // Draw framebuffer
+        SetDIBitsToDevice(win32->hdc, 0, 0, rvvm_fb_width(fb), rvvm_fb_height(fb), 0, 0, 0, //
+                          rvvm_fb_height(fb), rvvm_fb_buffer(fb), bmi, DIB_RGB_COLORS);
         win32->fb = *fb;
     }
 }
@@ -250,11 +305,11 @@ static void win32_window_poll(gui_window_t* win)
         switch (Msg.message) {
             case WM_MOUSEMOVE:
                 if (win32->grab) {
-                    const fb_ctx_t* fb = gui_backend_get_scanout(win);
+                    const rvvm_fb_t* fb = gui_backend_get_scanout(win);
                     if (fb) {
                         POINTS cur = MAKEPOINTS(Msg.lParam);
-                        int    dx  = (cur.x - (fb->width >> 1));
-                        int    dy  = (cur.y - (fb->height >> 1));
+                        int    dx  = (cur.x - (rvvm_fb_width(fb) >> 1));
+                        int    dy  = (cur.y - (rvvm_fb_height(fb) >> 1));
                         gui_backend_on_mouse_move(win, dx - (dx / 3), dy - (dy / 3));
                     }
                 } else {
@@ -308,11 +363,11 @@ static void win32_window_poll(gui_window_t* win)
         }
     }
     if (win32->grab) {
-        const fb_ctx_t* fb = gui_backend_get_scanout(win);
+        const rvvm_fb_t* fb = gui_backend_get_scanout(win);
         if (fb) {
             POINT mid = {
-                .x = fb->width >> 1,
-                .y = fb->height >> 1,
+                .x = rvvm_fb_width(fb) >> 1,
+                .y = rvvm_fb_height(fb) >> 1,
             };
             ClientToScreen(win32->hwnd, &mid);
             SetCursorPos(mid.x, mid.y);
@@ -379,11 +434,11 @@ bool win32_window_init(gui_window_t* win)
     }
 
     // Get initial window size
-    const fb_ctx_t* fb = gui_backend_get_scanout(win);
+    const rvvm_fb_t* fb = gui_backend_get_scanout(win);
 
     // Adjust window rectangle
-    uint32_t width  = fb->width;
-    uint32_t height = fb->height;
+    uint32_t width  = rvvm_fb_width(fb);
+    uint32_t height = rvvm_fb_height(fb);
     win32_adjust_client_rect(&width, &height);
 
     // Create window
