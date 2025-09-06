@@ -382,8 +382,8 @@ bool win32_window_init(gui_window_t* win)
     const fb_ctx_t* fb = gui_backend_get_scanout(win);
 
     // Adjust window rectangle
-    uint32_t width  = fb ? fb->width : 640;
-    uint32_t height = fb ? fb->height : 480;
+    uint32_t width  = fb->width;
+    uint32_t height = fb->height;
     win32_adjust_client_rect(&width, &height);
 
     // Create window
