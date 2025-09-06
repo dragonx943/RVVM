@@ -9,15 +9,11 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
 // Must be included before system headers
+#include "devices/framebuffer.h"
 #include "feature_test.h"
 
-#include "dlib.h"
+#include "compiler.h"
 #include "gui_window.h"
-#include "spinlock.h"
-#include "threading.h"
-#include "utils.h"
-#include "vector.h"
-#include "vma_ops.h"
 
 PUSH_OPTIMIZATION_SIZE
 
@@ -36,6 +32,13 @@ PUSH_OPTIMIZATION_SIZE
 #endif
 
 #if defined(USE_WAYLAND)
+
+#include "dlib.h"
+#include "spinlock.h"
+#include "threading.h"
+#include "utils.h"
+#include "vector.h"
+#include "vma_ops.h"
 
 #include <sys/mman.h>
 #include <sys/select.h>
@@ -1002,7 +1005,9 @@ static void wayland_window_remove(gui_window_t* win)
             wl_shm_pool_destroy(wl->shm_pool);
         }
         // Unmap VRAM region
-        vma_free(gui_backend_get_vram(win), gui_backend_get_vram_size(win));
+        if (gui_backend_get_vram(win)) {
+            munmap(gui_backend_get_vram(win), gui_backend_get_vram_size(win));
+        }
         // Clean up Wayland objects
         if (wl->xdg_decoration) {
             zxdg_toplevel_decoration_v1_destroy(wl->xdg_decoration);
@@ -1046,14 +1051,12 @@ static bool wayland_window_update_scanout(gui_window_t* win)
     wl_window_t*    wl = gui_backend_get_data(win);
     const fb_ctx_t* fb = gui_backend_get_scanout(win);
     if (fb) {
-        bool resize = wl->fb.width != fb->width || wl->fb.height != fb->height;
-        bool newbuf = wl->fb.buffer != fb->buffer || wl->fb.format != fb->format;
-        if (resize) {
+        if (!framebuffer_same_res(fb, &wl->fb)) {
             // Resize window
             xdg_toplevel_set_min_size(wl->xdg_toplevel, fb->width, fb->height);
             xdg_toplevel_set_max_size(wl->xdg_toplevel, fb->width, fb->height);
         }
-        if (resize || newbuf) {
+        if (!framebuffer_same_layout(fb, &wl->fb) || fb->buffer != wl->fb.buffer) {
             // Recreate wl_buffer
             size_t offset = 0;
             int    format = wayland_window_format(fb);
@@ -1224,7 +1227,7 @@ bool wayland_window_init(gui_window_t* win)
 
     // Update window size & buffer
     if (!wayland_window_update_scanout(win)) {
-        rvvm_error("Failed to create wl_buffer");
+        rvvm_info("Incompatible scanout pixel format for Wayland");
         return false;
     }
 
