@@ -91,6 +91,19 @@ static inline size_t framebuffer_size(const fb_ctx_t* fb)
     return 0;
 }
 
+//! Check whether resolution of two framebuffers matches
+static inline bool framebuffer_same_res(const fb_ctx_t* a, const fb_ctx_t* b)
+{
+    return a && b && a->width == b->width && a->height == b->height;
+}
+
+//! Check whether memory layout of two framebuffers matches
+static inline bool framebuffer_same_layout(const fb_ctx_t* a, const fb_ctx_t* b)
+{
+    return framebuffer_same_res(a, b) && a->format == b->format //
+        && framebuffer_stride(a) == framebuffer_stride(b);
+}
+
 /*
  * Simple-framebuffer device
  */
