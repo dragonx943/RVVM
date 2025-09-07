@@ -158,9 +158,6 @@ static const hid_key_t haiku_key_to_hid_byte_map[] = {
     // clang-format on
 };
 
-// Window counter for global init/deinit
-static uint32_t haiku_windows = 0;
-
 static hid_key_t haiku_key_to_hid(uint32_t haiku_key)
 {
     if (haiku_key < sizeof(haiku_key_to_hid_byte_map)) {
@@ -179,7 +176,7 @@ public:
 
     virtual ~HaikuGUIView(void) {}
 
-    void AttachedToWindow() override;
+    void AttachedToWindow(void) override;
     void Draw(BRect dirty) override;
     void MessageReceived(BMessage* msg) override;
     void WindowActivated(bool active) override;
@@ -220,6 +217,15 @@ public:
     {
         return m_area;
     }
+};
+
+class HaikuGUIApp : public BApplication {
+public:
+    HaikuGUIApp(const char* signature) : BApplication(signature) {}
+
+    virtual ~HaikuGUIApp(void) {}
+
+    thread_id Run(void) override;
 };
 
 HaikuGUIView::HaikuGUIView(BRect frame, gui_window_t* win)
@@ -328,7 +334,7 @@ BBitmap* HaikuGUIWindow::CreateBitmapFromScanout(const rvvm_fb_t* fb)
                 fb_fmt = B_RGB32;
                 break;
             default:
-                // TODO: Support more pixel formats
+                // TODO: Support more pixel formats (XBGR; 10-bit color depth)
                 return NULL;
         }
         return new BBitmap(m_area, fb_off, fb_rect, 0, fb_fmt, rvvm_fb_stride(fb));
@@ -342,7 +348,7 @@ BBitmap* HaikuGUIWindow::PrepareScanoutBitmap(void)
 
     // Resize window if needed
     if (!rvvm_fb_same_res(fb, &m_fb)) {
-        ResizeTo(rvvm_fb_width(fb), rvvm_fb_height(fb));
+        ResizeTo(rvvm_fb_width(fb) - 1, rvvm_fb_height(fb) - 1);
     }
 
     // Recreate bitmap if needed
@@ -357,16 +363,29 @@ BBitmap* HaikuGUIWindow::PrepareScanoutBitmap(void)
     return m_bitmap.Get();
 }
 
+// Override BApplication::Run() to run a background BLooper thread instead of blocking
+thread_id HaikuGUIApp::Run(void)
+{
+    return BLooper::Run();
+}
+
+// BApplication handle
+static HaikuGUIApp* haiku_app = NULL;
+
+// Window counter
+static uint32_t haiku_windows = 0;
+
 static bool haiku_global_init(void)
 {
     if (atomic_add_uint32(&haiku_windows, 1) == 0) {
-        // This seems to run totally fine without manually creating a thread
-        new BApplication("application/x-vnd.RVVM");
-        if (!be_app) {
+        haiku_app = new HaikuGUIApp("application/x-vnd.RVVM");
+        if (!haiku_app) {
             rvvm_error("Failed to create BApplication");
             return false;
         }
-        be_app->Unlock();
+        // Run a BLooper event thread
+        haiku_app->Lock();
+        haiku_app->Run();
     }
     return true;
 }
@@ -374,10 +393,11 @@ static bool haiku_global_init(void)
 static bool haiku_global_deinit(void)
 {
     if (atomic_sub_uint32(&haiku_windows, 1) == 1) {
-        be_app->Lock();
-        // BApplication::Quit() also deletes BApplication
-        be_app->Quit();
-        be_app = NULL;
+        if (haiku_app) {
+            // BApplication::Quit() also deletes BApplication
+            haiku_app->Quit();
+            haiku_app = NULL;
+        }
     }
     return true;
 }
