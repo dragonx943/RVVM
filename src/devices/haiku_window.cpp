@@ -333,8 +333,14 @@ BBitmap* HaikuGUIWindow::CreateBitmapFromScanout(const rvvm_fb_t* fb)
             case RVVM_RGB_XRGB8888:
                 fb_fmt = B_RGB32;
                 break;
+            case RVVM_RGB_BGR888:
+                fb_fmt = B_RGB24_BIG;
+                break;
+            case RVVM_RGB_BGRX8888:
+                fb_fmt = B_RGB32_BIG;
+                break;
             default:
-                // TODO: Support more pixel formats (XBGR; 10-bit color depth)
+                // TODO: XBGR8888, RGBX8888, XRGB2101010, XBGR2101010 pixel formats?
                 return NULL;
         }
         return new BBitmap(m_area, fb_off, fb_rect, 0, fb_fmt, rvvm_fb_stride(fb));
@@ -369,37 +375,22 @@ thread_id HaikuGUIApp::Run(void)
     return BLooper::Run();
 }
 
-// BApplication handle
-static HaikuGUIApp* haiku_app = NULL;
-
-// Window counter
-static uint32_t haiku_windows = 0;
-
 static bool haiku_global_init(void)
 {
-    if (atomic_add_uint32(&haiku_windows, 1) == 0) {
-        haiku_app = new HaikuGUIApp("application/x-vnd.RVVM");
-        if (!haiku_app) {
+    DO_ONCE_SCOPED {
+        if (!be_app) {
+            be_app = new HaikuGUIApp("application/x-vnd.RVVM");
+        }
+        if (be_app) {
+            // Run a BLooper event thread
+            // NOTE: Do not quit it, it's part of Be toolkit anyways
+            be_app->Lock();
+            be_app->Run();
+        } else {
             rvvm_error("Failed to create BApplication");
-            return false;
-        }
-        // Run a BLooper event thread
-        haiku_app->Lock();
-        haiku_app->Run();
-    }
-    return true;
-}
-
-static bool haiku_global_deinit(void)
-{
-    if (atomic_sub_uint32(&haiku_windows, 1) == 1) {
-        if (haiku_app) {
-            // BApplication::Quit() also deletes BApplication
-            haiku_app->Quit();
-            haiku_app = NULL;
         }
     }
-    return true;
+    return !!be_app;
 }
 
 static void haiku_window_remove(gui_window_t* win)
@@ -414,7 +405,6 @@ static void haiku_window_remove(gui_window_t* win)
         delete_area(area);
     }
     gui_backend_set_data(win, NULL);
-    haiku_global_deinit();
 }
 
 static void haiku_window_draw(gui_window_t* win)
