@@ -1,5 +1,5 @@
 /*
-haiku_window.cpp - Haiku RVVM Window
+haiku_window.cpp - Haiku GUI Window
 Copyright (C) 2022  X547 <github.com/X547>
                     LekKit <github.com/LekKit>
 
@@ -8,25 +8,38 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
+#include "feature_test.h"
+
 extern "C" {
+#include "compiler.h"
 #include "gui_window.h"
+}
+
+PUSH_OPTIMIZATION_SIZE
+
+#if defined(HOST_TARGET_HAIKU)
+
+extern "C" {
 #include "utils.h"
 }
 
 #include <Application.h>
-#include <Window.h>
-#include <View.h>
 #include <Bitmap.h>
 #include <Cursor.h>
 #include <OS.h>
+#include <View.h>
+#include <Window.h>
 #include <private/shared/AutoDeleter.h>
 
-// C++ doesn't allow designated initializers like in win32window... Ugh
-// Luckily, Haiku has contiguous & small keycodes for a trivial array initializer
-
-// Don't ever touch this table, or The Order will not take kindly.
-// Otherwise be prepared to suffer the Consequences...
+/*
+ * C++ doesn't allow designated initializers like in win32window... Ugh
+ * Luckily, Haiku has contiguous & small keycodes for a trivial array initializer
+ *
+ * Don't ever touch this table, or The Order will not take kindly.
+ * Otherwise be prepared to suffer the Consequences...
+ */
 static const hid_key_t haiku_key_to_hid_byte_map[] = {
+    // clang-format off
     HID_KEY_NONE,
     HID_KEY_ESC,
     HID_KEY_F1,
@@ -142,210 +155,310 @@ static const hid_key_t haiku_key_to_hid_byte_map[] = {
     HID_KEY_KPCOMMA,
     // 0xf0 hangul?
     // 0xf1 hanja?
+    // clang-format on
 };
+
+// Window counter for global init/deinit
+static uint32_t haiku_windows = 0;
 
 static hid_key_t haiku_key_to_hid(uint32_t haiku_key)
 {
     if (haiku_key < sizeof(haiku_key_to_hid_byte_map)) {
         return haiku_key_to_hid_byte_map[haiku_key];
     }
+    rvvm_warn("Unmapped Haiku keycode %x", haiku_key);
     return HID_KEY_NONE;
 }
 
-class View: public BView {
+class HaikuGUIView : public BView {
 private:
-    ObjectDeleter<BBitmap> m_bitmap;
     gui_window_t* m_win;
 
 public:
-    View(BRect frame, const char* name, uint32 resizingMode, uint32 flags, gui_window_t* win);
-    virtual ~View() {}
+    HaikuGUIView(BRect frame, gui_window_t* win);
+
+    virtual ~HaikuGUIView(void) {}
 
     void AttachedToWindow() override;
     void Draw(BRect dirty) override;
     void MessageReceived(BMessage* msg) override;
     void WindowActivated(bool active) override;
-
-    BBitmap* GetBitmap() {
-        return m_bitmap.Get();
-    }
 };
 
-class Window: public BWindow {
+class HaikuGUIWindow : public BWindow {
 private:
-    View* m_view;
     gui_window_t* m_win;
+    HaikuGUIView* m_view;
+
+    // Bitmap data area (VRAM)
+    area_id m_area;
+    void*   m_addr;
+
+    // Current scanout bitmap handle
+    ObjectDeleter<BBitmap> m_bitmap;
+
+    // Last scanout context
+    rvvm_fb_t m_fb;
 
 public:
-    Window(BRect frame, const char *title, gui_window_t* win);
-    virtual ~Window() {}
+    HaikuGUIWindow(BRect frame, const char* title, gui_window_t* win, area_id area, void* addr);
 
-    bool QuitRequested() override;
+    virtual ~HaikuGUIWindow(void) {}
 
-    View* GetView() {
+    bool QuitRequested(void) override;
+
+    BBitmap* CreateBitmapFromScanout(const rvvm_fb_t* fb);
+
+    BBitmap* PrepareScanoutBitmap(void);
+
+    HaikuGUIView* GetView(void)
+    {
         return m_view;
+    }
+
+    area_id GetArea(void)
+    {
+        return m_area;
     }
 };
 
-View::View(BRect frame, const char* name, uint32 resizingMode, uint32 flags, gui_window_t* win):
-    BView(frame, name, resizingMode, flags | B_WILL_DRAW),
-    m_win(win)
+HaikuGUIView::HaikuGUIView(BRect frame, gui_window_t* win)
+    : BView(frame, NULL, B_FOLLOW_ALL_SIDES, B_WILL_DRAW), m_win(win)
 {
     SetViewColor(B_TRANSPARENT_COLOR);
     SetLowColor(0, 0, 0);
-    m_bitmap.SetTo(new BBitmap(frame.OffsetToCopy(B_ORIGIN), B_RGBA32));
 }
 
-void View::AttachedToWindow()
+void HaikuGUIView::AttachedToWindow(void)
 {
     BCursor cursor(B_CURSOR_ID_NO_CURSOR);
     SetViewCursor(&cursor);
 }
 
-void View::Draw(BRect dirty)
+void HaikuGUIView::Draw(BRect dirty)
 {
+    HaikuGUIWindow* hwin   = (HaikuGUIWindow*)gui_backend_get_data(m_win);
+    BBitmap*        bitmap = hwin->PrepareScanoutBitmap();
     UNUSED(dirty);
-    DrawBitmap(GetBitmap());
+    if (bitmap) {
+        DrawBitmap(bitmap);
+    }
 }
 
-void View::MessageReceived(BMessage* msg)
+void HaikuGUIView::MessageReceived(BMessage* msg)
 {
-    int32 key;
-    BPoint point;
-    int32 btns;
-    float wheel;
+    int32  key   = 0;
+    int32  btns  = 0;
+    BPoint point = {};
+    float  wheel = 0.f;
+
     switch (msg->what) {
         case B_KEY_DOWN:
         case B_UNMAPPED_KEY_DOWN:
-            msg->FindInt32("be:key_repeat", &key);
-            if (key == 0) {
-                // Ignore key repeat events
-                msg->FindInt32("key", &key);
-                m_win->on_key_press(m_win, haiku_key_to_hid(key));
-            }
+            msg->FindInt32("key", &key);
+            gui_backend_on_key_press(m_win, haiku_key_to_hid(key));
             return;
         case B_KEY_UP:
         case B_UNMAPPED_KEY_UP:
             msg->FindInt32("key", &key);
-            m_win->on_key_release(m_win, haiku_key_to_hid(key));
+            gui_backend_on_key_release(m_win, haiku_key_to_hid(key));
             return;
         case B_MOUSE_DOWN:
             SetMouseEventMask(B_POINTER_EVENTS);
             msg->FindInt32("buttons", &btns);
-            m_win->on_mouse_press(m_win, btns);
+            gui_backend_on_mouse_press(m_win, btns);
             return;
         case B_MOUSE_UP:
             msg->FindInt32("buttons", &btns);
-            m_win->on_mouse_release(m_win, ~btns);
+            gui_backend_on_mouse_release(m_win, ~btns);
             return;
         case B_MOUSE_MOVED:
             msg->FindPoint("where", &point);
-            m_win->on_mouse_place(m_win, point.x, point.y);
+            gui_backend_on_mouse_place(m_win, point.x, point.y);
             return;
         case B_MOUSE_WHEEL_CHANGED:
             msg->FindFloat("be:wheel_delta_y", &wheel);
-            m_win->on_mouse_scroll(m_win, (int32_t)wheel);
+            gui_backend_on_mouse_scroll(m_win, (int32_t)wheel);
             return;
     }
-    return BView::MessageReceived(msg);
+
+    BView::MessageReceived(msg);
 }
 
-void View::WindowActivated(bool active)
+void HaikuGUIView::WindowActivated(bool active)
 {
     if (!active) {
-        m_win->on_focus_lost(m_win);
+        gui_backend_on_focus_lost(m_win);
     }
 }
 
-Window::Window(BRect frame, const char* title, gui_window_t* win):
-    BWindow(frame, title, B_TITLED_WINDOW_LOOK, B_NORMAL_WINDOW_FEEL, B_NOT_ZOOMABLE | B_NOT_RESIZABLE),
-    m_win(win)
+HaikuGUIWindow::HaikuGUIWindow(BRect frame, const char* title, gui_window_t* win, area_id area, void* addr)
+    : BWindow(frame, title, B_TITLED_WINDOW_LOOK, B_NORMAL_WINDOW_FEEL, B_NOT_ZOOMABLE | B_NOT_RESIZABLE), //
+      m_win(win), m_area(area), m_addr(addr)
 {
-    m_view = new View(frame.OffsetToCopy(B_ORIGIN), "view", B_FOLLOW_ALL, 0, win);
+    gui_backend_set_data(win, this);
+    m_view = new HaikuGUIView(frame.OffsetToCopy(B_ORIGIN), win);
     AddChild(m_view);
     m_view->MakeFocus();
 }
 
-bool Window::QuitRequested()
+bool HaikuGUIWindow::QuitRequested(void)
 {
-    m_win->on_close(m_win);
+    gui_backend_on_close(m_win);
     return false;
 }
 
-static thread_id sAppThread = B_ERROR;
-
-static status_t app_thread(void *arg)
+BBitmap* HaikuGUIWindow::CreateBitmapFromScanout(const rvvm_fb_t* fb)
 {
-    UNUSED(arg);
-    be_app->Lock();
-    be_app->Run();
-    return B_OK;
+    if (rvvm_fb_buffer(fb)) {
+        BRect       fb_rect(0, 0, rvvm_fb_width(fb) - 1, rvvm_fb_height(fb) - 1);
+        size_t      fb_off = ((size_t)rvvm_fb_buffer(fb)) - ((size_t)m_addr);
+        color_space fb_fmt = B_RGB32;
+        switch (rvvm_fb_format(fb)) {
+            case RVVM_RGB_XRGB1555:
+                fb_fmt = B_RGB15;
+                break;
+            case RVVM_RGB_RGB565:
+                fb_fmt = B_RGB16;
+                break;
+            case RVVM_RGB_RGB888:
+                fb_fmt = B_RGB24;
+                break;
+            case RVVM_RGB_XRGB8888:
+                fb_fmt = B_RGB32;
+                break;
+            default:
+                // TODO: Support more pixel formats
+                return NULL;
+        }
+        return new BBitmap(m_area, fb_off, fb_rect, 0, fb_fmt, rvvm_fb_stride(fb));
+    }
+    return NULL;
 }
 
-static status_t init_application()
+BBitmap* HaikuGUIWindow::PrepareScanoutBitmap(void)
 {
-    if (be_app != NULL) return B_OK;
+    const rvvm_fb_t* fb = gui_backend_get_scanout(m_win);
 
-    new BApplication("application/x-vnd.RVVM");
-    if (be_app == NULL) return B_NO_MEMORY;
-    be_app->Unlock();
-    sAppThread = spawn_thread(app_thread, "application", B_NORMAL_PRIORITY, NULL);
-    if (sAppThread < B_OK) return sAppThread;
-    resume_thread(sAppThread);
+    // Resize window if needed
+    if (!rvvm_fb_same_res(fb, &m_fb)) {
+        ResizeTo(rvvm_fb_width(fb), rvvm_fb_height(fb));
+    }
 
-    return B_OK;
+    // Recreate bitmap if needed
+    if (!rvvm_fb_same_layout(fb, &m_fb) || rvvm_fb_buffer(fb) != rvvm_fb_buffer(&m_fb)) {
+        BBitmap* new_bitmap = CreateBitmapFromScanout(fb);
+        if (new_bitmap) {
+            m_bitmap.SetTo(new_bitmap);
+        }
+    }
+
+    m_fb = *fb;
+    return m_bitmap.Get();
+}
+
+static bool haiku_global_init(void)
+{
+    if (atomic_add_uint32(&haiku_windows, 1) == 0) {
+        // This seems to run totally fine without manually creating a thread
+        new BApplication("application/x-vnd.RVVM");
+        if (!be_app) {
+            rvvm_error("Failed to create BApplication");
+            return false;
+        }
+        be_app->Unlock();
+    }
+    return true;
+}
+
+static bool haiku_global_deinit(void)
+{
+    if (atomic_sub_uint32(&haiku_windows, 1) == 1) {
+        be_app->Lock();
+        // BApplication::Quit() also deletes BApplication
+        be_app->Quit();
+        be_app = NULL;
+    }
+    return true;
+}
+
+static void haiku_window_remove(gui_window_t* win)
+{
+    HaikuGUIWindow* hwin = (HaikuGUIWindow*)gui_backend_get_data(win);
+    if (hwin) {
+        HaikuGUIView* view = hwin->GetView();
+        area_id       area = hwin->GetArea();
+        view->LockLooper();
+        // BWindow::Quit() also deletes BWindow
+        hwin->Quit();
+        delete_area(area);
+    }
+    gui_backend_set_data(win, NULL);
+    haiku_global_deinit();
 }
 
 static void haiku_window_draw(gui_window_t* win)
 {
-    Window* window = (Window*)win->win_data;
-    View* view = window->GetView();
+    HaikuGUIWindow* hwin = (HaikuGUIWindow*)gui_backend_get_data(win);
+    HaikuGUIView*   view = hwin->GetView();
+    // NOTE: Is this doing a synchronous flip or just notifies app thread?
+    // GUI user expects sync draw for future ack (interrupt) on flip
     view->LockLooper();
     view->Invalidate();
     view->UnlockLooper();
 }
 
-static void haiku_window_poll(gui_window_t* win)
-{
-    // Input events handling done from window thread. TODO: Check thread safety.
-    // Other GUI backends could implement threaded input too for better latency
-    UNUSED(win);
-}
-
 static void haiku_window_set_title(gui_window_t* win, const char* title)
 {
-    Window* window = (Window*)win->win_data;
-    window->SetTitle(title);
+    HaikuGUIWindow* hwin = (HaikuGUIWindow*)gui_backend_get_data(win);
+    hwin->SetTitle(title);
 }
 
-static void haiku_window_remove(gui_window_t* win)
-{
-    Window* window = (Window*)win->win_data;
-    View* view = window->GetView();
-    view->LockLooper();
-    window->Quit(); // Also deletes window
-}
+// TODO: haiku_window_grab_input() - no implementation in SDL either :O
+static const gui_backend_cb_t haiku_window_cb = {
+    .remove    = haiku_window_remove,
+    .draw      = haiku_window_draw,
+    .set_title = haiku_window_set_title,
+};
 
 bool haiku_window_init(gui_window_t* win)
 {
-    if (init_application() < B_OK) {
-        rvvm_error("Failed to initialize be_app thread!");
+    gui_backend_register(win, &haiku_window_cb);
+
+    // Perform global init
+    if (!haiku_global_init()) {
         return false;
     }
 
-    Window* window = new Window(BRect(0, 0, win->fb.width - 1, win->fb.height - 1), "RVVM", win);
-    window->CenterOnScreen();
-    window->Show();
+    // Create VRAM area
+    size_t  vram_size = gui_backend_get_vram_size(win);
+    void*   vram_addr = NULL;
+    area_id vram_area = create_area("vram_area", &vram_addr, B_ANY_ADDRESS, vram_size, //
+                                    B_NO_LOCK, B_CLONEABLE_AREA | B_READ_AREA | B_WRITE_AREA);
+    if (vram_addr) {
+        gui_backend_set_vram(win, vram_addr, vram_size);
+    } else {
+        rvvm_error("Failed to allocate VRAM area");
+        return false;
+    }
 
-    win->win_data = window;
-    win->fb.format = RGB_FMT_A8R8G8B8;
-    win->fb.buffer = window->GetView()->GetBitmap()->Bits();
-
-    win->draw = haiku_window_draw;
-    win->poll = haiku_window_poll;
-    win->remove = haiku_window_remove;
-    // TODO: haiku_window_grab_input with relative mouse mode
-    win->set_title = haiku_window_set_title;
+    const rvvm_fb_t* fb   = gui_backend_get_scanout(win);
+    HaikuGUIWindow*  hwin = new HaikuGUIWindow( //
+        BRect(0, 0, rvvm_fb_width(fb) - 1, rvvm_fb_height(fb) - 1), "", win, vram_area, vram_addr);
+    hwin->CenterOnScreen();
+    hwin->Show();
 
     return true;
 }
+
+#else
+
+bool haiku_window_init(gui_window_t* win)
+{
+    UNUSED(win);
+    return false;
+}
+
+#endif
+
+POP_OPTIMIZATION_SIZE
