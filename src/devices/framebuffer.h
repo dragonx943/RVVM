@@ -12,8 +12,10 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #include "rvvmlib.h"
 
-/*
- * Pixel format API
+/**
+ * @defgroup rvvm_rgb_api Pixel format API
+ * @addtogroup rvvm_rgb_api
+ * @{
  *
  * Pixel formats encode bytes per pixel in lower 4 bits.
  *
@@ -49,7 +51,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define RVVM_RGB_XRGB2101010 0x44 //!< Deep color XRGB with 10-bit color channels
 #define RVVM_RGB_XBGR2101010 0x54 //!< Deep color XBGR with 10-bit color channels
 
-//! Pixel RGB format
+//! RGB Pixel format
 typedef uint32_t rvvm_rgb_t;
 
 //! Get bytes per pixel for a format
@@ -70,11 +72,15 @@ static inline rvvm_rgb_t rvvm_rgb_from_bpp(size_t bpp)
     return (bpp >> 3) & 0x0F;
 }
 
-/*
- * Framebuffer API
+/** @}*/
+
+/**
+ * @defgroup rvvm_fb_api Framebuffer context API
+ * @addtogroup rvvm_fb_api
+ * @{
  */
 
-//! Framebuffer context description
+//! Framebuffer scanout context description
 typedef struct {
     void*      buffer; //!< Buffer in process memory
     uint32_t   width;  //!< Width  (In pixels)
@@ -148,6 +154,92 @@ static inline bool rvvm_fb_same_layout(const rvvm_fb_t* fb_a, const rvvm_fb_t* f
     return rvvm_fb_same_res(fb_a, fb_b) && fb_a->format == fb_b->format //
         && rvvm_fb_stride(fb_a) == rvvm_fb_stride(fb_b);
 }
+
+/** @}*/
+
+/**
+ * @defgroup rvvm_fbdev_api Framebuffer device API
+ * @addtogroup rvvm_fbdev_api
+ * @{
+ *
+ * Video device implementation responsibilities:
+ * - Owns a reference to rvvm_fbdev_t* fbdev
+ * - Unrefs fbdev handle upon removal
+ * - Obtains video RAM via rvvm_fbdev_get_vram()
+ * - Sets video mode (Scanout) via rvvm_fbdev_set_scanout(), which must reside in VRAM
+ * - Periodically updates the display via rvvm_fbdev_update()
+ * - Acknowledges completed flip after rvvm_fbdev_update() returns
+ * - Optionally marks framebuffer contents as dirty via rvvm_fbdev_dirty()
+ *
+ * Display implementation responsibilities:
+ * - Creates VRAM memory region if needed (Otherwise will be backed by anonymous VMA)
+ * - Obtains current video mode (Scanout) via rvvm_fbdev_get_scanout()
+ * Then either:
+ * - Registers private data via rvvm_fbdev_set_display_data() / rvvm_fbdev_get_display_data()
+ * - Registers draw/poll callbacks, perform rendering/input polling from them
+ * - Registers free() callback and fully deinitialize upon it
+ * Or:
+ * - Runs from any other thread, manually rendering, checking rvvm_fbdev_is_dirty(), etc
+ * - Increments fbdev refcount via rvvm_fbdev_inc_ref(), keeping it as long as needed
+ * - NOTE: This second variation doesn't support synchronous flips - TODO?
+ */
+
+//! Framebuffer device (2D GPU) context
+typedef struct rvvm_fbdev rvvm_fbdev_t;
+
+//! Display implementation callbacks
+typedef struct {
+    //! Perform a synchronous scanout flip
+    //! The GPU will acknowledge flip after this returns
+    void (*draw)(rvvm_fbdev_t* fbdev);
+
+    //! Optional periodic display poll
+    void (*poll)(rvvm_fbdev_t* fbdev);
+
+    //! Deinitialize & free display private data
+    void (*free)(rvvm_fbdev_t* fbdev);
+} rvvm_display_cb_t;
+
+//! Create a new fbdev context, return it's handle
+PUBLIC rvvm_fbdev_t* rvvm_fbdev_init(void);
+
+//! Increment fbdev context reference count
+PUBLIC void rvvm_fbdev_inc_ref(rvvm_fbdev_t* fbdev);
+
+//! Unreference fbdev context
+PUBLIC void rvvm_fbdev_dec_ref(rvvm_fbdev_t* fbdev);
+
+//! Register fbdev display implementation
+PUBLIC void rvvm_fbdev_register_display(rvvm_fbdev_t* fbdev, const rvvm_display_cb_t* cb);
+
+//! Set fbdev private display data
+PUBLIC void rvvm_fbdev_set_display_data(rvvm_fbdev_t* fbdev, void* data);
+
+//! Get fbdev private display data
+PUBLIC void* rvvm_fbdev_get_display_data(rvvm_fbdev_t* fbdev);
+
+//! Set fbdev video RAM buffer & size, must be done before attaching to machine
+PUBLIC bool rvvm_fbdev_set_vram(rvvm_fbdev_t* fbdev, void* vram, size_t size);
+
+//! Get fbdev video RAM buffer & size
+PUBLIC void* rvvm_fbdev_get_vram(rvvm_fbdev_t* fbdev, size_t* size);
+
+//! Set fbdev video mode (scanout) atomically, must reside in video RAM
+PUBLIC bool rvvm_fbdev_set_scanout(rvvm_fbdev_t* fbdev, const rvvm_fb_t* fb);
+
+//! Get current fbdev video mode atomically
+PUBLIC const rvvm_fb_t* rvvm_fbdev_get_scanout(rvvm_fbdev_t* fbdev);
+
+//! Mark framebuffer as dirty (Dirty tracking is disabled if this is never called)
+PUBLIC void rvvm_fbdev_dirty(rvvm_fbdev_t* fbdev);
+
+//! Check whether framebuffer is dirty
+PUBLIC bool rvvm_fbdev_is_dirty(rvvm_fbdev_t* fbdev);
+
+//! Periodic display update, consider flip as done afterwards
+PUBLIC void rvvm_fbdev_update(rvvm_fbdev_t* fbdev);
+
+/** @}*/
 
 /*
  * Deprecated definitions without RVVM prefix
