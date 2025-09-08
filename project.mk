@@ -50,6 +50,11 @@ ifneq (,$(filter emscripten,$(OS)))
 USE_SDL ?= 2
 endif
 
+# Only allow dynamic linking to librvvm in released versions
+ifneq (,$(findstring -,$(VERSION)))
+USE_LIB_SHARING ?= 0
+endif
+
 #
 # Default project build configuration
 #
