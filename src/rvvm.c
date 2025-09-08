@@ -24,9 +24,12 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 PUSH_OPTIMIZATION_SIZE
 
-#define RVVM_POWER_OFF   0
-#define RVVM_POWER_ON    1
-#define RVVM_POWER_RESET 2
+#define RVVM_POWER_OFF       0
+#define RVVM_POWER_ON        1
+#define RVVM_POWER_RESET     2
+
+// Default memory base address
+#define RVVM_DEFAULT_MEMBASE 0x80000000U
 
 static spinlock_t                global_lock     = ZERO_INIT;
 static vector_t(rvvm_machine_t*) global_machines = ZERO_INIT;
@@ -175,34 +178,34 @@ static void rvvm_prepare_fdt(rvvm_machine_t* machine)
 
 #endif
 
-static size_t rvvm_dtb_addr(rvvm_machine_t* machine, size_t dtb_size)
+static size_t rvvm_fdt_addr(rvvm_machine_t* machine, size_t fdt_size)
 {
-    return align_size_down(machine->mem.size > dtb_size ? machine->mem.size - dtb_size : 0, 8);
+    return align_size_down(machine->mem.size > fdt_size ? machine->mem.size - fdt_size : 0, 8);
 }
 
-static rvvm_addr_t rvvm_pass_dtb(rvvm_machine_t* machine)
+static rvvm_addr_t rvvm_pass_fdt(rvvm_machine_t* machine)
 {
-    if (rvvm_get_opt(machine, RVVM_OPT_DTB_ADDR)) {
+    if (rvvm_get_opt(machine, RVVM_OPT_FDT_ADDR)) {
         // API user manually passes FDT
-        return rvvm_get_opt(machine, RVVM_OPT_DTB_ADDR);
-    } else if (machine->dtb_file) {
+        return rvvm_get_opt(machine, RVVM_OPT_FDT_ADDR);
+    } else if (machine->fdt_file) {
         // Load FDT from file
-        uint32_t dtb_size = rvfilesize(machine->dtb_file);
-        size_t   dtb_off  = rvvm_dtb_addr(machine, dtb_size);
-        if (dtb_size < machine->mem.size) {
-            rvread(machine->dtb_file, ((uint8_t*)machine->mem.data) + dtb_off, machine->mem.size - dtb_off, 0);
-            rvvm_info("Loaded FDT at %#.8llx, size %u", (unsigned long long)machine->mem.addr + dtb_off, dtb_size);
-            return machine->mem.addr + dtb_off;
+        uint32_t size = rvfilesize(machine->fdt_file);
+        size_t   off  = rvvm_fdt_addr(machine, size);
+        if (size < machine->mem.size) {
+            rvread(machine->fdt_file, ((uint8_t*)machine->mem.data) + off, machine->mem.size - off, 0);
+            rvvm_info("Loaded FDT at %#.8llx, size %u", (unsigned long long)machine->mem.addr + off, size);
+            return machine->mem.addr + off;
         }
     } else {
         // Generate FDT
 #if defined(USE_FDT)
         rvvm_prepare_fdt(machine);
-        uint32_t dtb_size = fdt_size(machine->fdt);
-        size_t   dtb_off  = rvvm_dtb_addr(machine, dtb_size);
-        if (fdt_serialize(machine->fdt, ((uint8_t*)machine->mem.data) + dtb_off, machine->mem.size - dtb_off, 0)) {
-            rvvm_info("Generated FDT at %#.8llx, size %u", (unsigned long long)machine->mem.addr + dtb_off, dtb_size);
-            return machine->mem.addr + dtb_off;
+        uint32_t size = fdt_size(machine->fdt);
+        size_t   off  = rvvm_fdt_addr(machine, size);
+        if (fdt_serialize(machine->fdt, ((uint8_t*)machine->mem.data) + off, machine->mem.size - off, 0)) {
+            rvvm_info("Generated FDT at %#.8llx, size %u", (unsigned long long)machine->mem.addr + off, size);
+            return machine->mem.addr + off;
         }
 #else
         rvvm_error("Support for FDT is disabled in this build");
@@ -224,10 +227,10 @@ static void rvvm_reset_machine_state(rvvm_machine_t* machine)
         }
     }
 
-    // Load bootrom, kernel, dtb into RAM if needed
+    // Load firmware, kernel, FDT into RAM if needed
     bool elf = !rvvm_get_opt(machine, RVVM_OPT_HW_IMITATE);
-    if (machine->bootrom_file) {
-        bin_objcopy(machine->bootrom_file, machine->mem.data, machine->mem.size, elf);
+    if (machine->fw_file) {
+        bin_objcopy(machine->fw_file, machine->mem.data, machine->mem.size, elf);
     }
     if (machine->kernel_file) {
         size_t kernel_offset = machine->rv64 ? 0x200000U : 0x400000U;
@@ -236,7 +239,7 @@ static void rvvm_reset_machine_state(rvvm_machine_t* machine)
     }
 
     // Reset CPUs
-    rvvm_addr_t dtb_addr = rvvm_pass_dtb(machine);
+    rvvm_addr_t fdt_addr = rvvm_pass_fdt(machine);
     rvtimer_init(&machine->timer, rvvm_get_opt(machine, RVVM_OPT_TIME_FREQ));
     vector_foreach (machine->harts, i) {
         rvvm_hart_t* vm = vector_at(machine->harts, i);
@@ -250,7 +253,7 @@ static void rvvm_reset_machine_state(rvvm_machine_t* machine)
         vm->csr.hartid               = i;
         vm->registers[RISCV_REG_X10] = i;
         // Pass FDT address in register a1
-        vm->registers[RISCV_REG_X11] = dtb_addr;
+        vm->registers[RISCV_REG_X11] = fdt_addr;
         // Jump to RESET_PC
         vm->registers[RISCV_REG_PC] = rvvm_get_opt(machine, RVVM_OPT_RESET_PC);
         // Switch into machine mode, flush icache
@@ -442,6 +445,7 @@ static void rvvm_mmio_free(rvvm_mmio_dev_t* dev)
 
 PUBLIC bool rvvm_check_abi(int abi)
 {
+    UNUSED(abi);
 #if !defined(RVVM_ABI_VERSION) || RVVM_ABI_VERSION <= 0
     rvvm_warn("This is a staging librvvm version with unstable ABI/API");
     return true;
@@ -558,11 +562,11 @@ PUBLIC void rvvm_append_cmdline(rvvm_machine_t* machine, const char* str)
     UNUSED(str);
 }
 
-PUBLIC bool rvvm_load_bootrom(rvvm_machine_t* machine, const char* path)
+PUBLIC bool rvvm_load_firmware(rvvm_machine_t* machine, const char* path)
 {
     if (machine) {
-        machine->bootrom_file = file_reopen_check_size(machine->bootrom_file, path, machine->mem.size);
-        return !!machine->bootrom_file;
+        machine->fw_file = file_reopen_check_size(machine->fw_file, path, machine->mem.size);
+        return !!machine->fw_file;
     }
     return false;
 }
@@ -578,16 +582,16 @@ PUBLIC bool rvvm_load_kernel(rvvm_machine_t* machine, const char* path)
     return false;
 }
 
-PUBLIC bool rvvm_load_dtb(rvvm_machine_t* machine, const char* path)
+PUBLIC bool rvvm_load_fdt(rvvm_machine_t* machine, const char* path)
 {
     if (machine) {
-        machine->dtb_file = file_reopen_check_size(machine->dtb_file, path, machine->mem.size >> 1);
-        return !!machine->dtb_file;
+        machine->fdt_file = file_reopen_check_size(machine->fdt_file, path, machine->mem.size >> 1);
+        return !!machine->fdt_file;
     }
     return false;
 }
 
-PUBLIC bool rvvm_dump_dtb(rvvm_machine_t* machine, const char* path)
+PUBLIC bool rvvm_dump_fdt(rvvm_machine_t* machine, const char* path)
 {
 #if defined(USE_FDT)
     if (machine) {
@@ -621,7 +625,7 @@ PUBLIC rvvm_addr_t rvvm_get_opt(rvvm_machine_t* machine, uint32_t opt)
                 return machine->mem.addr;
             case RVVM_OPT_MEM_SIZE:
                 return machine->mem.size;
-            case RVVM_OPT_HART_COUNT:
+            case RVVM_OPT_CPU_COUNT:
                 return vector_size(machine->harts);
         }
     }
@@ -733,9 +737,9 @@ PUBLIC void rvvm_free_machine(rvvm_machine_t* machine)
         vector_free(machine->msi_targets);
 
         riscv_free_ram(&machine->mem);
-        rvclose(machine->bootrom_file);
+        rvclose(machine->fw_file);
         rvclose(machine->kernel_file);
-        rvclose(machine->dtb_file);
+        rvclose(machine->fdt_file);
 
 #if defined(USE_FDT)
         fdt_node_free(machine->fdt);

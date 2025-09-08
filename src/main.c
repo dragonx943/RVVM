@@ -218,7 +218,7 @@ static bool rvvm_cli_configure(rvvm_machine_t* machine, const char* bios, tap_de
         // If we are booting a static kernel, append root device cmdline
         rvvm_append_cmdline(machine, "root=/dev/nvme0n1 rootflags=discard rw");
     }
-    if (!rvvm_load_bootrom(machine, bios)) {
+    if (!rvvm_load_firmware(machine, bios)) {
         return false;
     }
     if (rvvm_getarg("k") && !rvvm_load_kernel(machine, rvvm_getarg("k"))) {
@@ -227,7 +227,7 @@ static bool rvvm_cli_configure(rvvm_machine_t* machine, const char* bios, tap_de
     if (rvvm_getarg("kernel") && !rvvm_load_kernel(machine, rvvm_getarg("kernel"))) {
         return false;
     }
-    if (rvvm_getarg("dtb") && !rvvm_load_dtb(machine, rvvm_getarg("dtb"))) {
+    if (rvvm_getarg("dtb") && !rvvm_load_fdt(machine, rvvm_getarg("dtb"))) {
         return false;
     }
 
@@ -387,7 +387,7 @@ static int rvvm_cli_main(int argc, char** argv)
     }
     if (rvvm_getarg("dumpdtb")) {
         // Dump the machine DTB after it's been fully configured
-        rvvm_dump_dtb(machine, rvvm_getarg("dumpdtb"));
+        rvvm_dump_fdt(machine, rvvm_getarg("dumpdtb"));
     }
 
     if (!rvvm_has_arg("noisolation")) {

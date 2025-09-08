@@ -29,7 +29,7 @@
 PUSH_OPTIMIZATION_SIZE
 
 JNIEXPORT jboolean JNICALL Java_lekkit_rvvm_RVVMNative_check_1abi(JNIEnv* env, jclass cls, //
-                                                                  jint    abi)
+                                                                  jint abi)
 {
     UNUSED(env);
     UNUSED(cls);
@@ -72,7 +72,7 @@ JNIEXPORT jboolean JNICALL Java_lekkit_rvvm_RVVMNative_load_1bootrom(JNIEnv* env
                                                                      jlong machine, jstring path)
 {
     const char* u8_path = (*env)->GetStringUTFChars(env, path, NULL);
-    bool        ret     = rvvm_load_bootrom((rvvm_machine_t*)(size_t)machine, u8_path);
+    bool        ret     = rvvm_load_firmware((rvvm_machine_t*)(size_t)machine, u8_path);
     UNUSED(cls);
     (*env)->ReleaseStringUTFChars(env, path, u8_path);
     return ret;
@@ -92,7 +92,7 @@ JNIEXPORT jboolean JNICALL Java_lekkit_rvvm_RVVMNative_load_1dtb(JNIEnv* env, jc
                                                                  jlong machine, jstring path)
 {
     const char* u8_path = (*env)->GetStringUTFChars(env, path, NULL);
-    bool        ret     = rvvm_load_dtb((rvvm_machine_t*)(size_t)machine, u8_path);
+    bool        ret     = rvvm_load_fdt((rvvm_machine_t*)(size_t)machine, u8_path);
     UNUSED(cls);
     (*env)->ReleaseStringUTFChars(env, path, u8_path);
     return ret;
@@ -102,7 +102,7 @@ JNIEXPORT jboolean JNICALL Java_lekkit_rvvm_RVVMNative_dump_1dtb(JNIEnv* env, jc
                                                                  jlong machine, jstring path)
 {
     const char* u8_path = (*env)->GetStringUTFChars(env, path, NULL);
-    bool        ret     = rvvm_dump_dtb((rvvm_machine_t*)(size_t)machine, u8_path);
+    bool        ret     = rvvm_dump_fdt((rvvm_machine_t*)(size_t)machine, u8_path);
     UNUSED(cls);
     (*env)->ReleaseStringUTFChars(env, path, u8_path);
     return ret;
@@ -125,7 +125,7 @@ JNIEXPORT void JNICALL Java_lekkit_rvvm_RVVMNative_set_1opt(JNIEnv* env, jclass 
 }
 
 JNIEXPORT jboolean JNICALL Java_lekkit_rvvm_RVVMNative_start_1machine(JNIEnv* env, jclass cls, //
-                                                                      jlong   machine)
+                                                                      jlong machine)
 {
     UNUSED(env);
     UNUSED(cls);
@@ -133,7 +133,7 @@ JNIEXPORT jboolean JNICALL Java_lekkit_rvvm_RVVMNative_start_1machine(JNIEnv* en
 }
 
 JNIEXPORT jboolean JNICALL Java_lekkit_rvvm_RVVMNative_pause_1machine(JNIEnv* env, jclass cls, //
-                                                                      jlong   machine)
+                                                                      jlong machine)
 {
     UNUSED(env);
     UNUSED(cls);
@@ -150,7 +150,7 @@ JNIEXPORT jboolean JNICALL Java_lekkit_rvvm_RVVMNative_reset_1machine(JNIEnv* en
 }
 
 JNIEXPORT jboolean JNICALL Java_lekkit_rvvm_RVVMNative_machine_1running(JNIEnv* env, jclass cls, //
-                                                                        jlong   machine)
+                                                                        jlong machine)
 {
     UNUSED(env);
     UNUSED(cls);
@@ -158,7 +158,7 @@ JNIEXPORT jboolean JNICALL Java_lekkit_rvvm_RVVMNative_machine_1running(JNIEnv* 
 }
 
 JNIEXPORT jboolean JNICALL Java_lekkit_rvvm_RVVMNative_machine_1powered(JNIEnv* env, jclass cls, //
-                                                                        jlong   machine)
+                                                                        jlong machine)
 {
     UNUSED(env);
     UNUSED(cls);
@@ -166,7 +166,7 @@ JNIEXPORT jboolean JNICALL Java_lekkit_rvvm_RVVMNative_machine_1powered(JNIEnv* 
 }
 
 JNIEXPORT void JNICALL Java_lekkit_rvvm_RVVMNative_free_1machine(JNIEnv* env, jclass cls, //
-                                                                 jlong   machine)
+                                                                 jlong machine)
 {
     UNUSED(env);
     UNUSED(cls);
@@ -204,7 +204,7 @@ JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_mmio_1zone_1auto(JNIEnv* env
 }
 
 JNIEXPORT void JNICALL Java_lekkit_rvvm_RVVMNative_remove_1mmio(JNIEnv* env, jclass cls, //
-                                                                jlong   mmio_dev)
+                                                                jlong mmio_dev)
 {
     UNUSED(env);
     UNUSED(cls);
@@ -212,7 +212,7 @@ JNIEXPORT void JNICALL Java_lekkit_rvvm_RVVMNative_remove_1mmio(JNIEnv* env, jcl
 }
 
 JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_get_1intc(JNIEnv* env, jclass cls, //
-                                                              jlong   machine)
+                                                              jlong machine)
 {
     UNUSED(env);
     UNUSED(cls);
@@ -228,7 +228,7 @@ JNIEXPORT void JNICALL Java_lekkit_rvvm_RVVMNative_set_1intc(JNIEnv* env, jclass
 }
 
 JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_get_1pci_1bus(JNIEnv* env, jclass cls, //
-                                                                  jlong   machine)
+                                                                  jlong machine)
 {
     UNUSED(env);
     UNUSED(cls);
@@ -244,7 +244,7 @@ JNIEXPORT void JNICALL Java_lekkit_rvvm_RVVMNative_set_1pci_1bus(JNIEnv* env, jc
 }
 
 JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_get_1i2c_1bus(JNIEnv* env, jclass cls, //
-                                                                  jlong   machine)
+                                                                  jlong machine)
 {
     UNUSED(env);
     UNUSED(cls);
@@ -264,7 +264,7 @@ JNIEXPORT void JNICALL Java_lekkit_rvvm_RVVMNative_set_1i2c_1bus(JNIEnv* env, jc
  */
 
 JNIEXPORT void JNICALL Java_lekkit_rvvm_RVVMNative_riscv_1clint_1init_1auto(JNIEnv* env, jclass cls, //
-                                                                            jlong   machine)
+                                                                            jlong machine)
 {
     UNUSED(env);
     UNUSED(cls);
@@ -272,7 +272,7 @@ JNIEXPORT void JNICALL Java_lekkit_rvvm_RVVMNative_riscv_1clint_1init_1auto(JNIE
 }
 
 JNIEXPORT void JNICALL Java_lekkit_rvvm_RVVMNative_riscv_1imsic_1init_1auto(JNIEnv* env, jclass cls, //
-                                                                            jlong   machine)
+                                                                            jlong machine)
 {
     UNUSED(env);
     UNUSED(cls);
@@ -280,7 +280,7 @@ JNIEXPORT void JNICALL Java_lekkit_rvvm_RVVMNative_riscv_1imsic_1init_1auto(JNIE
 }
 
 JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_riscv_1plic_1init_1auto(JNIEnv* env, jclass cls, //
-                                                                            jlong   machine)
+                                                                            jlong machine)
 {
     UNUSED(env);
     UNUSED(cls);
@@ -288,7 +288,7 @@ JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_riscv_1plic_1init_1auto(JNIE
 }
 
 JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_riscv_1aplic_1init_1auto(JNIEnv* env, jclass cls, //
-                                                                             jlong   machine)
+                                                                             jlong machine)
 {
     UNUSED(env);
     UNUSED(cls);
@@ -296,7 +296,7 @@ JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_riscv_1aplic_1init_1auto(JNI
 }
 
 JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_pci_1bus_1init_1auto(JNIEnv* env, jclass cls, //
-                                                                         jlong   machine)
+                                                                         jlong machine)
 {
     UNUSED(env);
     UNUSED(cls);
@@ -304,7 +304,7 @@ JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_pci_1bus_1init_1auto(JNIEnv*
 }
 
 JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_i2c_1bus_1init_1auto(JNIEnv* env, jclass cls, //
-                                                                         jlong   machine)
+                                                                         jlong machine)
 {
     UNUSED(env);
     UNUSED(cls);
@@ -319,7 +319,7 @@ JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_tap_1user_1open(JNIEnv* env,
 }
 
 JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_syscon_1init_1auto(JNIEnv* env, jclass cls, //
-                                                                       jlong   machine)
+                                                                       jlong machine)
 {
     UNUSED(env);
     UNUSED(cls);
@@ -327,7 +327,7 @@ JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_syscon_1init_1auto(JNIEnv* e
 }
 
 JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_rtc_1goldfish_1init_1auto(JNIEnv* env, jclass cls, //
-                                                                              jlong   machine)
+                                                                              jlong machine)
 {
     UNUSED(env);
     UNUSED(cls);
@@ -335,7 +335,7 @@ JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_rtc_1goldfish_1init_1auto(JN
 }
 
 JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_rtc_1ds1742_1init_1auto(JNIEnv* env, jclass cls, //
-                                                                            jlong   machine)
+                                                                            jlong machine)
 {
     UNUSED(env);
     UNUSED(cls);
@@ -343,7 +343,7 @@ JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_rtc_1ds1742_1init_1auto(JNIE
 }
 
 JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_ns16550a_1init_1auto(JNIEnv* env, jclass cls, //
-                                                                         jlong   machine)
+                                                                         jlong machine)
 {
     UNUSED(env);
     UNUSED(cls);
@@ -439,7 +439,7 @@ JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_nvme_1init(JNIEnv* env, jcla
 }
 
 JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_hid_1mouse_1init_1auto(JNIEnv* env, jclass cls, //
-                                                                           jlong   machine)
+                                                                           jlong machine)
 {
     UNUSED(env);
     UNUSED(cls);
@@ -447,7 +447,7 @@ JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_hid_1mouse_1init_1auto(JNIEn
 }
 
 JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_hid_1keyboard_1init_1auto(JNIEnv* env, jclass cls, //
-                                                                              jlong   machine)
+                                                                              jlong machine)
 {
     UNUSED(env);
     UNUSED(cls);
@@ -469,7 +469,7 @@ JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_gpio_1dev_1create(JNIEnv* en
 }
 
 JNIEXPORT void JNICALL Java_lekkit_rvvm_RVVMNative_pci_1remove_1device(JNIEnv* env, jclass cls, //
-                                                                       jlong   pci_dev)
+                                                                       jlong pci_dev)
 {
     UNUSED(env);
     UNUSED(cls);
@@ -477,7 +477,7 @@ JNIEXPORT void JNICALL Java_lekkit_rvvm_RVVMNative_pci_1remove_1device(JNIEnv* e
 }
 
 JNIEXPORT void JNICALL Java_lekkit_rvvm_RVVMNative_gpio_1dev_1free(JNIEnv* env, jclass cls, //
-                                                                   jlong   gpio)
+                                                                   jlong gpio)
 {
     void* ptr = (void*)(size_t)gpio;
     UNUSED(env);

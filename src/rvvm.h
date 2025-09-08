@@ -31,8 +31,10 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "rvjit/rvjit.h"
 #endif
 
-#define RVVM_TLB_SIZE 256 // Always nonzero & power of 2 (32, 64..)
-#define RVVM_TLB_MASK (RVVM_TLB_SIZE - 1)
+#define RVVM_TLB_SIZE      256 // Always nonzero & power of 2 (32, 64..)
+#define RVVM_TLB_MASK      (RVVM_TLB_SIZE - 1)
+
+#define RVVM_OPTS_ARR_SIZE 0x09
 
 BUILD_ASSERT(RVVM_TLB_SIZE);
 BUILD_ASSERT(!(RVVM_TLB_SIZE & RVVM_TLB_MASK));
@@ -280,9 +282,9 @@ struct randomize_layout rvvm_machine_t {
     uint32_t power_state;
     bool     rv64;
 
-    rvfile_t* bootrom_file;
+    rvfile_t* fw_file;
     rvfile_t* kernel_file;
-    rvfile_t* dtb_file;
+    rvfile_t* fdt_file;
 
     rvvm_intc_t* intc;
     pci_bus_t*   pci_bus;
