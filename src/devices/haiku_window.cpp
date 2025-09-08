@@ -208,12 +208,12 @@ public:
 
     BBitmap* PrepareScanoutBitmap(void);
 
-    HaikuGUIView* GetView(void)
+    HaikuGUIView* GetView(void) const
     {
         return m_view;
     }
 
-    area_id GetArea(void)
+    area_id GetArea(void) const
     {
         return m_area;
     }
