@@ -9,7 +9,6 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
 // Must be included before system headers
-#include "devices/framebuffer.h"
 #include "feature_test.h"
 
 #include "compiler.h"
