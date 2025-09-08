@@ -498,7 +498,7 @@ override PKG_CONFIG := $(if $(if $(TARGET_CROSS),$(call var_def,PKG_CONFIG_LIBDI
 override BUILD_TYPE := $(if $(call var_use,USE_DEBUG_FULL),debug,release)
 override BUILDDIR   ?= $(BUILD_TYPE).$(OS).$(ARCH)
 override SRCDIR     := src
-override HDRDIR     := $(SRCDIR)
+override INCDIR     := include
 override OBJDIR     := $(BUILDDIR)/obj
 
 # Convert base target name into target filename (For target binary invocation, etc)
@@ -530,11 +530,10 @@ override lib_base_libs = $(call var_src,lib_libs_$1)
 # - URL:     Project homepage URL
 # - VERSION: Project version (Fallback if git describe fails, useful for release source archives)
 #
-# - SRCDIR:   Project source directory, defaults to src
-# - HDRDIR:   Project headers directory, defaults to $(SRCDIR)
+# - SRCDIR:   Project source directory, defaults to ./src
+# - INCDIR:   Project public headers directory, defaults to ./include
 # - BUILDDIR: Build directory, defaults to $(BUILD_TYPE).$(OS).$(ARCH), for example release.linux.i386
 # - OBJDIR:   Object files directory, defaults to $(BUILDDIR)/obj
-#
 #
 # - BIN_TARGETS: List of binary targets to build
 # - LIB_TARGETS: List of library targets to build
@@ -564,7 +563,7 @@ override LOGO     := $(call var_src,LOGO)
 override URL      := $(call var_src,URL)
 override VERSION  := $(call git_version,$(call var_src,VERSION))
 override SRCDIR   := $(call path_wrap,$(SRCDIR))
-override HDRDIR   := $(call path_wrap,$(HDRDIR))
+override INCDIR   := $(call safe_wildcard,$(call path_wrap,$(INCDIR)))
 override BUILDDIR := $(call path_wrap,$(BUILDDIR))
 override OBJDIR   := $(call path_wrap,$(OBJDIR))
 
@@ -884,7 +883,7 @@ $(if $(call clang_min_ver,3.0),-Wno-missing-field-initializers -Wno-ignored-prag
 $(if $(call clang_min_ver,4.0),-Wdocumentation))
 
 # Produce final CFLAGS/LDFLAGS, strip excess spaces
-override CPPFLAGS    := $(strip -I$(SRCDIR) $(if $(filter-out $(SRCDIR),$(HDRDIR)),-I$(HDRDIR)) -D$(NAME_UPPER)_VERSION="$(VERSION)" $(CPPFLAGS))
+override CPPFLAGS    := $(strip $(patsubst %,-I%,$(INCDIR) $(SRCDIR)) -D$(NAME_UPPER)_VERSION="$(VERSION)" $(CPPFLAGS))
 override CFLAGS      := $(strip $(OPTIMIZE_OPTS) $(WARN_OPTS) $(CFLAGS) $(MANDATORY_OPTS))
 override LDFLAGS     := $(strip $(LDFLAGS))
 override PRE_LDFLAGS := $(if $(call gnuc_min_ver,4.0),$(call check_cc_flags,-Wl$(COMMA)--as-needed))
@@ -1148,7 +1147,7 @@ install: all
 # Install binaries
 	$(foreach bin,$(BIN_TARGETS),$(call install_file,$(bin),$(DESTDIR)$(bindir)/$(call bin_base,$(bin))$(BIN_EXT),0755))
 # Install headers
-	$(foreach header,$(if $(call var_use,USE_LIB)$(call var_use,USE_LIB_STATIC),$(call recursive_match,$(HDRDIR),*.h *.hpp *.hh *.hxx)),$(call install_file,$(header),$(DESTDIR)$(includedir)/$(NAME_LOWER)/$(patsubst $(HDRDIR)/%,%,$(header)),0644))
+	$(if $(INCDIR),$(if $(call var_use,USE_LIB)$(call var_use,USE_LIB_STATIC),$(foreach header,$(call recursive_match,$(INCDIR),*.h *.hpp *.hh *.hxx),$(call install_file,$(header),$(DESTDIR)$(includedir)/$(patsubst $(INCDIR)/%,%,$(header)),0644))))
 # Install shared libraries
 	$(foreach lib,$(if $(call var_use,USE_LIB),$(LIB_TARGETS)),$(call install_file,$(lib),$(DESTDIR)$(libdir)/lib$(call lib_base,$(lib))$(LIB_EXT),0755))
 # Install pkg-config pc files for shared libraries
