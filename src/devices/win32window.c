@@ -469,7 +469,7 @@ bool win32_window_init(gui_window_t* win)
         win32->hdc = GetDC(win32->hwnd);
     }
 
-    if (!win32->hwnd || !win32->hwnd) {
+    if (!win32->hwnd || !win32->hdc) {
         rvvm_error("Failed to create window!");
         return false;
     }
