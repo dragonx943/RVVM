@@ -82,20 +82,20 @@ override define NEWLINE
 
 endef
 
-# List of known vendor fields in compiler triplet triplets
+# List of known vendor fields in compiler triplets
 # NOTE: This might be unnecessary in most cases, but please extend this list whenever needed.
 override TRIPLET_KNOWN_VENDORS := unknown pc apple amd intel suse redhat buildroot w64 uwp wrs ibm sun sgi sony
 
-# List of operating systems that may be part of ABI tuple, and should take priority when detected
+# List of operating systems that are advertised via ABI field, and should take priority when detected
 # NOTE: This might be unnecessary in most cases, but please extend this list whenever needed.
 override TRIPLET_KNOWN_OS_PRIO := android
 
-# List of known _parts_ of ABI field in compiler triplets
+# List of known non-system ABI fields in compiler triplets
 # NOTE: This might be unnecessary in most cases, but please extend this list whenever needed.
 override TRIPLET_KNOWN_ABI_STR := abi gnu musl uclibc elf
 
-# List of known compiler brands (names) for fallback compiler detection
-override CC_KNOWN_BRANDS := clang gcc oneapi cosmocc cproc chibicc tcc xcc
+# List of known compiler brands advertised in $(CC) -v for fallback compiler detection
+override CC_KNOWN_BRANDS := clang gcc oneAPI cosmocc cproc tcc xcc
 
 # Generate a dependency on $2 for target $1
 override gen_dependency = $(if $1,$(if $2,$1: $2))
@@ -399,7 +399,7 @@ override CC_VERSION_TRIPLET := $(foreach tmp,$(subst $(SPACE)version$(SPACE),$(M
 override CC_VERSION_TRIPLET := $(strip $(foreach tmp,$(CC_VERSION_TRIPLET),$(if $(call is_numeric,$(word 3,$(subst $(MAGIC),$(SPACE),$(tmp)))),$(subst $(MAGIC),$(SPACE),$(tmp)))))
 
 # If compiler version triplet is empty & CC_BRAND isn't provided, fallback to heuristics
-override CC_BRAND := $(call canonize_cc,$(firstword $(word 1,$(CC_VERSION_TRIPLET)) $(CC_BRAND) $(filter oneAPI,$(CC_VERSION_DUMP)) $(notdir $(CC))))
+override CC_BRAND := $(call canonize_cc,$(firstword $(word 1,$(CC_VERSION_TRIPLET)) $(CC_BRAND) $(filter $(CC_KNOWN_BRANDS),$(CC_VERSION_DUMP)) $(lastword $(subst -, ,$(notdir $(CC))))))
 
 # If neither compiler version triplet nor $(cc -dumpfullversion -dumpversion) provide a proper version, fallback to user-supplied CC_VERSION or whatever we've got
 override CC_VERSION := $(firstword $(call is_semver,$(word 3,$(CC_VERSION_TRIPLET))) $(call is_semver,$(call shell_ex,$(CC) -dumpfullversion -dumpversion $(NULL_STDERR))) $(CC_VERSION) $(word 3,$(CC_VERSION_TRIPLET)))
@@ -468,8 +468,8 @@ ifeq ($(OS),sunos)
 USE_LTO ?= 0
 endif
 
-# Cosmopolitan has no shared library support
-ifeq ($(OS),cosmo)
+# Cosmopolitan, Redox have no shared library support
+ifneq (,$(filter cosmo redox,$(OS)))
 USE_LIB ?= 0
 endif
 
@@ -585,42 +585,37 @@ override LIB_STATIC_TARGETS := $(call lib_static_target,$(LIB_BASE_LIST))
 ###################################################################################################
 
 # Compile options
-USE_LTO         ?= 1 # Use Link-Time Optimizations
-USE_LIB         ?= 1 # Build shared libraries
-USE_LIB_STATIC  ?= 0 # Build static libraries
-USE_LIB_SHARING ?= 0 # Link to shared project libraries
-USE_OBJ_STAGE   ?= 1 # Use intermediate object file build step
-USE_DEBUG       ?= 0 # Optimized build with debug info
-USE_DEBUG_FULL  ?= 0 # Full debug build without optimizations
+USE_LTO         ?= 1          # Use Link-Time Optimizations
+USE_LIB         ?= 1          # Build shared libraries
+USE_LIB_STATIC  ?= 0          # Build static libraries
+USE_LIB_SHARING ?= $(USE_LIB) # Link to shared project libraries
+USE_OBJ_STAGE   ?= 1          # Use intermediate object file build step
+USE_DEBUG_FULL  ?= 0          # Full debug build without optimizations
 
 # Warning / Static analysis / Sanitizer options
-USE_WARNS      ?= 3 # Warning level
-USE_ANALYZER   ?= 0 # Use Clang Static Analyzer / GCC static analyzer
-USE_UBSAN      ?= 0 # Use UndefinedBehaviorSanitizer
-USE_ASAN       ?= 0 # Use AddressSanitizer
-USE_TSAN       ?= 0 # Use ThreadSanitizer
-USE_MSAN       ?= 0 # Use MemorySanitizer
+USE_WARNS    ?= 4 # Warning level
+USE_ANALYZER ?= 0 # Use Clang Static Analyzer / GCC static analyzer
+USE_UBSAN    ?= 0 # Use UndefinedBehaviorSanitizer
+USE_ASAN     ?= 0 # Use AddressSanitizer
+USE_TSAN     ?= 0 # Use ThreadSanitizer
+USE_MSAN     ?= 0 # Use MemorySanitizer
+
+# Optimized build with debug info
+USE_DEBUG ?= $(firstword $(filter-out 0,$(USE_DEBUG_FULL) $(USE_UBSAN) $(USE_ASAN) $(USE_TSAN) $(USE_MSAN)) 0)
 
 # Feature options (Enable USE_NET if you wish to use sockets, etc)
 USE_FPU ?= 1
 USE_NET ?= 0
 USE_SDL ?= 0
 
-override DEPS_USE_LTO         := CC_IS_GNU
-override DEPS_USE_LIB         := CC_IS_GNU
-override DEPS_USE_LIB_STATIC  := USE_OBJ_STAGE
-override DEPS_USE_LIB_SHARING := USE_LIB
+override DEPS_USE_LTO        := CC_IS_GNU
+override DEPS_USE_LIB        := CC_IS_GNU
+override DEPS_USE_LIB_STATIC := USE_OBJ_STAGE
 
 override DEPS_USE_UBSAN := CC_IS_GNU
 override DEPS_USE_ASAN  := CC_IS_GNU
 override DEPS_USE_TSAN  := CC_IS_CLANG
 override DEPS_USE_MSAN  := CC_IS_CLANG
-
-override IMPLY_USE_DEBUG_FULL := USE_DEBUG
-override IMPLY_USE_UBSAN      := USE_DEBUG
-override IMPLY_USE_ASAN       := USE_DEBUG
-override IMPLY_USE_TSAN       := USE_DEBUG
-override IMPLY_USE_MSAN       := USE_DEBUG
 
 override CFLAGS_USE_DEBUG := -DDEBUG -g -fno-omit-frame-pointer
 override CFLAGS_USE_LIB   := $(if $(filter-out windows,$(OS)),-fPIC)
@@ -661,7 +656,7 @@ endif
 override LDFLAGS := $(LDFLAGS) $(call check_cc_flags,$(if $(filter-out windows,$(OS)),-lpthread -lrt -ldl) -latomic)
 
 # Report possibly missing libatomic
-ifeq ($(filter -latomic,$(LDFLAGS)),)
+ifeq (,$(filter -latomic,$(LDFLAGS)))
 override USE_NO_LIBATOMIC ?= 1
 endif
 
@@ -808,33 +803,38 @@ ifneq (,$(if $(call var_use,USE_LTO),$(call gnuc_min_ver,5.0)))
 override LTO_SUPPORTED := $(if $(call check_cc_flags,-flto),1,$(call log_info,LTO is not supported by this toolchain))
 endif
 
-# Enable basic -Wall warnings on GCC/Clang 3.0+ if USE_WARNS >= 1
+# Enable basic warnings on GCC/Clang 3.0+ if USE_WARNS >= 1
 ifneq (,$(if $(filter g,$(call num_cmp,$(call var_use,USE_WARNS),0)),$(call gnuc_min_ver,3.0)))
 override WARN_OPTS := -Wall
 endif
 
-# Enable extra warnings on GCC/Clang 7.0+ if USE_WARNS >= 2
-ifneq (,$(if $(filter g,$(call num_cmp,$(call var_use,USE_WARNS),1)),$(call gnuc_min_ver,7.0)))
-override WARN_OPTS := -Wall -Wextra -Wcast-qual -Wcast-align -Wshadow -Werror=return-type
+# Enable extra warnings on GCC/Clang 5.0+ if USE_WARNS >= 2
+ifneq (,$(if $(filter g,$(call num_cmp,$(call var_use,USE_WARNS),1)),$(call gnuc_min_ver,5.0)))
+override WARN_OPTS := $(WARN_OPTS) -Wextra -Wshadow -Werror=return-type
 endif
 
-# Enable strict warnings (Strict safety & portability) on GCC/Clang 7.0+ if USE_WARNS >= 3
-# NOTE: -Wbad-function-cast needs fixes in codebase
+# Enable strict safety warnings on GCC/Clang 7.0+ if USE_WARNS >= 3
+# NOTE: -Wbad-function-cast, -Wconversion are counter-productive
 ifneq (,$(if $(filter g,$(call num_cmp,$(call var_use,USE_WARNS),2)),$(call gnuc_min_ver,7.0)))
-override WARN_OPTS := -Wall -Wextra -Wcast-qual -Wcast-align -Wshadow -Wvla -Wpointer-arith -Walloca -Wduplicated-cond \
--Wtrampolines -Wlarger-than=1048576 -Wframe-larger-than=32768 -Wdouble-promotion -Werror=return-type
+override WARN_OPTS := $(WARN_OPTS) -Wvla -Walloca -Wtrampolines -Wcast-qual -Wduplicated-cond
 endif
 
-# Enable C11/C++11 standard with GNU extensions, disallow K&R style functions on Clang 4.0+
+# Enable strict portability warnings on GCC/Clang 8.0+ if USE_WARNS >= 4
+ifneq (,$(if $(filter g,$(call num_cmp,$(call var_use,USE_WARNS),3)),$(call gnuc_min_ver,8.0)))
+override WARN_OPTS := $(WARN_OPTS) -Wcast-align=strict -Wpointer-arith \
+-Wfloat-conversion -Wdouble-promotion -Wlarger-than=1048576 -Wframe-larger-than=32768
+endif
+
+# Enable C11/C++11 standard, disallow K&R style functions on Clang 4.0+
 ifneq (,$(call clang_min_ver,4.0))
-override CC_STD  := -std=gnu11 -Wstrict-prototypes -Wold-style-definition
-override CXX_STD := -std=gnu++11
+override CC_STD  := -std=c11 -Wstrict-prototypes -Wold-style-definition
+override CXX_STD := -std=c++11
 endif
 
-# Enable C11/C++11 standard with GNU extensions, disallow K&R style functions on GCC 5.0+
+# Enable C11/C++11 standard, disallow K&R style functions on GCC 5.0+
 ifneq (,$(call gcc_min_ver,5.0))
-override CC_STD  := -std=gnu11 -Wstrict-prototypes -Wold-style-declaration -Wold-style-definition
-override CXX_STD := -std=gnu++11
+override CC_STD  := -std=c11 -Wstrict-prototypes -Wold-style-declaration -Wold-style-definition
+override CXX_STD := -std=c++11
 endif
 
 # Set compiler-specific optimization options
@@ -845,7 +845,7 @@ endif
 # Non-Windows (ELF) targets:
 # Enable -flto-incremental on GCC 15.0+
 # Enable -fno-plt -fno-semantic-interposition on GCC 6.0+
-# Enable -fvisibility=hidden -Bsymbolic-functions on GCC/Clang 4.0+
+# Enable -fvisibility=hidden -Bsymbolic on GCC/Clang 4.0+
 #
 # Enable -fanalyzer on USE_ANALYZER on GCC 10.1+
 override OPTIMIZE_OPTS := $(strip $(OPTIMIZE_OPTS) \
@@ -857,7 +857,7 @@ $(if $(LTO_SUPPORTED), \
 $(if $(filter-out windows,$(OS)), \
   $(if $(call gcc_min_ver,15.0),-flto-incremental=$(OBJDIR)) \
   $(if $(call gcc_min_ver,6.0),-fno-plt -fno-semantic-interposition) \
-  $(if $(call gnuc_min_ver,4.0),-fvisibility=hidden -Bsymbolic-functions)) \
+  $(if $(call gnuc_min_ver,4.0),-fvisibility=hidden -Bsymbolic)) \
 $(if $(call var_use,USE_ANALYZER), \
   $(if $(call gcc_min_ver,10.1),-fanalyzer)))
 
@@ -1081,15 +1081,16 @@ test: bin
 
 override CPPCHECK_OPTS := -q -f -j$(JOBS) --std=c99 -D__CPPCHECK__ -I$(SRCDIR) --inline-suppr --error-exitcode=1 --cppcheck-build-dir=$(OBJDIR) \
 --check-level=exhaustive --enable=all --inconclusive \
---suppress=unmatchedSuppression --suppress=missingIncludeSystem --suppress=missingInclude --suppress=syntaxError \
+--suppress=unmatchedSuppression --suppress=missingIncludeSystem --suppress=missingInclude --suppress=syntaxError --suppress=unreadVariable \
 --suppress=cstyleCast --suppress=unusedFunction --suppress=constParameterCallback --suppress=useStandardLibrary --suppress=uselessAssignmentArg \
-$(if $(filter l,$(call num_cmp,$(USE_WARNS),6)),--suppress=unusedStructMember --suppress=variableScope) \
-$(if $(filter l,$(call num_cmp,$(USE_WARNS),5)),--suppress=constParameterPointer --suppress=constVariablePointer) \
-$(if $(filter l,$(call num_cmp,$(USE_WARNS),4)),--suppress=knownConditionTrueFalse --suppress=badBitmaskCheck) \
-$(if $(filter l,$(call num_cmp,$(USE_WARNS),3)),--suppress=unreadVariable --suppress=constVariable) \
-$(if $(filter l,$(call num_cmp,$(USE_WARNS),2)),--suppress=funcArgNamesDifferent --suppress=shadowVariable) \
-$(if $(filter l,$(call num_cmp,$(USE_WARNS),1)),--suppress=truncLongCastAssignment --suppress=unreachableCode) \
-$(call var_src,CPPCHECK_SUPPRESSIONS) \
+--suppress=va_list_usedBeforeStarted --suppress=noExplicitConstructor  \
+$(if $(filter l,$(call num_cmp,$(USE_WARNS),7)),--suppress=constParameterPointer --suppress=constVariablePointer --suppress=variableScope) \
+$(if $(filter l,$(call num_cmp,$(USE_WARNS),6)),--suppress=knownConditionTrueFalse --suppress=badBitmaskCheck) \
+$(if $(filter l,$(call num_cmp,$(USE_WARNS),5)),--suppress=unusedStructMember) \
+$(if $(filter l,$(call num_cmp,$(USE_WARNS),4)),--suppress=constVariable) \
+$(if $(filter l,$(call num_cmp,$(USE_WARNS),3)),--suppress=funcArgNamesDifferent --suppress=shadowVariable) \
+$(if $(filter l,$(call num_cmp,$(USE_WARNS),2)),--suppress=truncLongCastAssignment --suppress=unreachableCode) \
+$(call var_src,CPPCHECK_SUPPRESSIONS)
 
 .PHONY: cppcheck    # Run cppcheck static analysis
 cppcheck:
