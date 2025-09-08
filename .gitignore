@@ -18,7 +18,8 @@
 # Ignore clang-analyzer output
 *.plist
 
-# Explicitly track source directory
+# Explicitly track source directories
+!/include
 !/src
 
 # Explicitly track build system
