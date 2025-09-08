@@ -17,10 +17,10 @@ project(RVVM VERSION ${RVVM_VERSION}
 #
 
 # CPU Features
-option(USE_RV32 "Enable riscv32 CPU" ON)
-option(USE_RV64 "Enable riscv64 CPU" ON)
-option(USE_FPU "Enable floating-point instructions" ON)
-option(USE_RVV "Enable vector instructions" OFF)
+option(USE_RV32 "Enable riscv32imacb CPU support" ON)
+option(USE_RV64 "Enable riscv64imacb CPU support" ON)
+option(USE_FPU  "Enable FPU extensions support" ON)
+option(USE_RVV  "Enable Vector extensions support" OFF)
 
 # Infrastructure
 option(USE_DEBUG "Enable debug logging / sanity checks" OFF)
@@ -76,6 +76,7 @@ endif()
 # Set up source & binary dirs, compiler & target specific build options
 #
 
+set(RVVM_INC_DIR "${CMAKE_SOURCE_DIR}/include")
 set(RVVM_SRC_DIR "${CMAKE_SOURCE_DIR}/src")
 
 # Fancy coloring
@@ -119,7 +120,7 @@ endif()
 
 # Common pseudo-library to pass parameters to other targets
 add_library(rvvm_common INTERFACE)
-target_include_directories(rvvm_common INTERFACE "${RVVM_SRC_DIR}")
+target_include_directories(rvvm_common INTERFACE "${RVVM_INC_DIR}" "${RVVM_SRC_DIR}")
 target_compile_definitions(rvvm_common INTERFACE "RVVM_VERSION=\"${RVVM_VERSION}\"")
 
 # Check and enable LTO
