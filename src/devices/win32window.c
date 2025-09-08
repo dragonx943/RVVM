@@ -27,7 +27,9 @@ PUSH_OPTIMIZATION_SIZE
 
 #include <windows.h>
 
-#define WINDOW_CLASS_NAME TEXT("LEKKIT_GUI_WINDOW")
+#define WINDOW_CLASS_NAME  TEXT("LEKKIT_GUI_WINDOW")
+
+#define WINDOW_STYLE_FLAGS (WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE)
 
 typedef struct {
     // Window handle
@@ -186,15 +188,22 @@ static LRESULT CALLBACK win32_wndproc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARA
     return DefWindowProc(hwnd, uMsg, wParam, lParam);
 }
 
-static void win32_adjust_client_rect(uint32_t* width, uint32_t* height)
+// Clip cursor to window client area
+static void win32_clip_cursor(win32_window_t* win32, bool clip)
 {
-    RECT rect = {
-        .right  = *width,
-        .bottom = *height,
-    };
-    AdjustWindowRectEx(&rect, WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, false, 0);
-    *width  = rect.right - rect.left;
-    *height = rect.bottom - rect.top;
+    if (clip) {
+        RECT rect = ZERO_INIT;
+        RECT adj  = ZERO_INIT;
+        GetWindowRect(win32->hwnd, &rect);
+        AdjustWindowRectEx(&adj, WINDOW_STYLE_FLAGS, false, 0);
+        rect.top    -= adj.top;
+        rect.left   -= adj.left;
+        rect.right  -= adj.right;
+        rect.bottom -= adj.bottom;
+        ClipCursor(&rect);
+    } else {
+        ClipCursor(NULL);
+    }
 }
 
 static void win32_window_remove(gui_window_t* win)
@@ -202,6 +211,7 @@ static void win32_window_remove(gui_window_t* win)
     win32_window_t* win32 = gui_backend_get_data(win);
     gui_backend_set_data(win, NULL);
     if (win32) {
+        win32_clip_cursor(win32, false);
         vma_free(gui_backend_get_vram(win), gui_backend_get_vram_size(win));
         if (win32->hdc) {
             ReleaseDC(win32->hwnd, win32->hdc);
@@ -280,11 +290,17 @@ static void win32_window_draw(gui_window_t* win)
 
         // Resize window if needed
         if (!rvvm_fb_same_res(fb, &win32->fb)) {
-            uint32_t flags  = SWP_DRAWFRAME | SWP_NOMOVE | SWP_NOZORDER | SWP_SHOWWINDOW;
-            uint32_t width  = rvvm_fb_width(fb);
-            uint32_t height = rvvm_fb_height(fb);
-            win32_adjust_client_rect(&width, &height);
-            SetWindowPos(win32->hwnd, NULL, 0, 0, width, height, flags);
+            RECT rect = {
+                .right  = rvvm_fb_width(fb),
+                .bottom = rvvm_fb_height(fb),
+            };
+            uint32_t flags = SWP_DRAWFRAME | SWP_NOMOVE | SWP_NOZORDER | SWP_SHOWWINDOW;
+            AdjustWindowRectEx(&rect, WINDOW_STYLE_FLAGS, false, 0);
+            SetWindowPos(win32->hwnd, NULL, 0, 0, rect.right - rect.left, rect.bottom - rect.top, flags);
+            if (win32->grab) {
+                // Update clip region
+                win32_clip_cursor(win32, true);
+            }
         }
 
         // Draw framebuffer
@@ -307,9 +323,17 @@ static void win32_window_poll(gui_window_t* win)
                     const rvvm_fb_t* fb = gui_backend_get_scanout(win);
                     if (fb) {
                         POINTS cur = MAKEPOINTS(Msg.lParam);
-                        int    dx  = (cur.x - (rvvm_fb_width(fb) >> 1));
-                        int    dy  = (cur.y - (rvvm_fb_height(fb) >> 1));
-                        gui_backend_on_mouse_move(win, dx - (dx / 3), dy - (dy / 3));
+                        POINT  mid = {
+                             .x = rvvm_fb_width(fb) >> 1,
+                             .y = rvvm_fb_height(fb) >> 1,
+                        };
+                        int dx = cur.x - mid.x;
+                        int dy = cur.y - mid.y;
+                        if (dx || dy) {
+                            ClientToScreen(win32->hwnd, &mid);
+                            SetCursorPos(mid.x, mid.y);
+                            gui_backend_on_mouse_move(win, dx - (dx / 3), dy - (dy / 3));
+                        }
                     }
                 } else {
                     POINTS cur = MAKEPOINTS(Msg.lParam);
@@ -361,17 +385,6 @@ static void win32_window_poll(gui_window_t* win)
                 break;
         }
     }
-    if (win32->grab) {
-        const rvvm_fb_t* fb = gui_backend_get_scanout(win);
-        if (fb) {
-            POINT mid = {
-                .x = rvvm_fb_width(fb) >> 1,
-                .y = rvvm_fb_height(fb) >> 1,
-            };
-            ClientToScreen(win32->hwnd, &mid);
-            SetCursorPos(mid.x, mid.y);
-        }
-    }
 }
 
 static void win32_window_set_title(gui_window_t* win, const char* title)
@@ -389,7 +402,10 @@ static void win32_window_set_title(gui_window_t* win, const char* title)
 static void win32_window_grab_input(gui_window_t* win, bool grab)
 {
     win32_window_t* win32 = gui_backend_get_data(win);
-    win32->grab           = grab;
+    if (win32->grab != grab) {
+        win32_clip_cursor(win32, grab);
+        win32->grab = grab;
+    }
 }
 
 static const gui_backend_cb_t win32_window_cb = {
@@ -436,13 +452,17 @@ bool win32_window_init(gui_window_t* win)
     const rvvm_fb_t* fb = gui_backend_get_scanout(win);
 
     // Adjust window rectangle
-    uint32_t width  = rvvm_fb_width(fb);
-    uint32_t height = rvvm_fb_height(fb);
-    win32_adjust_client_rect(&width, &height);
+    RECT rect = {
+        .right  = rvvm_fb_width(fb),
+        .bottom = rvvm_fb_height(fb),
+    };
+    AdjustWindowRectEx(&rect, WINDOW_STYLE_FLAGS, false, 0);
 
     // Create window
-    win32->hwnd = CreateWindow(WINDOW_CLASS_NAME, TEXT(""), WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE,
-                               CW_USEDEFAULT, CW_USEDEFAULT, width, height, NULL, NULL, GetModuleHandle(NULL), NULL);
+    win32->hwnd = CreateWindow(WINDOW_CLASS_NAME, TEXT(""), WINDOW_STYLE_FLAGS, //
+                               CW_USEDEFAULT, CW_USEDEFAULT,                    //
+                               rect.right - rect.left, rect.bottom - rect.top,  //
+                               NULL, NULL, GetModuleHandle(NULL), NULL);
 
     // Obtain device context
     if (win32->hwnd) {
