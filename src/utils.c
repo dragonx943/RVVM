@@ -847,6 +847,7 @@ PRINT_FORMAT void rvvm_fatal(const char* format_str, ...)
     va_end(args);
     stacktrace_print();
     abort();
+    // cppcheck-suppress unreachableCode
     must_never_reach();
 }
 
