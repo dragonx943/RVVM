@@ -281,7 +281,7 @@ int vma_anon_memfd(size_t size)
         char random_suffix[32] = {0};
         rvvm_randomserial(random_suffix, 16);
 #if HOST_TARGET_POSIX >= 199506L && !defined(HOST_TARGET_ANDROID) && !defined(HOST_TARGET_SERENITY)
-        if (memfd < 0) {
+        if (i < 5) {
             size_t off = rvvm_strlcpy(path, "/shm-vma-anon-", sizeof(path));
             rvvm_strlcpy(path + off, random_suffix, sizeof(path) - off);
             memfd = shm_open(path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
@@ -329,7 +329,8 @@ bool vma_broadcast_membarrier(void)
     // Use FlushProcessWriteBuffers() on Windows ARM64
     FlushProcessWriteBuffers();
     return true;
-#elif defined(VMA_MMAP_IMPL) && defined(HOST_TARGET_LINUX) && defined(__NR_membarrier)
+#else
+#if defined(VMA_MMAP_IMPL) && defined(HOST_TARGET_LINUX) && defined(__NR_membarrier)
     static uint32_t has_membarrier = 0;
     // Register intent to use private expedited membarrier
     DO_ONCE_SCOPED {
@@ -371,6 +372,7 @@ bool vma_broadcast_membarrier(void)
     }
 #endif
     return false;
+#endif
 }
 
 static void* vma_mmap_aligned_internal(void* addr, size_t size, uint32_t flags, rvfile_t* file, uint64_t offset)
