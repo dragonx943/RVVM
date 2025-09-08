@@ -912,7 +912,7 @@ static const gui_backend_cb_t sdl_window_cb = {
 
 bool sdl_window_init(gui_window_t* win)
 {
-    static bool sdl_avail = false;
+    static bool sdl_avail = true;
 
     // Register SDL backend
     sdl_window_t* sdl = safe_new_obj(sdl_window_t);
@@ -936,10 +936,10 @@ bool sdl_window_init(gui_window_t* win)
             rvvm_error("Failed to load lib" SDL_LIB_NAME ", check your installation");
         }
     }
+#endif
     if (!sdl_avail) {
         return false;
     }
-#endif
 
     // Perform SDL Video subsystem init if needed
     if (!vector_size(sdl_windows)) {
