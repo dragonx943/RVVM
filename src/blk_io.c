@@ -113,7 +113,7 @@ static bool rvfile_win32_has_threaded_io(void)
     uint32_t        tmp  = atomic_load_uint32_relax(&flag);
     if (!(tmp & 2)) {
         tmp = GetVersion();
-        tmp = 2 | !!(((uint8_t)tmp) >= 5);
+        tmp = 2 | (uint32_t)(((uint8_t)tmp) >= 5);
         atomic_store_uint32_relax(&flag, tmp);
     }
     return !!(tmp & 1);
