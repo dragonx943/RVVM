@@ -24,10 +24,68 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 RVVM_EXTERN_C_BEGIN
 
-/* TODO: Full C89 support in public headers? */
-#include <stdbool.h>
+/* For size_t, NULL */
 #include <stddef.h>
+
+#if defined(__GNUC__) || defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
+/* For bool, uint32_t, etc */
+#include <stdbool.h>
 #include <stdint.h>
+#else
+/* Pre-C99 translation unit, expose C99 definitions for public headers */
+#if defined(_MSC_VER) && _MSC_VER <= 1500
+typedef int _Bool;
+#endif
+typedef signed char    __int8_t;
+typedef unsigned char  __uint8_t;
+typedef signed short   __int16_t;
+typedef unsigned short __uint16_t;
+typedef signed int     __int32_t;
+typedef unsigned int   __uint32_t;
+#if defined(__LP64__)
+typedef signed long int   __int64_t;
+typedef unsigned long int __uint64_t;
+#else
+typedef signed long long   __int64_t;
+typedef unsigned long long __uint64_t;
+#endif
+/* Replace <stdbool.h> */
+#if !defined(__bool_true_false_are_defined)
+#define __bool_true_false_are_defined 1
+#undef bool
+#define bool _Bool
+#undef false
+#define false 0
+#undef true
+#define true 0
+#endif
+/* Replace <stdint.h> */
+#undef int8_t
+#define int8_t __int8_t
+#undef uint8_t
+#define uint8_t __uint8_t
+#undef int16_t
+#define int16_t __int16_t
+#undef uint16_t
+#define uint16_t __uint16_t
+#undef int32_t
+#define int32_t __int32_t
+#undef uint32_t
+#define uint32_t __uint32_t
+#undef int64_t
+#define int64_t __int64_t
+#undef uint64_t
+#define uint64_t __uint64_t
+/* Expose inline attribute */
+#undef inline
+#if defined(_MSC_VER)
+#define inline __inline
+#elif defined(__GNUC__)
+#define inline __inline__
+#else
+#define inline
+#endif
+#endif
 
 #if !defined(RVVM_STATIC) && (defined(_WIN32) || defined(__CYGWIN__)) && defined(USE_LIB)
 /* Mark symbols as dllexport when building shared librvvm */
