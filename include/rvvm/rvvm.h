@@ -29,7 +29,9 @@ RVVM_EXTERN_C_BEGIN
 
 #if defined(__GNUC__) || defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
 /* For bool, uint32_t, etc */
+#if __STDC_VERSION__ < 202311L
 #include <stdbool.h>
+#endif
 #include <stdint.h>
 #else
 /* Pre-C99 translation unit, expose C99 definitions for public headers */
