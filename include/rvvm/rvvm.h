@@ -76,15 +76,16 @@ typedef unsigned long long __uint64_t;
 #define int64_t __int64_t
 #undef uint64_t
 #define uint64_t __uint64_t
+#endif
+
 /* Expose inline attribute */
 #undef inline
-#if defined(_MSC_VER)
+#if !(defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L) && defined(_MSC_VER)
 #define inline __inline
-#elif defined(__GNUC__)
+#elif !(defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L) && defined(__GNUC__)
 #define inline __inline__
-#else
+#elif !(defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L)
 #define inline
-#endif
 #endif
 
 #if !defined(RVVM_STATIC) && (defined(_WIN32) || defined(__CYGWIN__)) && defined(USE_LIB)
