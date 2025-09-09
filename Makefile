@@ -455,7 +455,7 @@ override LIB_EXT := .so
 ifeq ($(OS),windows)
 override BIN_EXT := .exe
 override LIB_EXT := .dll
-override LDFLAGS := $(LDFLAGS) -static -Wl$(COMMA)--subsystem$(COMMA)console:3.10
+override LDFLAGS := $(LDFLAGS) -static -Wl$(COMMA)--subsystem$(COMMA)console:3.10 -Wl$(COMMA)--exclude-all-symbols
 endif
 
 # MacOS: Use .dylib lib extension
@@ -607,9 +607,10 @@ USE_FPU ?= 1
 USE_NET ?= 0
 USE_SDL ?= 0
 
-override DEPS_USE_LTO        := CC_IS_GNU
-override DEPS_USE_LIB        := CC_IS_GNU
-override DEPS_USE_LIB_STATIC := USE_OBJ_STAGE
+override DEPS_USE_LTO         := CC_IS_GNU
+override DEPS_USE_LIB         := CC_IS_GNU
+override DEPS_USE_LIB_STATIC  := USE_OBJ_STAGE
+override DEPS_USE_LIB_SHARING := USE_LIB
 
 override DEPS_USE_UBSAN := CC_IS_GNU
 override DEPS_USE_ASAN  := CC_IS_GNU
