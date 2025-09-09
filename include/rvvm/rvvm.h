@@ -29,11 +29,14 @@ RVVM_EXTERN_C_BEGIN
 #include <stddef.h>
 #include <stdint.h>
 
-#if (defined(_WIN32) || defined(__CYGWIN__)) && defined(RVVMLIB_SHARED)
-#define RVVM_PUBLIC __declspec(dllimport)
-#elif (defined(_WIN32) || defined(__CYGWIN__)) && defined(USE_LIB)
+#if !defined(RVVM_STATIC) && (defined(_WIN32) || defined(__CYGWIN__)) && defined(USE_LIB)
+/* Mark symbols as dllexport when building shared librvvm */
 #define RVVM_PUBLIC __declspec(dllexport)
-#elif defined(__GNUC__) && __GNUC__ >= 4 && (defined(RVVMLIB_SHARED) || defined(USE_LIB))
+#elif !defined(RVVM_STATIC) && (defined(_WIN32) || defined(__CYGWIN__)) && !defined(RVVM_VERSION)
+/* Mark symbols as dllimport when linking to shared librvvm */
+#define RVVM_PUBLIC __declspec(dllimport)
+#elif !defined(RVVM_STATIC) && defined(__GNUC__) && __GNUC__ >= 4 && (!defined(RVVM_VERSION) || defined(USE_LIB))
+/* Mark symbols as visible when building/linking to shared librvvm */
 #define RVVM_PUBLIC __attribute__((__visibility__("default")))
 #else
 #define RVVM_PUBLIC
