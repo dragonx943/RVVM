@@ -280,7 +280,7 @@ void HaikuGUIView::MessageReceived(BMessage* msg)
             return;
         case B_MOUSE_MOVED:
             msg->FindPoint("where", &point);
-            gui_backend_on_mouse_place(m_win, point.x, point.y);
+            gui_backend_on_mouse_place(m_win, (int32_t)point.x, (int32_t)point.y);
             return;
         case B_MOUSE_WHEEL_CHANGED:
             msg->FindFloat("be:wheel_delta_y", &wheel);
