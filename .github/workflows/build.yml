@@ -16,6 +16,7 @@ jobs:
     env:
       BUILDDIR: build
       USE_ANALYZER: 1
+      USE_LIBS_PROBE: 1
 
     strategy:
       fail-fast: false
