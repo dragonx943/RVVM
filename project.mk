@@ -78,6 +78,7 @@ USE_VFIO ?= 1 # Support PCIe VFIO pass-through on Linux hosts
 
 # Infrastructure
 USE_INFRA_TESTS ?= 0 # Build infrastructure tests
+USE_LIBS_PROBE  ?= 0 # Probe libraries in runtime instead of linking to them
 USE_LOCK_DEBUG  ?= 1 # Runtime lock debugging & locking debug info
 USE_ISOLATION   ?= 1 # Process isolation via seccomp/pledge
 USE_JNI         ?= 1 # Enable JNI support in librvvm
@@ -90,7 +91,6 @@ USE_KVM ?= 0
 # Misc toggles for debugging host platform/compiler issues
 USE_NO_STACKTRACE ?= 0 # Disable post-mortem crash stacktraces
 USE_NO_DLIB       ?= 0 # Disable dynamic library/symbol probing via dlsym()/GetProcAddress()
-USE_FULL_LINKING  ?= 0 # Actually link to used libraries instead of dlib probing
 USE_STDIO         ?= 0 # Use non-threaded stdio fallback IO backend (Instead of Win32/POSIX)
 USE_SELECT        ?= 0 # Use select() event interface fallback for networking (Instead of epoll/kqueue)
 
@@ -168,7 +168,7 @@ override lib_src_rvvm_libretro := $(SRCDIR)/bindings/libretro/libretro.c
 override lib_src_rvvm          := $(filter-out $(bin_src_rvvm) $(lib_src_rvvm_libretro),$(call recursive_match,$(SRCDIR),*.c *.cpp *.cc *.cxx))
 
 override bin_libs_rvvm := rvvm
-override lib_libs_rvvm := $(if $(call var_use,USE_FULL_LINKING),$(LIBS_USE_SDL) $(LIBS_USE_X11) $(LIBS_USE_WAYLAND))
+override lib_libs_rvvm := $(if $(call var_use,USE_LIBS_PROBE),,$(LIBS_USE_SDL) $(LIBS_USE_X11) $(LIBS_USE_WAYLAND))
 
 #
 # Tests
