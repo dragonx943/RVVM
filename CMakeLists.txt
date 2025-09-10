@@ -7,6 +7,9 @@ set(RVVM_VERSION 0.7)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 11)
 
+# Export compile_commands.json for clangd
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 project(RVVM VERSION ${RVVM_VERSION}
 	DESCRIPTION "RISC-V Virtual Machine"
 	HOMEPAGE_URL "https://github.com/LekKit/RVVM"
@@ -239,7 +242,7 @@ endif()
 set(LIBS_USE_WIN32_GUI "gdi32")
 set(LIBS_USE_HAIKU_GUI "be")
 
-if (USE_FULL_LINKING)
+if (NOT USE_LIBS_PROBE)
 	if (USE_SDL EQUAL 1)
 		set(LIBS_USE_SDL "SDL")
 	elseif (USE_SDL EQUAL 2)
