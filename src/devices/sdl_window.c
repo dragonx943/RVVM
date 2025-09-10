@@ -18,10 +18,9 @@ PUSH_OPTIMIZATION_SIZE
  * Check library availability
  */
 
-#if !defined(USE_FULL_LINKING) /**/                                                                                    \
-    && (defined(COMPILER_IS_MSVC) || defined(HOST_TARGET_EMSCRIPTEN) || defined(HOST_TARGET_REDOX))
+#if defined(COMPILER_IS_MSVC) || defined(HOST_TARGET_EMSCRIPTEN) || defined(HOST_TARGET_REDOX)
 // MSVC compiler, Emscripten and Redox OS can't handle dynamic library loading
-#define USE_FULL_LINKING 1
+#undef USE_LIBS_PROBE
 #endif
 
 #if defined(USE_SDL) && USE_SDL == 1 && CHECK_INCLUDE(SDL/SDL.h, 1)
@@ -66,7 +65,7 @@ PUSH_OPTIMIZATION_SIZE
 
 #define SDL_LIB_NAME "SDL"
 
-#if !defined(USE_FULL_LINKING)
+#if defined(USE_LIBS_PROBE)
 
 SDL_DLIB_SYM(SDL_SetVideoMode)
 SDL_DLIB_SYM(SDL_CreateRGBSurfaceFrom)
@@ -205,7 +204,7 @@ static const hid_key_t sdl_key_to_hid_byte_map[] = {
 
 #define SDL_LIB_NAME "SDL3"
 
-#if !defined(USE_FULL_LINKING)
+#if defined(USE_LIBS_PROBE)
 
 SDL_DLIB_SYM(SDL_HideCursor)
 SDL_DLIB_SYM(SDL_RenderTexture)
@@ -231,7 +230,7 @@ SDL_DLIB_SYM(SDL_SetWindowKeyboardGrab)
 #define SDL_PIXELFORMAT_XBGR8888 SDL_PIXELFORMAT_BGR888
 #endif
 
-#if !defined(USE_FULL_LINKING)
+#if defined(USE_LIBS_PROBE)
 
 SDL_DLIB_SYM(SDL_RenderCopy)
 SDL_DLIB_SYM(SDL_SetWindowGrab)
@@ -245,7 +244,7 @@ SDL_DLIB_SYM(SDL_SetRelativeMouseMode)
 
 #endif
 
-#if !defined(USE_FULL_LINKING)
+#if defined(USE_LIBS_PROBE)
 
 SDL_DLIB_SYM(SDL_GetCurrentVideoDriver)
 SDL_DLIB_SYM(SDL_SetHint)
@@ -399,7 +398,7 @@ static const hid_key_t sdl_key_to_hid_byte_map[] = {
 
 #endif
 
-#if !defined(USE_FULL_LINKING)
+#if defined(USE_LIBS_PROBE)
 
 SDL_DLIB_SYM(SDL_Init)
 SDL_DLIB_SYM(SDL_PollEvent)
@@ -841,7 +840,7 @@ static void sdl_window_grab_input(gui_window_t* win, bool grab)
     }
 }
 
-#if !defined(USE_FULL_LINKING)
+#if defined(USE_LIBS_PROBE)
 
 #define SDL_DLIB_RESOLVE(lib, sym)                                                                                     \
     do {                                                                                                               \
@@ -928,7 +927,7 @@ bool sdl_window_init(gui_window_t* win)
     setenv("SDL_VIDEO_DRIVER", "x11,wayland,kmsdrm,directfb,fbcon", true);
 #endif
 
-#if !defined(USE_FULL_LINKING)
+#if defined(USE_LIBS_PROBE)
     DO_ONCE_SCOPED {
         // Load libSDL
         sdl_avail = sdl_init_libs();
