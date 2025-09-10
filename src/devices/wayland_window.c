@@ -45,7 +45,7 @@ PUSH_OPTIMIZATION_SIZE
 #include <wayland-client-core.h>
 #include <xkbcommon/xkbcommon.h>
 
-#if !defined(USE_FULL_LINKING)
+#if defined(USE_LIBS_PROBE)
 
 // Resolve symbols at runtime
 #define WAYLAND_DLIB_SYM(sym) static __typeof__(sym)* MACRO_CONCAT(sym, _dlib) = NULL;
@@ -767,7 +767,7 @@ static const struct wl_registry_listener registry_listener = {
  * Wayland libraries probing
  */
 
-#if !defined(USE_FULL_LINKING)
+#if defined(USE_LIBS_PROBE)
 
 #define WAYLAND_DLIB_RESOLVE(lib, sym)                                                                                 \
     do {                                                                                                               \
@@ -847,7 +847,7 @@ static void* wl_event_worker(void* arg)
 // NOTE: Must be called when wl_windows != 0
 static bool wayland_global_init(void)
 {
-#if !defined(USE_FULL_LINKING)
+#if defined(USE_LIBS_PROBE)
     static bool wl_avail = false;
     DO_ONCE_SCOPED {
         wl_avail = wayland_init_libs();
