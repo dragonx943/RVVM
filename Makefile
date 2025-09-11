@@ -473,6 +473,15 @@ ifneq (,$(filter cosmo redox,$(OS)))
 USE_LIB ?= 0
 endif
 
+# AmigaOS: Disable USE_LTO, USE_LIB, USE_NET
+ifeq ($(OS),amigaos)
+override LIB_EXT := .library
+override CFLAGS  := $(CFLAGS) -noixemul
+USE_LTO ?= 0
+USE_LIB ?= 0
+USE_NET ?= 0
+endif
+
 # Emscripten: Use .mjs extension, disable shared library support
 # Disable setjmp & implicit traps for optimization, enable pthreads + main thread proxying, allow memory growth, enable full filesystem & fetch API
 ifeq ($(OS),emscripten)
@@ -618,7 +627,7 @@ override DEPS_USE_TSAN  := CC_IS_CLANG
 override DEPS_USE_MSAN  := CC_IS_CLANG
 
 override CFLAGS_USE_DEBUG := -DDEBUG -g -fno-omit-frame-pointer
-override CFLAGS_USE_LIB   := $(if $(filter-out windows,$(OS)),-fPIC)
+override CFLAGS_USE_LIB   := $(if $(filter-out windows amigaos,$(OS)),-fPIC)
 override CFLAGS_USE_UBSAN := -fsanitize=undefined,float-cast-overflow -fsanitize-recover=undefined,float-cast-overflow
 override CFLAGS_USE_ASAN  := -fsanitize=address -fsanitize-recover=address
 override CFLAGS_USE_TSAN  := -fsanitize=thread -fsanitize-recover=thread
@@ -842,7 +851,7 @@ endif
 # Default to -march=i586 for 32-bit x86
 # Enable -flto=auto on GCC 5.0+, -flto on Clang 5.0+
 #
-# Non-Windows (ELF) targets:
+# Non-ELF targets (Windows, AmigaOS):
 # Enable -flto-incremental on GCC 15.0+
 # Enable -fno-plt -fno-semantic-interposition on GCC 6.0+
 # Enable -fvisibility=hidden -Bsymbolic on GCC/Clang 4.0+
@@ -854,7 +863,7 @@ $(if $(filter i386,$(ARCH)), \
 $(if $(LTO_SUPPORTED), \
   $(if $(call gcc_min_ver,5.0),-flto=auto) \
   $(if $(call clang_min_ver,5.0),-flto)) \
-$(if $(filter-out windows,$(OS)), \
+$(if $(filter-out windows amigaos,$(OS)), \
   $(if $(call gcc_min_ver,15.0),-flto-incremental=$(OBJDIR)) \
   $(if $(call gcc_min_ver,6.0),-fno-plt -fno-semantic-interposition) \
   $(if $(call gnuc_min_ver,4.0),-fvisibility=hidden -Bsymbolic)) \
