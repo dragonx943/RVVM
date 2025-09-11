@@ -29,7 +29,7 @@ RVVM_EXTERN_C_BEGIN
 
 #if defined(__GNUC__) || defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
 /* For bool, uint32_t, etc */
-#if __STDC_VERSION__ < 202311L
+#if __STDC_VERSION__ < 202311L && !defined(__cplusplus)
 #include <stdbool.h>
 #endif
 #include <stdint.h>
@@ -52,7 +52,7 @@ typedef signed long long   __int64_t;
 typedef unsigned long long __uint64_t;
 #endif
 /* Replace <stdbool.h> */
-#if !defined(__bool_true_false_are_defined)
+#if !defined(__bool_true_false_are_defined) && !defined(__cplusplus)
 #define __bool_true_false_are_defined 1
 #undef bool
 #define bool _Bool
