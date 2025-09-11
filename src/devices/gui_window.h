@@ -170,6 +170,13 @@ static inline const fb_ctx_t* gui_backend_get_scanout(gui_window_t* win)
     return win ? &win->fb : 0;
 }
 
+static inline bool gui_backend_allow_shrink(gui_window_t* win)
+{
+    // TODO: Window resize handling
+    (void)win;
+    return false;
+}
+
 static inline void gui_backend_on_close(gui_window_t* win)
 {
     if (win && win->on_close) {
@@ -182,6 +189,12 @@ static inline void gui_backend_on_focus_lost(gui_window_t* win)
     if (win && win->on_focus_lost) {
         win->on_focus_lost(win);
     }
+}
+
+static inline void gui_backend_on_resize(gui_window_t* win, uint32_t w, uint32_t h)
+{
+    // TODO: Window resize handling
+    (void)(win && w && h);
 }
 
 static inline void gui_backend_on_paste(gui_window_t* win, const char* str)
