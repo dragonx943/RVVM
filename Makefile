@@ -568,7 +568,7 @@ override BUILDDIR := $(call path_wrap,$(BUILDDIR))
 override OBJDIR   := $(call path_wrap,$(OBJDIR))
 
 override NAME_LOWER := $(call tolower,$(NAME))
-override NAME_UPPER := $(call toupper,$(NAME))
+override NAME_UPPER := $(call toupper,$(subst -,_,$(NAME)))
 
 override BIN_BASE_LIST := $(call bin_base,$(call path_make,$(call var_src,BIN_TARGETS)))
 override LIB_BASE_LIST := $(call lib_base,$(call path_make,$(call var_src,LIB_TARGETS)))
