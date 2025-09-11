@@ -1,5 +1,5 @@
 /*
-sdl_window.c - SDL1 / SDL2 / SDL3 RVVM Window
+sdl_window.c - SDL1 / SDL2 / SDL3 GUI Window
 Copyright (C) 2022  LekKit <github.com/LekKit>
 
 This Source Code Form is subject to the terms of the Mozilla Public
@@ -53,227 +53,61 @@ PUSH_OPTIMIZATION_SIZE
 
 #if defined(USE_SDL)
 
-#include "dlib.h"
 #include "utils.h"
 #include "vector.h"
 #include "vma_ops.h"
 
+#if defined(USE_LIBS_PROBE)
+
 // Resolve symbols at runtime
+#include "dlib.h"
+
 #define SDL_DLIB_SYM(sym) static __typeof__(sym)* MACRO_CONCAT(sym, _dlib) = NULL;
 
-#if USE_SDL == 1
+SDL_DLIB_SYM(SDL_Init)
+SDL_DLIB_SYM(SDL_PollEvent)
+SDL_DLIB_SYM(SDL_QuitSubSystem)
+SDL_DLIB_SYM(SDL_ShowCursor)
 
-#define SDL_LIB_NAME "SDL"
+#define SDL_Init          SDL_Init_dlib
+#define SDL_PollEvent     SDL_PollEvent_dlib
+#define SDL_QuitSubSystem SDL_QuitSubSystem_dlib
+#define SDL_ShowCursor    SDL_ShowCursor_dlib
+
+#endif
+
+#if USE_SDL >= 2
 
 #if defined(USE_LIBS_PROBE)
-
-SDL_DLIB_SYM(SDL_SetVideoMode)
-SDL_DLIB_SYM(SDL_CreateRGBSurfaceFrom)
-SDL_DLIB_SYM(SDL_UpperBlit)
-SDL_DLIB_SYM(SDL_Flip)
-SDL_DLIB_SYM(SDL_WM_GrabInput)
-SDL_DLIB_SYM(SDL_WM_SetCaption)
-SDL_DLIB_SYM(SDL_FreeSurface)
-
-#define SDL_SetVideoMode         SDL_SetVideoMode_dlib
-#define SDL_CreateRGBSurfaceFrom SDL_CreateRGBSurfaceFrom_dlib
-#define SDL_UpperBlit            SDL_UpperBlit_dlib
-#define SDL_Flip                 SDL_Flip_dlib
-#define SDL_WM_GrabInput         SDL_WM_GrabInput_dlib
-#define SDL_WM_SetCaption        SDL_WM_SetCaption_dlib
-#define SDL_FreeSurface          SDL_FreeSurface_dlib
-
-#endif
-
-static const hid_key_t sdl_key_to_hid_byte_map[] = {
-    [SDLK_a]            = HID_KEY_A,
-    [SDLK_b]            = HID_KEY_B,
-    [SDLK_c]            = HID_KEY_C,
-    [SDLK_d]            = HID_KEY_D,
-    [SDLK_e]            = HID_KEY_E,
-    [SDLK_f]            = HID_KEY_F,
-    [SDLK_g]            = HID_KEY_G,
-    [SDLK_h]            = HID_KEY_H,
-    [SDLK_i]            = HID_KEY_I,
-    [SDLK_j]            = HID_KEY_J,
-    [SDLK_k]            = HID_KEY_K,
-    [SDLK_l]            = HID_KEY_L,
-    [SDLK_m]            = HID_KEY_M,
-    [SDLK_n]            = HID_KEY_N,
-    [SDLK_o]            = HID_KEY_O,
-    [SDLK_p]            = HID_KEY_P,
-    [SDLK_q]            = HID_KEY_Q,
-    [SDLK_r]            = HID_KEY_R,
-    [SDLK_s]            = HID_KEY_S,
-    [SDLK_t]            = HID_KEY_T,
-    [SDLK_u]            = HID_KEY_U,
-    [SDLK_v]            = HID_KEY_V,
-    [SDLK_w]            = HID_KEY_W,
-    [SDLK_x]            = HID_KEY_X,
-    [SDLK_y]            = HID_KEY_Y,
-    [SDLK_z]            = HID_KEY_Z,
-    [SDLK_0]            = HID_KEY_0,
-    [SDLK_1]            = HID_KEY_1,
-    [SDLK_2]            = HID_KEY_2,
-    [SDLK_3]            = HID_KEY_3,
-    [SDLK_4]            = HID_KEY_4,
-    [SDLK_5]            = HID_KEY_5,
-    [SDLK_6]            = HID_KEY_6,
-    [SDLK_7]            = HID_KEY_7,
-    [SDLK_8]            = HID_KEY_8,
-    [SDLK_9]            = HID_KEY_9,
-    [SDLK_RETURN]       = HID_KEY_ENTER,
-    [SDLK_ESCAPE]       = HID_KEY_ESC,
-    [SDLK_BACKSPACE]    = HID_KEY_BACKSPACE,
-    [SDLK_TAB]          = HID_KEY_TAB,
-    [SDLK_SPACE]        = HID_KEY_SPACE,
-    [SDLK_MINUS]        = HID_KEY_MINUS,
-    [SDLK_EQUALS]       = HID_KEY_EQUAL,
-    [SDLK_LEFTBRACKET]  = HID_KEY_LEFTBRACE,
-    [SDLK_RIGHTBRACKET] = HID_KEY_RIGHTBRACE,
-    [SDLK_BACKSLASH]    = HID_KEY_BACKSLASH,
-    [SDLK_SEMICOLON]    = HID_KEY_SEMICOLON,
-    [SDLK_QUOTE]        = HID_KEY_APOSTROPHE,
-    [SDLK_BACKQUOTE]    = HID_KEY_GRAVE,
-    [SDLK_COMMA]        = HID_KEY_COMMA,
-    [SDLK_PERIOD]       = HID_KEY_DOT,
-    [SDLK_SLASH]        = HID_KEY_SLASH,
-    [SDLK_CAPSLOCK]     = HID_KEY_CAPSLOCK,
-    [SDLK_LCTRL]        = HID_KEY_LEFTCTRL,
-    [SDLK_LSHIFT]       = HID_KEY_LEFTSHIFT,
-    [SDLK_LALT]         = HID_KEY_LEFTALT,
-    [SDLK_LMETA]        = HID_KEY_LEFTMETA,
-    [SDLK_RCTRL]        = HID_KEY_RIGHTCTRL,
-    [SDLK_RSHIFT]       = HID_KEY_RIGHTSHIFT,
-    [SDLK_RALT]         = HID_KEY_RIGHTALT,
-    [SDLK_RMETA]        = HID_KEY_RIGHTMETA,
-    [SDLK_F1]           = HID_KEY_F1,
-    [SDLK_F2]           = HID_KEY_F2,
-    [SDLK_F3]           = HID_KEY_F3,
-    [SDLK_F4]           = HID_KEY_F4,
-    [SDLK_F5]           = HID_KEY_F5,
-    [SDLK_F6]           = HID_KEY_F6,
-    [SDLK_F7]           = HID_KEY_F7,
-    [SDLK_F8]           = HID_KEY_F8,
-    [SDLK_F9]           = HID_KEY_F9,
-    [SDLK_F10]          = HID_KEY_F10,
-    [SDLK_F11]          = HID_KEY_F11,
-    [SDLK_F12]          = HID_KEY_F12,
-    [SDLK_SYSREQ]       = HID_KEY_SYSRQ,
-    [SDLK_SCROLLOCK]    = HID_KEY_SCROLLLOCK,
-    [SDLK_PAUSE]        = HID_KEY_PAUSE,
-    [SDLK_INSERT]       = HID_KEY_INSERT,
-    [SDLK_HOME]         = HID_KEY_HOME,
-    [SDLK_PAGEUP]       = HID_KEY_PAGEUP,
-    [SDLK_DELETE]       = HID_KEY_DELETE,
-    [SDLK_END]          = HID_KEY_END,
-    [SDLK_PAGEDOWN]     = HID_KEY_PAGEDOWN,
-    [SDLK_RIGHT]        = HID_KEY_RIGHT,
-    [SDLK_LEFT]         = HID_KEY_LEFT,
-    [SDLK_DOWN]         = HID_KEY_DOWN,
-    [SDLK_UP]           = HID_KEY_UP,
-    [SDLK_NUMLOCK]      = HID_KEY_NUMLOCK,
-    [SDLK_KP_DIVIDE]    = HID_KEY_KPSLASH,
-    [SDLK_KP_MULTIPLY]  = HID_KEY_KPASTERISK,
-    [SDLK_KP_MINUS]     = HID_KEY_KPMINUS,
-    [SDLK_KP_PLUS]      = HID_KEY_KPPLUS,
-    [SDLK_KP_ENTER]     = HID_KEY_KPENTER,
-    [SDLK_KP1]          = HID_KEY_KP1,
-    [SDLK_KP2]          = HID_KEY_KP2,
-    [SDLK_KP3]          = HID_KEY_KP3,
-    [SDLK_KP4]          = HID_KEY_KP4,
-    [SDLK_KP5]          = HID_KEY_KP5,
-    [SDLK_KP6]          = HID_KEY_KP6,
-    [SDLK_KP7]          = HID_KEY_KP7,
-    [SDLK_KP8]          = HID_KEY_KP8,
-    [SDLK_KP9]          = HID_KEY_KP9,
-    [SDLK_KP0]          = HID_KEY_KP0,
-    [SDLK_KP_PERIOD]    = HID_KEY_KPDOT,
-    [SDLK_MENU]         = HID_KEY_MENU,
-#if defined(HOST_TARGET_EMSCRIPTEN)
-    // I dunno why, I don't want to know why,
-    // but some Emscripten SDL keycodes are plain wrong..
-    [0xbb] = HID_KEY_EQUAL,
-    [0xbd] = HID_KEY_MINUS,
-#endif
-};
-
-#else
-
-#if USE_SDL == 3
-
-#define SDL_LIB_NAME "SDL3"
-
-#if defined(USE_LIBS_PROBE)
-
-SDL_DLIB_SYM(SDL_HideCursor)
-SDL_DLIB_SYM(SDL_RenderTexture)
-SDL_DLIB_SYM(SDL_SetWindowRelativeMouseMode)
-SDL_DLIB_SYM(SDL_SetWindowMouseGrab)
-SDL_DLIB_SYM(SDL_SetWindowKeyboardGrab)
-
-#define SDL_HideCursor                 SDL_HideCursor_dlib
-#define SDL_RenderTexture              SDL_RenderTexture_dlib
-#define SDL_SetWindowRelativeMouseMode SDL_SetWindowRelativeMouseMode_dlib
-#define SDL_SetWindowMouseGrab         SDL_SetWindowMouseGrab_dlib
-#define SDL_SetWindowKeyboardGrab      SDL_SetWindowKeyboardGrab_dlib
-
-#endif
-
-#elif USE_SDL == 2
-
-#define SDL_LIB_NAME "SDL2"
-
-#if SDL_MAJOR_VERSION == 2 && SDL_MINOR_VERSION < 14
-// Support pre SDL 2.14
-#define SDL_PIXELFORMAT_XRGB8888 SDL_PIXELFORMAT_RGB888
-#define SDL_PIXELFORMAT_XBGR8888 SDL_PIXELFORMAT_BGR888
-#endif
-
-#if defined(USE_LIBS_PROBE)
-
-SDL_DLIB_SYM(SDL_RenderCopy)
-SDL_DLIB_SYM(SDL_SetWindowGrab)
-SDL_DLIB_SYM(SDL_SetRelativeMouseMode)
-
-#define SDL_RenderCopy           SDL_RenderCopy_dlib
-#define SDL_SetWindowGrab        SDL_SetWindowGrab_dlib
-#define SDL_SetRelativeMouseMode SDL_SetRelativeMouseMode_dlib
-
-#endif
-
-#endif
-
-#if defined(USE_LIBS_PROBE)
-
-SDL_DLIB_SYM(SDL_GetCurrentVideoDriver)
-SDL_DLIB_SYM(SDL_SetHint)
-SDL_DLIB_SYM(SDL_CreateWindow)
 SDL_DLIB_SYM(SDL_CreateRenderer)
 SDL_DLIB_SYM(SDL_CreateTexture)
-SDL_DLIB_SYM(SDL_UpdateTexture)
-SDL_DLIB_SYM(SDL_RenderPresent)
+SDL_DLIB_SYM(SDL_CreateWindow)
+SDL_DLIB_SYM(SDL_DestroyRenderer)
+SDL_DLIB_SYM(SDL_DestroyTexture)
+SDL_DLIB_SYM(SDL_DestroyWindow)
+SDL_DLIB_SYM(SDL_GetCurrentVideoDriver)
 SDL_DLIB_SYM(SDL_GetWindowID)
+SDL_DLIB_SYM(SDL_RenderPresent)
+SDL_DLIB_SYM(SDL_SetHint)
+SDL_DLIB_SYM(SDL_SetWindowMinimumSize)
 SDL_DLIB_SYM(SDL_SetWindowSize)
 SDL_DLIB_SYM(SDL_SetWindowTitle)
-SDL_DLIB_SYM(SDL_DestroyTexture)
-SDL_DLIB_SYM(SDL_DestroyRenderer)
-SDL_DLIB_SYM(SDL_DestroyWindow)
+SDL_DLIB_SYM(SDL_UpdateTexture)
 
-#define SDL_GetCurrentVideoDriver SDL_GetCurrentVideoDriver_dlib
-#define SDL_SetHint               SDL_SetHint_dlib
-#define SDL_CreateWindow          SDL_CreateWindow_dlib
 #define SDL_CreateRenderer        SDL_CreateRenderer_dlib
 #define SDL_CreateTexture         SDL_CreateTexture_dlib
-#define SDL_UpdateTexture         SDL_UpdateTexture_dlib
-#define SDL_RenderPresent         SDL_RenderPresent_dlib
+#define SDL_CreateWindow          SDL_CreateWindow_dlib
+#define SDL_DestroyRenderer       SDL_DestroyRenderer_dlib
+#define SDL_DestroyTexture        SDL_DestroyTexture_dlib
+#define SDL_DestroyWindow         SDL_DestroyWindow_dlib
+#define SDL_GetCurrentVideoDriver SDL_GetCurrentVideoDriver_dlib
 #define SDL_GetWindowID           SDL_GetWindowID_dlib
+#define SDL_RenderPresent         SDL_RenderPresent_dlib
+#define SDL_SetHint               SDL_SetHint_dlib
+#define SDL_SetWindowMinimumSize  SDL_SetWindowMinimumSize_dlib
 #define SDL_SetWindowSize         SDL_SetWindowSize_dlib
 #define SDL_SetWindowTitle        SDL_SetWindowTitle_dlib
-#define SDL_DestroyTexture        SDL_DestroyTexture_dlib
-#define SDL_DestroyRenderer       SDL_DestroyRenderer_dlib
-#define SDL_DestroyWindow         SDL_DestroyWindow_dlib
-
+#define SDL_UpdateTexture         SDL_UpdateTexture_dlib
 #endif
 
 static const hid_key_t sdl_key_to_hid_byte_map[] = {
@@ -398,30 +232,184 @@ static const hid_key_t sdl_key_to_hid_byte_map[] = {
 
 #endif
 
+#if USE_SDL == 1
+
+#define SDL_LIB_NAME "SDL"
+
 #if defined(USE_LIBS_PROBE)
+SDL_DLIB_SYM(SDL_CreateRGBSurfaceFrom)
+SDL_DLIB_SYM(SDL_Flip)
+SDL_DLIB_SYM(SDL_FreeSurface)
+SDL_DLIB_SYM(SDL_SetVideoMode)
+SDL_DLIB_SYM(SDL_UpperBlit)
+SDL_DLIB_SYM(SDL_WM_GrabInput)
+SDL_DLIB_SYM(SDL_WM_SetCaption)
 
-SDL_DLIB_SYM(SDL_Init)
-SDL_DLIB_SYM(SDL_PollEvent)
-SDL_DLIB_SYM(SDL_QuitSubSystem)
-SDL_DLIB_SYM(SDL_ShowCursor)
+#define SDL_CreateRGBSurfaceFrom SDL_CreateRGBSurfaceFrom_dlib
+#define SDL_Flip                 SDL_Flip_dlib
+#define SDL_FreeSurface          SDL_FreeSurface_dlib
+#define SDL_SetVideoMode         SDL_SetVideoMode_dlib
+#define SDL_UpperBlit            SDL_UpperBlit_dlib
+#define SDL_WM_GrabInput         SDL_WM_GrabInput_dlib
+#define SDL_WM_SetCaption        SDL_WM_SetCaption_dlib
+#endif
 
-#define SDL_Init          SDL_Init_dlib
-#define SDL_PollEvent     SDL_PollEvent_dlib
-#define SDL_QuitSubSystem SDL_QuitSubSystem_dlib
-#define SDL_ShowCursor    SDL_ShowCursor_dlib
+static const hid_key_t sdl_key_to_hid_byte_map[] = {
+    [SDLK_a]            = HID_KEY_A,
+    [SDLK_b]            = HID_KEY_B,
+    [SDLK_c]            = HID_KEY_C,
+    [SDLK_d]            = HID_KEY_D,
+    [SDLK_e]            = HID_KEY_E,
+    [SDLK_f]            = HID_KEY_F,
+    [SDLK_g]            = HID_KEY_G,
+    [SDLK_h]            = HID_KEY_H,
+    [SDLK_i]            = HID_KEY_I,
+    [SDLK_j]            = HID_KEY_J,
+    [SDLK_k]            = HID_KEY_K,
+    [SDLK_l]            = HID_KEY_L,
+    [SDLK_m]            = HID_KEY_M,
+    [SDLK_n]            = HID_KEY_N,
+    [SDLK_o]            = HID_KEY_O,
+    [SDLK_p]            = HID_KEY_P,
+    [SDLK_q]            = HID_KEY_Q,
+    [SDLK_r]            = HID_KEY_R,
+    [SDLK_s]            = HID_KEY_S,
+    [SDLK_t]            = HID_KEY_T,
+    [SDLK_u]            = HID_KEY_U,
+    [SDLK_v]            = HID_KEY_V,
+    [SDLK_w]            = HID_KEY_W,
+    [SDLK_x]            = HID_KEY_X,
+    [SDLK_y]            = HID_KEY_Y,
+    [SDLK_z]            = HID_KEY_Z,
+    [SDLK_0]            = HID_KEY_0,
+    [SDLK_1]            = HID_KEY_1,
+    [SDLK_2]            = HID_KEY_2,
+    [SDLK_3]            = HID_KEY_3,
+    [SDLK_4]            = HID_KEY_4,
+    [SDLK_5]            = HID_KEY_5,
+    [SDLK_6]            = HID_KEY_6,
+    [SDLK_7]            = HID_KEY_7,
+    [SDLK_8]            = HID_KEY_8,
+    [SDLK_9]            = HID_KEY_9,
+    [SDLK_RETURN]       = HID_KEY_ENTER,
+    [SDLK_ESCAPE]       = HID_KEY_ESC,
+    [SDLK_BACKSPACE]    = HID_KEY_BACKSPACE,
+    [SDLK_TAB]          = HID_KEY_TAB,
+    [SDLK_SPACE]        = HID_KEY_SPACE,
+    [SDLK_MINUS]        = HID_KEY_MINUS,
+    [SDLK_EQUALS]       = HID_KEY_EQUAL,
+    [SDLK_LEFTBRACKET]  = HID_KEY_LEFTBRACE,
+    [SDLK_RIGHTBRACKET] = HID_KEY_RIGHTBRACE,
+    [SDLK_BACKSLASH]    = HID_KEY_BACKSLASH,
+    [SDLK_SEMICOLON]    = HID_KEY_SEMICOLON,
+    [SDLK_QUOTE]        = HID_KEY_APOSTROPHE,
+    [SDLK_BACKQUOTE]    = HID_KEY_GRAVE,
+    [SDLK_COMMA]        = HID_KEY_COMMA,
+    [SDLK_PERIOD]       = HID_KEY_DOT,
+    [SDLK_SLASH]        = HID_KEY_SLASH,
+    [SDLK_CAPSLOCK]     = HID_KEY_CAPSLOCK,
+    [SDLK_LCTRL]        = HID_KEY_LEFTCTRL,
+    [SDLK_LSHIFT]       = HID_KEY_LEFTSHIFT,
+    [SDLK_LALT]         = HID_KEY_LEFTALT,
+    [SDLK_LMETA]        = HID_KEY_LEFTMETA,
+    [SDLK_RCTRL]        = HID_KEY_RIGHTCTRL,
+    [SDLK_RSHIFT]       = HID_KEY_RIGHTSHIFT,
+    [SDLK_RALT]         = HID_KEY_RIGHTALT,
+    [SDLK_RMETA]        = HID_KEY_RIGHTMETA,
+    [SDLK_F1]           = HID_KEY_F1,
+    [SDLK_F2]           = HID_KEY_F2,
+    [SDLK_F3]           = HID_KEY_F3,
+    [SDLK_F4]           = HID_KEY_F4,
+    [SDLK_F5]           = HID_KEY_F5,
+    [SDLK_F6]           = HID_KEY_F6,
+    [SDLK_F7]           = HID_KEY_F7,
+    [SDLK_F8]           = HID_KEY_F8,
+    [SDLK_F9]           = HID_KEY_F9,
+    [SDLK_F10]          = HID_KEY_F10,
+    [SDLK_F11]          = HID_KEY_F11,
+    [SDLK_F12]          = HID_KEY_F12,
+    [SDLK_SYSREQ]       = HID_KEY_SYSRQ,
+    [SDLK_SCROLLOCK]    = HID_KEY_SCROLLLOCK,
+    [SDLK_PAUSE]        = HID_KEY_PAUSE,
+    [SDLK_INSERT]       = HID_KEY_INSERT,
+    [SDLK_HOME]         = HID_KEY_HOME,
+    [SDLK_PAGEUP]       = HID_KEY_PAGEUP,
+    [SDLK_DELETE]       = HID_KEY_DELETE,
+    [SDLK_END]          = HID_KEY_END,
+    [SDLK_PAGEDOWN]     = HID_KEY_PAGEDOWN,
+    [SDLK_RIGHT]        = HID_KEY_RIGHT,
+    [SDLK_LEFT]         = HID_KEY_LEFT,
+    [SDLK_DOWN]         = HID_KEY_DOWN,
+    [SDLK_UP]           = HID_KEY_UP,
+    [SDLK_NUMLOCK]      = HID_KEY_NUMLOCK,
+    [SDLK_KP_DIVIDE]    = HID_KEY_KPSLASH,
+    [SDLK_KP_MULTIPLY]  = HID_KEY_KPASTERISK,
+    [SDLK_KP_MINUS]     = HID_KEY_KPMINUS,
+    [SDLK_KP_PLUS]      = HID_KEY_KPPLUS,
+    [SDLK_KP_ENTER]     = HID_KEY_KPENTER,
+    [SDLK_KP1]          = HID_KEY_KP1,
+    [SDLK_KP2]          = HID_KEY_KP2,
+    [SDLK_KP3]          = HID_KEY_KP3,
+    [SDLK_KP4]          = HID_KEY_KP4,
+    [SDLK_KP5]          = HID_KEY_KP5,
+    [SDLK_KP6]          = HID_KEY_KP6,
+    [SDLK_KP7]          = HID_KEY_KP7,
+    [SDLK_KP8]          = HID_KEY_KP8,
+    [SDLK_KP9]          = HID_KEY_KP9,
+    [SDLK_KP0]          = HID_KEY_KP0,
+    [SDLK_KP_PERIOD]    = HID_KEY_KPDOT,
+    [SDLK_MENU]         = HID_KEY_MENU,
+#if defined(HOST_TARGET_EMSCRIPTEN)
+    // I dunno why, I don't want to know why,
+    // but some Emscripten SDL keycodes are plain wrong..
+    [0xbb] = HID_KEY_EQUAL,
+    [0xbd] = HID_KEY_MINUS,
+#endif
+};
+
+#elif USE_SDL == 2
+
+#define SDL_LIB_NAME "SDL2"
+
+#if SDL_MAJOR_VERSION == 2 && SDL_MINOR_VERSION < 14
+// Support pre SDL 2.14
+#define SDL_PIXELFORMAT_XRGB8888 SDL_PIXELFORMAT_RGB888
+#define SDL_PIXELFORMAT_XBGR8888 SDL_PIXELFORMAT_BGR888
+#endif
+
+#if defined(USE_LIBS_PROBE)
+SDL_DLIB_SYM(SDL_RenderCopy)
+SDL_DLIB_SYM(SDL_SetRelativeMouseMode)
+SDL_DLIB_SYM(SDL_SetWindowGrab)
+
+#define SDL_RenderCopy           SDL_RenderCopy_dlib
+#define SDL_SetRelativeMouseMode SDL_SetRelativeMouseMode_dlib
+#define SDL_SetWindowGrab        SDL_SetWindowGrab_dlib
+#endif
+
+#elif USE_SDL == 3
+
+#define SDL_LIB_NAME "SDL3"
+
+#if defined(USE_LIBS_PROBE)
+SDL_DLIB_SYM(SDL_HideCursor)
+SDL_DLIB_SYM(SDL_RenderTexture)
+SDL_DLIB_SYM(SDL_SetWindowKeyboardGrab)
+SDL_DLIB_SYM(SDL_SetWindowMouseGrab)
+SDL_DLIB_SYM(SDL_SetWindowRelativeMouseMode)
+
+#define SDL_HideCursor                 SDL_HideCursor_dlib
+#define SDL_RenderTexture              SDL_RenderTexture_dlib
+#define SDL_SetWindowKeyboardGrab      SDL_SetWindowKeyboardGrab_dlib
+#define SDL_SetWindowMouseGrab         SDL_SetWindowMouseGrab_dlib
+#define SDL_SetWindowRelativeMouseMode SDL_SetWindowRelativeMouseMode_dlib
+#endif
 
 #endif
 
 /*
  * SDL backend implementation
  */
-
-#if USE_SDL == 3
-#define SDL_INIT_SUCCESS 1
-#else
-#define SDL_INIT_SUCCESS  0
-#define SDL_RenderTexture SDL_RenderCopy
-#endif
 
 // D'oh the frickin endianness issues!
 #if defined(HOST_BIG_ENDIAN)
@@ -440,6 +428,38 @@ SDL_DLIB_SYM(SDL_ShowCursor)
 #define SDL_PIXELFORMAT_XRGB2101010 0x16172004U
 #define SDL_PIXELFORMAT_XBGR2101010 0x16572004U
 
+#if USE_SDL == 3
+#define SDL_INIT_SUCCESS 1
+#else
+#define SDL_INIT_SUCCESS 0
+#endif
+
+#if USE_SDL == 2
+
+static inline void SDL_FRect_to_Rect_internal(SDL_Rect* rect, const SDL_FRect* frect)
+{
+    rect->x = (int)frect->x;
+    rect->y = (int)frect->y;
+    rect->w = (int)frect->w;
+    rect->h = (int)frect->h;
+}
+
+static inline bool SDL_RenderTexture(SDL_Renderer* renderer, SDL_Texture* texture, //
+                                     const SDL_FRect* fsrc, const SDL_FRect* fdst)
+{
+    SDL_Rect src = ZERO_INIT;
+    SDL_Rect dst = ZERO_INIT;
+    if (fsrc) {
+        SDL_FRect_to_Rect_internal(&src, fsrc);
+    }
+    if (fdst) {
+        SDL_FRect_to_Rect_internal(&dst, fdst);
+    }
+    return !SDL_RenderCopy(renderer, texture, fsrc ? &src : NULL, fdst ? &dst : NULL);
+}
+
+#endif
+
 typedef struct {
 #if USE_SDL >= 2
     SDL_Window*   window;
@@ -455,6 +475,9 @@ typedef struct {
 
     // Window ID
     uint32_t id;
+
+    uint32_t width;
+    uint32_t height;
 
     // Input grab flag
     bool grab;
@@ -483,7 +506,7 @@ static gui_window_t* sdl_find_window(uint32_t window_id)
     return NULL;
 }
 
-static void sdl_handle_keyboard(SDL_Event* event, bool press)
+static void sdl_handle_keyboard(const SDL_Event* event, bool press)
 {
 #if USE_SDL == 3
     gui_window_t* win = sdl_find_window(event->key.windowID);
@@ -502,7 +525,7 @@ static void sdl_handle_keyboard(SDL_Event* event, bool press)
     }
 }
 
-static void sdl_handle_mouse_moution(SDL_Event* event)
+static void sdl_handle_mouse_moution(const SDL_Event* event)
 {
 #if USE_SDL >= 2
     gui_window_t* win = sdl_find_window(event->motion.windowID);
@@ -511,13 +534,13 @@ static void sdl_handle_mouse_moution(SDL_Event* event)
 #endif
     sdl_window_t* sdl = gui_backend_get_data(win);
     if (sdl && sdl->grab) {
-        gui_backend_on_mouse_move(win, event->motion.xrel, event->motion.yrel);
+        gui_backend_on_mouse_move(win, (int)event->motion.xrel, (int)event->motion.yrel);
     } else {
-        gui_backend_on_mouse_place(win, event->motion.x, event->motion.y);
+        gui_backend_on_mouse_place(win, (int)event->motion.x, (int)event->motion.y);
     }
 }
 
-static void sdl_handle_mouse_btn(SDL_Event* event, bool press)
+static void sdl_handle_mouse_btn(const SDL_Event* event, bool press)
 {
 #if USE_SDL >= 2
     gui_window_t* win = sdl_find_window(event->button.windowID);
@@ -555,17 +578,7 @@ static void sdl_handle_mouse_btn(SDL_Event* event, bool press)
     }
 }
 
-#if USE_SDL >= 2
-
-static void sdl_handle_mouse_scroll(SDL_Event* event)
-{
-    gui_window_t* win = sdl_find_window(event->wheel.windowID);
-    gui_backend_on_mouse_scroll(win, event->wheel.y);
-}
-
-#endif
-
-static void sdl_handle_window(SDL_Event* event, bool close)
+static void sdl_handle_window(const SDL_Event* event, bool close)
 {
 #if USE_SDL >= 2
     gui_window_t* win = sdl_find_window(event->window.windowID);
@@ -579,6 +592,27 @@ static void sdl_handle_window(SDL_Event* event, bool close)
         gui_backend_on_focus_lost(win);
     }
 }
+
+#if USE_SDL >= 2
+
+static void sdl_handle_mouse_scroll(const SDL_Event* event)
+{
+    gui_window_t* win = sdl_find_window(event->wheel.windowID);
+    gui_backend_on_mouse_scroll(win, (int)event->wheel.y);
+}
+
+static void sdl_handle_window_resize(const SDL_Event* event)
+{
+    gui_window_t* win = sdl_find_window(event->window.windowID);
+    sdl_window_t* sdl = gui_backend_get_data(win);
+    if (sdl) {
+        sdl->width  = event->window.data1;
+        sdl->height = event->window.data2;
+        gui_backend_on_resize(win, sdl->width, sdl->height);
+    }
+}
+
+#endif
 
 static void sdl_window_remove(gui_window_t* win)
 {
@@ -697,11 +731,20 @@ static void sdl_window_draw(gui_window_t* win)
     const rvvm_fb_t* fb  = gui_backend_get_scanout(win);
     if (sdl->window && rvvm_fb_buffer(fb)) {
         // Resize window if needed
-        if (!rvvm_fb_same_res(fb, &sdl->fb)) {
+        if (!rvvm_fb_same_res(fb, &sdl->fb)                                                        //
+            && ((sdl->width == rvvm_fb_width(&sdl->fb) && sdl->height == rvvm_fb_height(&sdl->fb)) //
+                || (sdl->width < rvvm_fb_width(fb) || sdl->height < rvvm_fb_height(fb)))) {
+            sdl->width  = rvvm_fb_width(fb);
+            sdl->height = rvvm_fb_height(fb);
 #if USE_SDL >= 2
-            SDL_SetWindowSize(sdl->window, rvvm_fb_width(fb), rvvm_fb_height(fb));
+            SDL_SetWindowSize(sdl->window, sdl->width, sdl->height);
+            if (gui_backend_allow_shrink(win)) {
+                SDL_SetWindowMinimumSize(sdl->window, 128, 128);
+            } else {
+                SDL_SetWindowMinimumSize(sdl->window, sdl->width, sdl->height);
+            }
 #else
-            SDL_Surface* new_win = SDL_SetVideoMode(rvvm_fb_width(fb), rvvm_fb_height(fb), //
+            SDL_Surface* new_win = SDL_SetVideoMode(sdl->width, sdl->height, //
                                                     0, SDL_SWSURFACE | SDL_ANYFORMAT);
             if (new_win) {
                 sdl->window = new_win;
@@ -720,7 +763,7 @@ static void sdl_window_draw(gui_window_t* win)
             }
         }
 #else
-        if (!rvvm_fb_same_layout(fb, &sdl->fb) || rvvm_fb_buffer(fb) != rvvm_fb_buffer(&sdl->fb)) {
+        if (!rvvm_fb_same_scanout(fb, &sdl->fb)) {
             SDL_Surface* new_tex = sdl_create_texture(sdl, fb);
             if (new_tex) {
                 if (sdl->texture) {
@@ -732,8 +775,14 @@ static void sdl_window_draw(gui_window_t* win)
 #endif
         // Render to window
 #if USE_SDL >= 2
+        SDL_FRect dst = {
+            .x = EVAL_MAX((int)sdl->width - (int)rvvm_fb_width(fb), 0) >> 1,
+            .y = EVAL_MAX((int)sdl->height - (int)rvvm_fb_height(fb), 0) >> 1,
+            .w = rvvm_fb_width(fb),
+            .h = rvvm_fb_height(fb),
+        };
         SDL_UpdateTexture(sdl->texture, NULL, rvvm_fb_buffer(fb), rvvm_fb_stride(fb));
-        SDL_RenderTexture(sdl->renderer, sdl->texture, NULL, NULL);
+        SDL_RenderTexture(sdl->renderer, sdl->texture, NULL, &dst);
         SDL_RenderPresent(sdl->renderer);
 #else
         SDL_BlitSurface(sdl->texture, NULL, sdl->window, NULL);
@@ -769,6 +818,9 @@ static void sdl_window_poll(gui_window_t* win)
             case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
                 sdl_handle_window(&event, event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED);
                 break;
+            case SDL_EVENT_WINDOW_RESIZED:
+                sdl_handle_window_resize(&event);
+                break;
 #else
             case SDL_KEYDOWN:
             case SDL_KEYUP:
@@ -792,6 +844,9 @@ static void sdl_window_poll(gui_window_t* win)
                     case SDL_WINDOWEVENT_FOCUS_LOST:
                     case SDL_WINDOWEVENT_CLOSE:
                         sdl_handle_window(&event, event.window.event == SDL_WINDOWEVENT_CLOSE);
+                        break;
+                    case SDL_WINDOWEVENT_RESIZED:
+                        sdl_handle_window_resize(&event);
                         break;
                 }
                 break;
@@ -854,46 +909,47 @@ static bool sdl_init_libs(void)
 
     dlib_ctx_t* libsdl = dlib_open(SDL_LIB_NAME, DLIB_NAME_PROBE);
 
-#if USE_SDL >= 2
-    SDL_DLIB_RESOLVE(libsdl, SDL_GetCurrentVideoDriver);
-    SDL_DLIB_RESOLVE(libsdl, SDL_SetHint);
-    SDL_DLIB_RESOLVE(libsdl, SDL_UpdateTexture);
-    SDL_DLIB_RESOLVE(libsdl, SDL_RenderPresent);
-    SDL_DLIB_RESOLVE(libsdl, SDL_GetWindowID);
-    SDL_DLIB_RESOLVE(libsdl, SDL_SetWindowSize);
-    SDL_DLIB_RESOLVE(libsdl, SDL_SetWindowTitle);
-    SDL_DLIB_RESOLVE(libsdl, SDL_DestroyTexture);
-    SDL_DLIB_RESOLVE(libsdl, SDL_DestroyRenderer);
-    SDL_DLIB_RESOLVE(libsdl, SDL_DestroyWindow);
-    SDL_DLIB_RESOLVE(libsdl, SDL_CreateWindow);
-    SDL_DLIB_RESOLVE(libsdl, SDL_CreateRenderer);
-    SDL_DLIB_RESOLVE(libsdl, SDL_CreateTexture);
-#endif
-
-#if USE_SDL == 3
-    SDL_DLIB_RESOLVE(libsdl, SDL_HideCursor);
-    SDL_DLIB_RESOLVE(libsdl, SDL_RenderTexture);
-    SDL_DLIB_RESOLVE(libsdl, SDL_SetWindowMouseGrab);
-    SDL_DLIB_RESOLVE(libsdl, SDL_SetWindowKeyboardGrab);
-    SDL_DLIB_RESOLVE(libsdl, SDL_SetWindowRelativeMouseMode);
-#elif USE_SDL == 2
-    SDL_DLIB_RESOLVE(libsdl, SDL_RenderCopy);
-    SDL_DLIB_RESOLVE(libsdl, SDL_SetWindowGrab);
-    SDL_DLIB_RESOLVE(libsdl, SDL_SetRelativeMouseMode);
-#elif USE_SDL == 1
-    SDL_DLIB_RESOLVE(libsdl, SDL_SetVideoMode);
-    SDL_DLIB_RESOLVE(libsdl, SDL_CreateRGBSurfaceFrom);
-    SDL_DLIB_RESOLVE(libsdl, SDL_UpperBlit);
-    SDL_DLIB_RESOLVE(libsdl, SDL_Flip);
-    SDL_DLIB_RESOLVE(libsdl, SDL_WM_GrabInput);
-    SDL_DLIB_RESOLVE(libsdl, SDL_WM_SetCaption);
-    SDL_DLIB_RESOLVE(libsdl, SDL_FreeSurface);
-#endif
-
     SDL_DLIB_RESOLVE(libsdl, SDL_Init);
     SDL_DLIB_RESOLVE(libsdl, SDL_PollEvent);
     SDL_DLIB_RESOLVE(libsdl, SDL_QuitSubSystem);
     SDL_DLIB_RESOLVE(libsdl, SDL_ShowCursor);
+
+#if USE_SDL >= 2
+    SDL_DLIB_RESOLVE(libsdl, SDL_CreateRenderer);
+    SDL_DLIB_RESOLVE(libsdl, SDL_CreateTexture);
+    SDL_DLIB_RESOLVE(libsdl, SDL_CreateWindow);
+    SDL_DLIB_RESOLVE(libsdl, SDL_DestroyRenderer);
+    SDL_DLIB_RESOLVE(libsdl, SDL_DestroyTexture);
+    SDL_DLIB_RESOLVE(libsdl, SDL_DestroyWindow);
+    SDL_DLIB_RESOLVE(libsdl, SDL_GetCurrentVideoDriver);
+    SDL_DLIB_RESOLVE(libsdl, SDL_GetWindowID);
+    SDL_DLIB_RESOLVE(libsdl, SDL_RenderPresent);
+    SDL_DLIB_RESOLVE(libsdl, SDL_SetHint);
+    SDL_DLIB_RESOLVE(libsdl, SDL_SetWindowMinimumSize);
+    SDL_DLIB_RESOLVE(libsdl, SDL_SetWindowSize);
+    SDL_DLIB_RESOLVE(libsdl, SDL_SetWindowTitle);
+    SDL_DLIB_RESOLVE(libsdl, SDL_UpdateTexture);
+#endif
+
+#if USE_SDL == 1
+    SDL_DLIB_RESOLVE(libsdl, SDL_CreateRGBSurfaceFrom);
+    SDL_DLIB_RESOLVE(libsdl, SDL_Flip);
+    SDL_DLIB_RESOLVE(libsdl, SDL_FreeSurface);
+    SDL_DLIB_RESOLVE(libsdl, SDL_SetVideoMode);
+    SDL_DLIB_RESOLVE(libsdl, SDL_UpperBlit);
+    SDL_DLIB_RESOLVE(libsdl, SDL_WM_GrabInput);
+    SDL_DLIB_RESOLVE(libsdl, SDL_WM_SetCaption);
+#elif USE_SDL == 2
+    SDL_DLIB_RESOLVE(libsdl, SDL_RenderCopy);
+    SDL_DLIB_RESOLVE(libsdl, SDL_SetRelativeMouseMode);
+    SDL_DLIB_RESOLVE(libsdl, SDL_SetWindowGrab);
+#elif USE_SDL == 3
+    SDL_DLIB_RESOLVE(libsdl, SDL_HideCursor);
+    SDL_DLIB_RESOLVE(libsdl, SDL_RenderTexture);
+    SDL_DLIB_RESOLVE(libsdl, SDL_SetWindowKeyboardGrab);
+    SDL_DLIB_RESOLVE(libsdl, SDL_SetWindowMouseGrab);
+    SDL_DLIB_RESOLVE(libsdl, SDL_SetWindowRelativeMouseMode);
+#endif
 
     dlib_close(libsdl);
     return libsdl_avail;
@@ -972,12 +1028,15 @@ bool sdl_window_init(gui_window_t* win)
     // Create SDL window
     const rvvm_fb_t* fb = gui_backend_get_scanout(win);
 #if USE_SDL == 3
-    sdl->window = SDL_CreateWindow("", rvvm_fb_width(fb), rvvm_fb_height(fb), 0);
+    sdl->window = SDL_CreateWindow("", rvvm_fb_width(fb), rvvm_fb_height(fb), //
+                                   SDL_WINDOW_RESIZABLE);
 #elif USE_SDL == 2
     sdl->window = SDL_CreateWindow("", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, //
-                                   rvvm_fb_width(fb), rvvm_fb_height(fb), SDL_WINDOW_SHOWN);
+                                   rvvm_fb_width(fb), rvvm_fb_height(fb),              //
+                                   SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
 #else
-    sdl->window = SDL_SetVideoMode(rvvm_fb_width(fb), rvvm_fb_height(fb), 0, SDL_SWSURFACE | SDL_ANYFORMAT);
+    sdl->window = SDL_SetVideoMode(rvvm_fb_width(fb), rvvm_fb_height(fb), 0, //
+                                   SDL_SWSURFACE | SDL_ANYFORMAT);
 #endif
     if (!sdl->window) {
         rvvm_error("Failed to create " SDL_LIB_NAME " Window");
