@@ -536,7 +536,11 @@ static void sdl_handle_mouse_moution(const SDL_Event* event)
     if (sdl && sdl->grab) {
         gui_backend_on_mouse_move(win, (int)event->motion.xrel, (int)event->motion.yrel);
     } else {
-        gui_backend_on_mouse_place(win, (int)event->motion.x, (int)event->motion.y);
+        const rvvm_fb_t* fb = gui_backend_get_scanout(win);
+        // Calculate view offset
+        int off_x = (sdl->width - rvvm_fb_width(fb)) >> 1;
+        int off_y = (sdl->height - rvvm_fb_height(fb)) >> 1;
+        gui_backend_on_mouse_place(win, ((int)event->motion.x) - off_x, ((int)event->motion.y) - off_y);
     }
 }
 
@@ -731,25 +735,27 @@ static void sdl_window_draw(gui_window_t* win)
     const rvvm_fb_t* fb  = gui_backend_get_scanout(win);
     if (sdl->window && rvvm_fb_buffer(fb)) {
         // Resize window if needed
-        if (!rvvm_fb_same_res(fb, &sdl->fb)                                                        //
-            && ((sdl->width == rvvm_fb_width(&sdl->fb) && sdl->height == rvvm_fb_height(&sdl->fb)) //
-                || (sdl->width < rvvm_fb_width(fb) || sdl->height < rvvm_fb_height(fb)))) {
-            sdl->width  = rvvm_fb_width(fb);
-            sdl->height = rvvm_fb_height(fb);
+        if (!rvvm_fb_same_res(fb, &sdl->fb)) {
+            bool match = sdl->width == rvvm_fb_width(&sdl->fb) && sdl->height == rvvm_fb_height(&sdl->fb);
+            bool small = sdl->width < rvvm_fb_width(fb) || sdl->height < rvvm_fb_height(fb);
+            if (match || (small && !gui_backend_allow_shrink(win))) {
+                sdl->width  = rvvm_fb_width(fb);
+                sdl->height = rvvm_fb_height(fb);
 #if USE_SDL >= 2
-            SDL_SetWindowSize(sdl->window, sdl->width, sdl->height);
-            if (gui_backend_allow_shrink(win)) {
-                SDL_SetWindowMinimumSize(sdl->window, 128, 128);
-            } else {
-                SDL_SetWindowMinimumSize(sdl->window, sdl->width, sdl->height);
-            }
+                if (gui_backend_allow_shrink(win)) {
+                    SDL_SetWindowMinimumSize(sdl->window, 128, 128);
+                } else {
+                    SDL_SetWindowMinimumSize(sdl->window, sdl->width, sdl->height);
+                }
+                SDL_SetWindowSize(sdl->window, sdl->width, sdl->height);
 #else
-            SDL_Surface* new_win = SDL_SetVideoMode(sdl->width, sdl->height, //
-                                                    0, SDL_SWSURFACE | SDL_ANYFORMAT);
-            if (new_win) {
-                sdl->window = new_win;
-            }
+                SDL_Surface* new_win = SDL_SetVideoMode(sdl->width, sdl->height, //
+                                                        0, SDL_SWSURFACE | SDL_ANYFORMAT);
+                if (new_win) {
+                    sdl->window = new_win;
+                }
 #endif
+            }
         }
         // Recreate texture if needed
 #if USE_SDL >= 2
