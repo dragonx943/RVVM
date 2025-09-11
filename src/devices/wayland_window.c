@@ -32,7 +32,6 @@ PUSH_OPTIMIZATION_SIZE
 
 #if defined(USE_WAYLAND)
 
-#include "dlib.h"
 #include "spinlock.h"
 #include "threading.h"
 #include "utils.h"
@@ -48,6 +47,8 @@ PUSH_OPTIMIZATION_SIZE
 #if defined(USE_LIBS_PROBE)
 
 // Resolve symbols at runtime
+#include "dlib.h"
+
 #define WAYLAND_DLIB_SYM(sym) static __typeof__(sym)* MACRO_CONCAT(sym, _dlib) = NULL;
 
 // Functions
@@ -612,6 +613,9 @@ static void wl_seat_on_capabilities(void* data, struct wl_seat* seat, uint32_t c
                 if (seat_data->keyboard) {
                     wl_keyboard_add_listener(seat_data->keyboard, &keyboard_listener, &seat_data->kb_data);
                 }
+            } else if (seat_data->keyboard) {
+                wl_keyboard_destroy(seat_data->keyboard);
+                seat_data->keyboard = NULL;
             }
             if (capabilities & WL_SEAT_CAPABILITY_POINTER) {
                 seat_data->pointer = wl_seat_get_pointer(seat);
@@ -624,6 +628,13 @@ static void wl_seat_on_capabilities(void* data, struct wl_seat* seat, uint32_t c
                             seat_data->relative, &relative_pointer_listener, &seat_data->ptr_data);
                     }
                 }
+            } else if (seat_data->pointer) {
+                if (seat_data->relative) {
+                    zwp_relative_pointer_v1_destroy(seat_data->relative);
+                    seat_data->relative = NULL;
+                }
+                wl_pointer_destroy(seat_data->pointer);
+                seat_data->pointer = NULL;
             }
         }
     }
