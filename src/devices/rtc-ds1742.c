@@ -52,19 +52,21 @@ static inline uint64_t div_time_units(uint64_t* units, uint32_t div)
 void rtc_ds1742_update_regs(ds1742_dev_t* rtc)
 {
     uint64_t tmp  = rvtimer_unixtime();
-    uint32_t sec  = div_time_units(&tmp, 60);                      // Seconds [0, 59]
-    uint32_t min  = div_time_units(&tmp, 60);                      // Minutes [0, 59]
-    uint32_t hour = div_time_units(&tmp, 24);                      // Hours [0, 59]
-    uint64_t days = tmp + 719468;                                  // Days since 01.03.0000
-    uint32_t wday = (days + 3) % 7;                                // Day of week [0, 6]
-    uint64_t era  = days / 146097;                                 // Era
-    uint32_t doe  = days - (era * 146097);                         // Day of era [0, 146096]
-    uint32_t yoe  = (doe - doe / 1460) / 365;                      // Year of era [0, 399]
-    uint64_t year = yoe + (era * 400);                             // Year
-    uint32_t doy  = doe - ((365 * yoe) + (yoe / 4) - (yoe / 100)); // Day of year [0, 365]
-    uint32_t mmf  = ((5 * doy) + 2) / 153;                         // Month [0, 11] [Mar, Feb]
-    uint32_t mday = doy - (((153 * mmf) + 2) / 5) + 1;             // Day of month [1, 31]
-    unsigned mon  = mmf + (mmf < 10 ? 3 : -9);                     // Month [1, 12] [Jan, Dec]
+    uint32_t sec  = div_time_units(&tmp, 60);          // Seconds [0, 59]
+    uint32_t min  = div_time_units(&tmp, 60);          // Minutes [0, 59]
+    uint32_t hour = div_time_units(&tmp, 24);          // Hours [0, 59]
+    uint64_t days = tmp + 719468;                      // Days since 01.03.0000
+    uint32_t wday = (days + 3) % 7;                    // Day of week [0, 6]
+    uint32_t era  = days / 146097;                     // Era since 01.03.0000 (400 year unit)
+    uint32_t doe  = days - (era * 146097);             // Day of era [0, 146096]
+    uint32_t coe  = doe / 36524;                       // Century of era [0, 3]
+    uint32_t lde  = (doe / 1460) - coe;                // Leap days of era
+    uint32_t doel = doe - lde;                         // Day of era (Leap-compensated)
+    uint32_t year = ((doel + 59) / 365) + (era * 400); // Year
+    uint32_t doy  = doel % 365;                        // Day of year [0, 365] since 01.03.XXXX
+    uint32_t mmf  = ((5 * doy) + 2) / 153;             // Month [0, 11] [Mar, Feb]
+    uint32_t mday = doy - (((153 * mmf) + 2) / 5) + 1; // Day of month [1, 31]
+    uint32_t mon  = mmf + (mmf < 10 ? 3 : -9);         // Month [1, 12] [Jan, Dec]
 
     rtc->regs[DS1742_REG_CTL_CENT] = bcd_conv_u8(year / 100);
     rtc->regs[DS1742_REG_SECONDS]  = bcd_conv_u8(sec);
