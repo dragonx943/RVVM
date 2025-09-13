@@ -191,19 +191,23 @@ RVVM_PUBLIC bool rvvm_fbdev_is_dirty(rvvm_fbdev_t* fbdev)
 
 RVVM_PUBLIC void rvvm_fbdev_update(rvvm_fbdev_t* fbdev)
 {
-    if (fbdev && fbdev->display_cb) {
-        // Poll for input
-        if (fbdev->display_cb->poll) {
-            fbdev->display_cb->poll(fbdev);
+    if (fbdev) {
+        if (fbdev->display_cb) {
+            // Poll for input
+            if (fbdev->display_cb->poll) {
+                fbdev->display_cb->poll(fbdev);
+            }
+            // Redraw if scanout is dirty
+            if (fbdev->display_cb->draw && rvvm_fbdev_is_dirty(fbdev)) {
+                fbdev->display_cb->draw(fbdev);
+            }
         }
-        // Redraw if scanout is dirty
-        if (fbdev->display_cb->draw && rvvm_fbdev_is_dirty(fbdev)) {
-            fbdev->display_cb->draw(fbdev);
+        if (fbdev->dev_cb) {
+            // Acknowledge flip if manual flip tracking isn't used
+            if (fbdev->dev_cb->flip_done && !atomic_load_uint32_relax(&fbdev->flip_track)) {
+                fbdev->dev_cb->flip_done(fbdev);
+            }
         }
-    }
-    // Acknowledge flip if manual flip tracking isn't used
-    if (fbdev->dev_cb && fbdev->dev_cb->flip_done && !atomic_load_uint32_relax(&fbdev->flip_track)) {
-        fbdev->dev_cb->flip_done(fbdev);
     }
 }
 
