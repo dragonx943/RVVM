@@ -218,20 +218,21 @@ static inline bool rvvm_fb_same_scanout(const rvvm_fb_t* fb_a, const rvvm_fb_t* 
  * - Obtains video RAM via rvvm_fbdev_get_vram()
  * - Sets video mode (Scanout) via rvvm_fbdev_set_scanout(), which must reside in VRAM
  * - Periodically updates the display via rvvm_fbdev_update()
- * - Acknowledges completed flip after rvvm_fbdev_update() returns
+ * - Optionally receives flip completion on flip_done() callback
  * - Optionally marks framebuffer contents as dirty via rvvm_fbdev_dirty()
  *
  * Display implementation responsibilities:
  * - Creates VRAM memory region if needed (Otherwise will be backed by anonymous VMA)
  * - Obtains current video mode (Scanout) via rvvm_fbdev_get_scanout()
  * Then either:
- * - Registers private data via rvvm_fbdev_set_display_data() / rvvm_fbdev_get_display_data()
  * - Registers draw/poll callbacks, perform rendering/input polling from them
  * - Registers free() callback and fully deinitialize upon it
+ * - Ether draws synchronousy or reports rvvm_fbdev_flip_done()
  * Or:
- * - Runs from any other thread, manually rendering, checking rvvm_fbdev_is_dirty(), etc
- * - Increments fbdev refcount via rvvm_fbdev_inc_ref(), keeping it as long as needed
- * - NOTE: This second variation doesn't support synchronous flips - TODO?
+ * - Increments fbdev refcount via rvvm_fbdev_inc_ref()
+ * - Runs from any other thread, polling/drawing from a separate event loop
+ * - Optionally checks rvvm_fbdev_is_dirty() to optimize idle redraw
+ * - Reports rvvm_fbdev_flip_done()
  */
 
 /**
@@ -240,11 +241,21 @@ static inline bool rvvm_fb_same_scanout(const rvvm_fb_t* fb_a, const rvvm_fb_t* 
 typedef struct rvvm_fbdev rvvm_fbdev_t;
 
 /**
+ * Framebuffer device callbacks
+ */
+typedef struct {
+    /**
+     * Report completed scanout flip
+     */
+    void (*flip_done)(rvvm_fbdev_t* fbdev);
+} rvvm_fb_dev_cb_t;
+
+/**
  * Display implementation callbacks
  */
 typedef struct {
     /**
-     * Perform a synchronous scanout flip. The GPU will acknowledge flip after this returns.
+     * Redraw the scanout onto display
      */
     void (*draw)(rvvm_fbdev_t* fbdev);
 
@@ -275,17 +286,32 @@ RVVM_PUBLIC void rvvm_fbdev_inc_ref(rvvm_fbdev_t* fbdev);
 RVVM_PUBLIC void rvvm_fbdev_dec_ref(rvvm_fbdev_t* fbdev);
 
 /**
- * Register fbdev display implementation
+ * Register fbdev callbacks
+ */
+RVVM_PUBLIC void rvvm_fbdev_register_dev(rvvm_fbdev_t* fbdev, const rvvm_fb_dev_cb_t* cb);
+
+/**
+ * Set private fbdev data
+ */
+RVVM_PUBLIC void rvvm_fbdev_set_dev_data(rvvm_fbdev_t* fbdev, void* data);
+
+/**
+ * Get private fbdev data
+ */
+RVVM_PUBLIC void* rvvm_fbdev_get_dev_data(rvvm_fbdev_t* fbdev);
+
+/**
+ * Register display implementation
  */
 RVVM_PUBLIC void rvvm_fbdev_register_display(rvvm_fbdev_t* fbdev, const rvvm_display_cb_t* cb);
 
 /**
- * Set fbdev private display data
+ * Set private display data
  */
 RVVM_PUBLIC void rvvm_fbdev_set_display_data(rvvm_fbdev_t* fbdev, void* data);
 
 /**
- * Get fbdev private display data
+ * Get private display data
  */
 RVVM_PUBLIC void* rvvm_fbdev_get_display_data(rvvm_fbdev_t* fbdev);
 
@@ -307,10 +333,10 @@ RVVM_PUBLIC bool rvvm_fbdev_set_scanout(rvvm_fbdev_t* fbdev, const rvvm_fb_t* fb
 /**
  * Get current fbdev video mode atomically
  */
-RVVM_PUBLIC const rvvm_fb_t* rvvm_fbdev_get_scanout(rvvm_fbdev_t* fbdev);
+RVVM_PUBLIC bool rvvm_fbdev_get_scanout(rvvm_fbdev_t* fbdev, rvvm_fb_t* fb);
 
 /**
- * Mark framebuffer as dirty (Dirty tracking is disabled if this is never called)
+ * Mark framebuffer as dirty from device side
  */
 RVVM_PUBLIC void rvvm_fbdev_dirty(rvvm_fbdev_t* fbdev);
 
@@ -320,9 +346,14 @@ RVVM_PUBLIC void rvvm_fbdev_dirty(rvvm_fbdev_t* fbdev);
 RVVM_PUBLIC bool rvvm_fbdev_is_dirty(rvvm_fbdev_t* fbdev);
 
 /**
- * Perform fbdev update (synchronous flip) from GPU device
+ * Perform display update from device side
  */
 RVVM_PUBLIC void rvvm_fbdev_update(rvvm_fbdev_t* fbdev);
+
+/**
+ * Acknowledge a scanout flip from display side
+ */
+RVVM_PUBLIC void rvvm_fbdev_flip_done(rvvm_fbdev_t* fbdev);
 
 /** @}*/
 
