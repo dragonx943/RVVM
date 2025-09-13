@@ -255,6 +255,10 @@ static inline void gui_backend_on_focus_lost(gui_window_t* win)
 
 static inline bool gui_backend_on_resize(gui_window_t* win, uint32_t w, uint32_t h)
 {
+    rvvm_fb_t fb = ZERO_INIT;
+    // Soft dirty the framebuffer
+    rvvm_fbdev_get_scanout(win->fbdev, &fb);
+    rvvm_fbdev_set_scanout(win->fbdev, &fb);
     if (win && win->ev_cb->on_resize) {
         return win->ev_cb->on_resize(win, w, h);
     }
