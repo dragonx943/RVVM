@@ -30,6 +30,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include "utils.h"
 
 #include "devices/ata.h"
+#include "devices/bochs-display.h"
 #include "devices/framebuffer.h"
 #include "devices/i2c-oc.h"
 #include "devices/ns16550a.h"
@@ -361,7 +362,13 @@ static int rvvm_cli_main(int argc, char** argv)
     }
 
     if (!rvvm_has_arg("nogui") && !rvvm_has_arg("res")) {
-        rvvm_simplefb_init_auto(machine, gui_window_get_fbdev(gui_rvvm_init(0, NULL, machine)));
+        if (rvvm_has_arg("bochs_display")) {
+            gui_window_t* win = gui_rvvm_init(RVVM_BOCHS_DISPLAY_VRAM, NULL, machine);
+            rvvm_bochs_display_init_auto(machine, gui_window_get_fbdev(win));
+        } else {
+            gui_window_t* win = gui_rvvm_init(0, NULL, machine);
+            rvvm_simplefb_init_auto(machine, gui_window_get_fbdev(win));
+        }
     }
 
     if (rvvm_has_arg("hda_test")) {
