@@ -8,60 +8,83 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
 #include "framebuffer.h"
+#include "compiler.h"
 #include "fdtlib.h"
-#include "utils.h"
 
 PUSH_OPTIMIZATION_SIZE
 
-static void fb_remove(rvvm_mmio_dev_t* dev)
+static bool simplefb_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint8_t size)
 {
-    UNUSED(dev);
+    rvvm_fbdev_t* fbdev = dev->data;
+    rvvm_fbdev_dirty(fbdev);
+    UNUSED(data);
+    UNUSED(offset);
+    UNUSED(size);
+    return true;
 }
 
-static rvvm_mmio_type_t fb_dev_type = {
-    .name   = "framebuffer",
-    .remove = fb_remove,
+static void simplefb_remove(rvvm_mmio_dev_t* dev)
+{
+    rvvm_fbdev_t* fbdev = dev->data;
+    rvvm_fbdev_dec_ref(fbdev);
+}
+
+static void simplefb_update(rvvm_mmio_dev_t* dev)
+{
+    rvvm_fbdev_t* fbdev = dev->data;
+    rvvm_fbdev_update(fbdev);
+}
+
+static rvvm_mmio_type_t simplefb_dev_type = {
+    .name   = "simple-framebuffer",
+    .remove = simplefb_remove,
+    .update = simplefb_update,
 };
 
-PUBLIC rvvm_mmio_dev_t* framebuffer_init(rvvm_machine_t* machine, rvvm_addr_t addr, const fb_ctx_t* fb)
+PUBLIC rvvm_mmio_dev_t* rvvm_simplefb_init(rvvm_machine_t* machine, rvvm_addr_t addr, rvvm_fbdev_t* fbdev)
 {
+    rvvm_fb_t fb = ZERO_INIT;
+    rvvm_fbdev_get_scanout(fbdev, &fb);
+
     // Map the framebuffer into physical memory
-    rvvm_mmio_dev_t fb_mmio = {
+    rvvm_mmio_dev_t simplefb_mmio = {
         .addr    = addr,
-        .size    = framebuffer_size(fb),
-        .mapping = fb->buffer,
-        .type    = &fb_dev_type,
+        .size    = rvvm_fb_size(&fb),
+        .data    = fbdev,
+        .mapping = rvvm_fb_buffer(&fb),
+        .type    = &simplefb_dev_type,
+        .write   = simplefb_write,
     };
 
-    rvvm_mmio_dev_t* mmio = rvvm_attach_mmio(machine, &fb_mmio);
+    rvvm_mmio_dev_t* mmio = rvvm_attach_mmio(machine, &simplefb_mmio);
     if (mmio == NULL) {
         return mmio;
     }
 
-#ifdef USE_FDT
-    struct fdt_node* fb_fdt = fdt_node_create_reg("framebuffer", fb_mmio.addr);
-    fdt_node_add_prop_reg(fb_fdt, "reg", fb_mmio.addr, fb_mmio.size);
+#if defined(USE_FDT)
+    struct fdt_node* fb_fdt = fdt_node_create_reg("framebuffer", simplefb_mmio.addr);
+    fdt_node_add_prop_reg(fb_fdt, "reg", simplefb_mmio.addr, simplefb_mmio.size);
     fdt_node_add_prop_str(fb_fdt, "compatible", "simple-framebuffer");
-    switch (fb->format) {
-        case RGB_FMT_R5G6B5:
+    switch (rvvm_fb_format(&fb)) {
+        case RVVM_RGB_RGB565:
             fdt_node_add_prop_str(fb_fdt, "format", "r5g6b5");
             break;
-        case RGB_FMT_R8G8B8:
+        case RVVM_RGB_RGB888:
             fdt_node_add_prop_str(fb_fdt, "format", "r8g8b8");
             break;
-        case RGB_FMT_A8R8G8B8:
+        case RVVM_RGB_BGR888:
+            fdt_node_add_prop_str(fb_fdt, "format", "b8g8r8");
+            break;
+        case RVVM_RGB_XRGB8888:
             fdt_node_add_prop_str(fb_fdt, "format", "a8r8g8b8");
             break;
-        case RGB_FMT_A8B8G8R8:
+        case RVVM_RGB_XBGR8888:
             fdt_node_add_prop_str(fb_fdt, "format", "a8b8g8r8");
             break;
-        default:
-            rvvm_warn("Unknown RGB format in framebuffer_init()!");
-            break;
     }
-    fdt_node_add_prop_u32(fb_fdt, "width", fb->width);
-    fdt_node_add_prop_u32(fb_fdt, "height", fb->height);
-    fdt_node_add_prop_u32(fb_fdt, "stride", framebuffer_stride(fb));
+    fdt_node_add_prop_u32(fb_fdt, "width", rvvm_fb_width(&fb));
+    fdt_node_add_prop_u32(fb_fdt, "height", rvvm_fb_height(&fb));
+    fdt_node_add_prop_u32(fb_fdt, "stride", rvvm_fb_stride(&fb));
 
     fdt_node_add_child(rvvm_get_fdt_soc(machine), fb_fdt);
 #endif
@@ -69,10 +92,12 @@ PUBLIC rvvm_mmio_dev_t* framebuffer_init(rvvm_machine_t* machine, rvvm_addr_t ad
     return mmio;
 }
 
-PUBLIC rvvm_mmio_dev_t* framebuffer_init_auto(rvvm_machine_t* machine, const fb_ctx_t* fb)
+RVVM_PUBLIC rvvm_mmio_dev_t* rvvm_simplefb_init_auto(rvvm_machine_t* machine, rvvm_fbdev_t* fbdev)
 {
-    rvvm_addr_t      addr = rvvm_mmio_zone_auto(machine, 0x18000000, framebuffer_size(fb));
-    rvvm_mmio_dev_t* mmio = framebuffer_init(machine, addr, fb);
+    rvvm_fb_t fb = ZERO_INIT;
+    rvvm_fbdev_get_scanout(fbdev, &fb);
+    rvvm_addr_t      addr = rvvm_mmio_zone_auto(machine, 0x18000000, rvvm_fb_size(&fb));
+    rvvm_mmio_dev_t* mmio = rvvm_simplefb_init(machine, addr, fbdev);
     if (mmio) {
         rvvm_append_cmdline(machine, "console=tty0");
     }
