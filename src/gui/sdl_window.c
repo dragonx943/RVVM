@@ -87,6 +87,7 @@ SDL_DLIB_SYM(SDL_DestroyTexture)
 SDL_DLIB_SYM(SDL_DestroyWindow)
 SDL_DLIB_SYM(SDL_GetCurrentVideoDriver)
 SDL_DLIB_SYM(SDL_GetWindowID)
+SDL_DLIB_SYM(SDL_RenderClear)
 SDL_DLIB_SYM(SDL_RenderPresent)
 SDL_DLIB_SYM(SDL_SetHint)
 SDL_DLIB_SYM(SDL_SetWindowMinimumSize)
@@ -102,6 +103,7 @@ SDL_DLIB_SYM(SDL_UpdateTexture)
 #define SDL_DestroyWindow         SDL_DestroyWindow_dlib
 #define SDL_GetCurrentVideoDriver SDL_GetCurrentVideoDriver_dlib
 #define SDL_GetWindowID           SDL_GetWindowID_dlib
+#define SDL_RenderClear           SDL_RenderClear_dlib
 #define SDL_RenderPresent         SDL_RenderPresent_dlib
 #define SDL_SetHint               SDL_SetHint_dlib
 #define SDL_SetWindowMinimumSize  SDL_SetWindowMinimumSize_dlib
@@ -483,7 +485,18 @@ typedef struct {
     bool grab;
 } sdl_window_t;
 
+// Check whether this thread owns any SDL windows to fix MacOS issues
+#if defined(THREAD_LOCAL)
+static THREAD_LOCAL bool sdl_thread_ok = false;
+#else
+static bool sdl_thread_ok = false;
+#endif
+
 static vector_t(gui_window_t*) sdl_windows = {0};
+
+/*
+ * SDL Keycode to HID
+ */
 
 static hid_key_t sdl_key_to_hid(uint32_t sdl_key)
 {
@@ -493,6 +506,10 @@ static hid_key_t sdl_key_to_hid(uint32_t sdl_key)
     rvvm_warn("Unmapped " SDL_LIB_NAME " keycode %x", sdl_key);
     return HID_KEY_NONE;
 }
+
+/*
+ * SDL Event handling
+ */
 
 static gui_window_t* sdl_find_window(uint32_t window_id)
 {
@@ -538,8 +555,8 @@ static void sdl_handle_mouse_moution(const SDL_Event* event)
     } else {
         const rvvm_fb_t* fb = gui_backend_get_scanout(win);
         // Calculate view offset
-        int off_x = (sdl->width - rvvm_fb_width(fb)) >> 1;
-        int off_y = (sdl->height - rvvm_fb_height(fb)) >> 1;
+        int off_x = EVAL_MAX((int)sdl->width - (int)rvvm_fb_width(fb), 0) >> 1;
+        int off_y = EVAL_MAX((int)sdl->height - (int)rvvm_fb_height(fb), 0) >> 1;
         gui_backend_on_mouse_place(win, ((int)event->motion.x) - off_x, ((int)event->motion.y) - off_y);
     }
 }
@@ -618,43 +635,9 @@ static void sdl_handle_window_resize(const SDL_Event* event)
 
 #endif
 
-static void sdl_window_remove(gui_window_t* win)
-{
-    sdl_window_t* sdl = gui_backend_get_data(win);
-    gui_backend_set_data(win, NULL);
-    if (sdl) {
-        // Remove from window list
-        vector_foreach_back (sdl_windows, i) {
-            if (vector_at(sdl_windows, i) == win) {
-                vector_erase(sdl_windows, i);
-                break;
-            }
-        }
-        // Free SDL objects
-#if USE_SDL >= 2
-        if (sdl->texture) {
-            SDL_DestroyTexture(sdl->texture);
-        }
-        if (sdl->renderer) {
-            SDL_DestroyRenderer(sdl->renderer);
-        }
-        if (sdl->window) {
-            SDL_DestroyWindow(sdl->window);
-        }
-#else
-        if (sdl->texture) {
-            SDL_FreeSurface(sdl->texture);
-        }
-#endif
-        if (!vector_size(sdl_windows)) {
-            // Bye, SDL!
-            SDL_QuitSubSystem(SDL_INIT_VIDEO);
-        }
-        // Free VRAM VMA
-        vma_free(gui_backend_get_vram(win), gui_backend_get_vram_size(win));
-        safe_free(sdl);
-    }
-}
+/*
+ * SDL framebuffer texture formats handling
+ */
 
 static void* sdl_create_texture(sdl_window_t* sdl, const rvvm_fb_t* fb)
 {
@@ -729,24 +712,70 @@ static void* sdl_create_texture(sdl_window_t* sdl, const rvvm_fb_t* fb)
     return NULL;
 }
 
+/*
+ * SDL Window handling
+ */
+
+static void sdl_window_remove(gui_window_t* win)
+{
+    sdl_window_t* sdl = gui_backend_get_data(win);
+    gui_backend_set_data(win, NULL);
+    if (sdl) {
+        // Remove from window list
+        vector_foreach_back (sdl_windows, i) {
+            if (vector_at(sdl_windows, i) == win) {
+                vector_erase(sdl_windows, i);
+                break;
+            }
+        }
+        // Free SDL objects
+#if USE_SDL >= 2
+        if (sdl->texture) {
+            SDL_DestroyTexture(sdl->texture);
+        }
+        if (sdl->renderer) {
+            SDL_DestroyRenderer(sdl->renderer);
+        }
+        if (sdl->window) {
+            SDL_DestroyWindow(sdl->window);
+        }
+#else
+        if (sdl->texture) {
+            SDL_FreeSurface(sdl->texture);
+        }
+#endif
+        if (!vector_size(sdl_windows)) {
+            // Bye, SDL!
+            SDL_QuitSubSystem(SDL_INIT_VIDEO);
+            sdl_thread_ok = false;
+        }
+        // Free VRAM VMA
+        vma_free(gui_backend_get_vram(win), gui_backend_get_vram_size(win));
+        safe_free(sdl);
+    }
+}
+
 static void sdl_window_draw(gui_window_t* win)
 {
     sdl_window_t*    sdl = gui_backend_get_data(win);
     const rvvm_fb_t* fb  = gui_backend_get_scanout(win);
-    if (sdl->window && rvvm_fb_buffer(fb)) {
+    if (sdl_thread_ok && sdl->window && rvvm_fb_buffer(fb)) {
         // Resize window if needed
         if (!rvvm_fb_same_res(fb, &sdl->fb)) {
+            bool empty = !rvvm_fb_width(&sdl->fb) || !rvvm_fb_height(&sdl->fb);
             bool match = sdl->width == rvvm_fb_width(&sdl->fb) && sdl->height == rvvm_fb_height(&sdl->fb);
             bool small = sdl->width < rvvm_fb_width(fb) || sdl->height < rvvm_fb_height(fb);
-            if (match || (small && !gui_backend_allow_shrink(win))) {
+#if USE_SDL >= 2
+            if (gui_backend_allow_shrink(win)) {
+                SDL_SetWindowMinimumSize(sdl->window, 128, 128);
+            } else {
+                SDL_SetWindowMinimumSize(sdl->window, rvvm_fb_width(fb), rvvm_fb_height(fb));
+            }
+#endif
+            if (empty || match || (small && !gui_backend_allow_shrink(win))) {
                 sdl->width  = rvvm_fb_width(fb);
                 sdl->height = rvvm_fb_height(fb);
 #if USE_SDL >= 2
-                if (gui_backend_allow_shrink(win)) {
-                    SDL_SetWindowMinimumSize(sdl->window, 128, 128);
-                } else {
-                    SDL_SetWindowMinimumSize(sdl->window, sdl->width, sdl->height);
-                }
                 SDL_SetWindowSize(sdl->window, sdl->width, sdl->height);
 #else
                 SDL_Surface* new_win = SDL_SetVideoMode(sdl->width, sdl->height, //
@@ -787,6 +816,7 @@ static void sdl_window_draw(gui_window_t* win)
             .w = rvvm_fb_width(fb),
             .h = rvvm_fb_height(fb),
         };
+        SDL_RenderClear(sdl->renderer);
         SDL_UpdateTexture(sdl->texture, NULL, rvvm_fb_buffer(fb), rvvm_fb_stride(fb));
         SDL_RenderTexture(sdl->renderer, sdl->texture, NULL, &dst);
         SDL_RenderPresent(sdl->renderer);
@@ -803,7 +833,7 @@ static void sdl_window_poll(gui_window_t* win)
     SDL_Event event = {0};
     UNUSED(win);
 
-    while (SDL_PollEvent(&event)) {
+    while (sdl_thread_ok && SDL_PollEvent(&event)) {
         switch (event.type) {
 #if USE_SDL == 3
             case SDL_EVENT_KEY_DOWN:
@@ -874,7 +904,7 @@ static void sdl_window_poll(gui_window_t* win)
 static void sdl_window_set_title(gui_window_t* win, const char* title)
 {
     sdl_window_t* sdl = gui_backend_get_data(win);
-    if (sdl->window) {
+    if (sdl_thread_ok && sdl->window) {
 #if USE_SDL >= 2
         SDL_SetWindowTitle(sdl->window, title);
 #else
@@ -886,7 +916,7 @@ static void sdl_window_set_title(gui_window_t* win, const char* title)
 static void sdl_window_grab_input(gui_window_t* win, bool grab)
 {
     sdl_window_t* sdl = gui_backend_get_data(win);
-    if (sdl->grab != grab && sdl->window) {
+    if (sdl_thread_ok && sdl->grab != grab && sdl->window) {
         sdl->grab = grab;
 #if USE_SDL == 3
         SDL_SetWindowMouseGrab(sdl->window, grab);
@@ -900,6 +930,26 @@ static void sdl_window_grab_input(gui_window_t* win, bool grab)
 #endif
     }
 }
+
+static void sdl_window_hide_cursor(gui_window_t* win, bool hide)
+{
+    sdl_window_t* sdl = gui_backend_get_data(win);
+    if (sdl_thread_ok && sdl->window) {
+#if USE_SDL == 3
+        if (hide) {
+            SDL_HideCursor();
+        } else {
+            SDL_ShowCursor();
+        }
+#else
+        SDL_ShowCursor(hide ? SDL_DISABLE : SDL_ENABLE);
+#endif
+    }
+}
+
+/*
+ * Dynamic probe of libSDL at runtime
+ */
 
 #if defined(USE_LIBS_PROBE)
 
@@ -929,6 +979,7 @@ static bool sdl_init_libs(void)
     SDL_DLIB_RESOLVE(libsdl, SDL_DestroyWindow);
     SDL_DLIB_RESOLVE(libsdl, SDL_GetCurrentVideoDriver);
     SDL_DLIB_RESOLVE(libsdl, SDL_GetWindowID);
+    SDL_DLIB_RESOLVE(libsdl, SDL_RenderClear);
     SDL_DLIB_RESOLVE(libsdl, SDL_RenderPresent);
     SDL_DLIB_RESOLVE(libsdl, SDL_SetHint);
     SDL_DLIB_RESOLVE(libsdl, SDL_SetWindowMinimumSize);
@@ -963,33 +1014,10 @@ static bool sdl_init_libs(void)
 
 #endif
 
-static const gui_backend_cb_t sdl_window_cb = {
-    .remove     = sdl_window_remove,
-    .draw       = sdl_window_draw,
-    .poll       = sdl_window_poll,
-    .set_title  = sdl_window_set_title,
-    .grab_input = sdl_window_grab_input,
-};
-
-bool sdl_window_init(gui_window_t* win)
+static bool sdl_global_init(void)
 {
-    static bool sdl_avail = true;
-
-    // Register SDL backend
-    sdl_window_t* sdl = safe_new_obj(sdl_window_t);
-
-    gui_backend_register(win, &sdl_window_cb);
-    gui_backend_set_data(win, sdl);
-
-#if defined(HOST_TARGET_LINUX)
-    // Force X11 over Wayland
-    // SDL Wayland backend doesn't support software rendering,
-    // and Nvidia driver isn't compatible with isolation (See #178)
-    setenv("SDL_VIDEODRIVER", "x11,wayland,kmsdrm,directfb,fbcon", true);
-    setenv("SDL_VIDEO_DRIVER", "x11,wayland,kmsdrm,directfb,fbcon", true);
-#endif
-
 #if defined(USE_LIBS_PROBE)
+    static bool sdl_avail = false;
     DO_ONCE_SCOPED {
         // Load libSDL
         sdl_avail = sdl_init_libs();
@@ -997,13 +1025,19 @@ bool sdl_window_init(gui_window_t* win)
             rvvm_error("Failed to load lib" SDL_LIB_NAME ", check your installation");
         }
     }
-#endif
     if (!sdl_avail) {
         return false;
     }
-
-    // Perform SDL Video subsystem init if needed
+#endif
+    // Perform SDL Video subsystem init
     if (!vector_size(sdl_windows)) {
+#if defined(HOST_TARGET_LINUX)
+        // Force X11 over Wayland
+        // SDL Wayland backend doesn't support software rendering,
+        // and Nvidia driver isn't compatible with isolation (See #178)
+        setenv("SDL_VIDEODRIVER", "x11,wayland,kmsdrm,directfb,fbcon", true);
+        setenv("SDL_VIDEO_DRIVER", "x11,wayland,kmsdrm,directfb,fbcon", true);
+#endif
         if (SDL_Init(SDL_INIT_VIDEO) != SDL_INIT_SUCCESS) {
             rvvm_error("Failed to initialize " SDL_LIB_NAME);
             return false;
@@ -1030,9 +1064,35 @@ bool sdl_window_init(gui_window_t* win)
         return false;
 #endif
     }
+    return true;
+}
+
+static const gui_backend_cb_t sdl_window_cb = {
+    .remove      = sdl_window_remove,
+    .draw        = sdl_window_draw,
+    .poll        = sdl_window_poll,
+    .set_title   = sdl_window_set_title,
+    .grab_input  = sdl_window_grab_input,
+    .hide_cursor = sdl_window_hide_cursor,
+};
+
+bool sdl_window_init(gui_window_t* win)
+{
+    // Register SDL backend
+    sdl_window_t*    sdl = safe_new_obj(sdl_window_t);
+    const rvvm_fb_t* fb  = gui_backend_get_scanout(win);
+
+    gui_backend_register(win, &sdl_window_cb);
+    gui_backend_set_data(win, sdl);
+
+    if (!sdl_global_init()) {
+        return false;
+    }
+
+    // Mark that this thread owns SDL Windows
+    sdl_thread_ok = true;
 
     // Create SDL window
-    const rvvm_fb_t* fb = gui_backend_get_scanout(win);
 #if USE_SDL == 3
     sdl->window = SDL_CreateWindow("", rvvm_fb_width(fb), rvvm_fb_height(fb), //
                                    SDL_WINDOW_RESIZABLE);
@@ -1080,14 +1140,9 @@ bool sdl_window_init(gui_window_t* win)
         return false;
     }
 
-    vector_push_back(sdl_windows, win);
+    sdl_window_hide_cursor(win, true);
 
-    // Hide cursor
-#if USE_SDL == 3
-    SDL_HideCursor();
-#else
-    SDL_ShowCursor(SDL_DISABLE);
-#endif
+    vector_push_back(sdl_windows, win);
 
     return true;
 }
