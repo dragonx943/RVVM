@@ -471,11 +471,11 @@ static void x11_handle_mouse_motion(const XEvent* ev, gui_window_t* win, x11_win
 {
     const rvvm_fb_t* fb = gui_backend_get_scanout(win);
     if (x11) {
-        uint32_t off_x = (x11->width - (x11->grab ? rvvm_fb_width(fb) : 0)) >> 1;
-        uint32_t off_y = (x11->height - (x11->grab ? rvvm_fb_height(fb) : 0)) >> 1;
+        int off_x = EVAL_MAX((int)x11->width - (int)(x11->grab ? 0 : rvvm_fb_width(fb)), 0) >> 1;
+        int off_y = EVAL_MAX((int)x11->height - (int)(x11->grab ? 0 : rvvm_fb_height(fb)), 0) >> 1;
         // Calculate resulting mouse offset
-        int32_t x = ev->xmotion.x - off_x;
-        int32_t y = ev->xmotion.y - off_y;
+        int x = ev->xmotion.x - off_x;
+        int y = ev->xmotion.y - off_y;
         if (x11->grab && (x || y)) {
             XWarpPointer(x11_display, None, x11->window, 0, 0, 0, 0, off_x, off_y);
             XFlush(x11_display);
@@ -893,28 +893,26 @@ static void x11_window_draw_internal(gui_window_t* win)
         .green_mask     = 0xFF00U,
         .blue_mask      = 0xFFU,
     };
-    // Calculate width / height considering low bpp stride
-    // NOTE: Non-bpp32 will look ugly, but at least will work
-    uint32_t width  = EVAL_MIN(rvvm_fb_stride(fb) / 4, rvvm_fb_width(fb));
+    uint32_t width  = rvvm_fb_width(fb);
     uint32_t height = rvvm_fb_height(fb);
     // Resize window if needed
     if (!rvvm_fb_same_res(fb, &x11->fb)) {
+        XSizeHints hints = {
+            .flags      = PMinSize,
+            .min_width  = width,
+            .min_height = height,
+        };
         bool empty = !rvvm_fb_width(&x11->fb) || !rvvm_fb_height(&x11->fb);
         bool match = x11->width == rvvm_fb_width(&x11->fb) && x11->height == rvvm_fb_height(&x11->fb);
         bool small = x11->width < width || x11->height < height;
+        if (gui_backend_allow_shrink(win)) {
+            hints.min_width  = 128;
+            hints.min_height = 128;
+        }
+        XSetWMNormalHints(x11_display, x11->window, &hints);
         if (empty || match || (small && !gui_backend_allow_shrink(win))) {
-            XSizeHints hints = {
-                .flags      = PMinSize,
-                .min_width  = width,
-                .min_height = height,
-            };
-            if (gui_backend_allow_shrink(win)) {
-                hints.min_width  = 128;
-                hints.min_height = 128;
-            }
             x11->width  = width;
             x11->height = height;
-            XSetWMNormalHints(x11_display, x11->window, &hints);
             XResizeWindow(x11_display, x11->window, x11->width, x11->height);
         }
     }
@@ -938,14 +936,14 @@ static void x11_window_draw_internal(gui_window_t* win)
         // Update XShm image
         image.obdata = (void*)&x11->xshm;
         XShmPutImage(x11_display, x11->window, x11->gc, &image, //
-                     0, 0, dst_x, dst_y, width, height, 0);
+                     0, 0, dst_x, dst_y, image.width, image.height, 0);
         XFlush(x11_display);
         return;
     }
 #endif
     // Update XImage
     XPutImage(x11_display, x11->window, x11->gc, &image, //
-              0, 0, dst_x, dst_y, width, height);
+              0, 0, dst_x, dst_y, image.width, image.height);
     XFlush(x11_display);
 }
 
