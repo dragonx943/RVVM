@@ -2,7 +2,6 @@ override NAME    := RVVM
 override DESC    := The RVVM Project
 override URL     := https://github.com/LekKit/RVVM
 override VERSION := v0.7-git
-override SRCDIR  := src
 
 override define LOGO
   ██▀███   ██▒   █▓ ██▒   █▓ ███▄ ▄███▓
@@ -124,17 +123,19 @@ endif
 #
 
 # Useflag conditional sources
-override SRC_USE_WIN32_GUI := $(SRCDIR)/devices/win32window.c
-override SRC_USE_HAIKU_GUI := $(SRCDIR)/devices/haiku_window.cpp
-override SRC_USE_X11       := $(SRCDIR)/devices/x11window_xlib.c
-override SRC_USE_SDL       := $(SRCDIR)/devices/sdl_window.c
-override SRC_USE_WAYLAND   := $(SRCDIR)/devices/wayland_window.c
+override SRC_USE_WIN32_GUI := $(SRCDIR)/gui/win32_window.c
+override SRC_USE_HAIKU_GUI := $(SRCDIR)/gui/haiku_window.cpp
+override SRC_USE_X11       := $(SRCDIR)/gui/x11_window.c
+override SRC_USE_SDL       := $(SRCDIR)/gui/sdl_window.c
+override SRC_USE_WAYLAND   := $(SRCDIR)/gui/wayland_window.c
+
 override SRC_USE_TAP_LINUX := $(SRCDIR)/devices/tap_linux.c
 override SRC_USE_NET       := $(SRCDIR)/networking.c $(SRCDIR)/devices/tap_user.c
 override SRC_USE_JIT       := $(SRCDIR)/rvjit/rvjit.c $(SRCDIR)/rvjit/rvjit_emit.c
-override SRC_USE_JNI       := $(SRCDIR)/bindings/jni/rvvm_jni.c
 override SRC_USE_RV32      := $(SRCDIR)/cpu/riscv32_interpreter.c
 override SRC_USE_RV64      := $(SRCDIR)/cpu/riscv64_interpreter.c
+override SRC_USE_LIBRETRO  := $(SRCDIR)/bindings/libretro/libretro.c
+override SRC_USE_JNI       := $(SRCDIR)/bindings/jni/rvvm_jni.c
 
 # Useflag dependencies
 override RVJIT_SUPPORTS_ARCH := $(if $(filter i386 x86_64 arm% riscv%,$(ARCH)),1)
@@ -145,11 +146,10 @@ override DEPS_USE_SDL       := USE_GUI
 override DEPS_USE_WAYLAND   := USE_GUI
 override DEPS_USE_WIN32_GUI := USE_GUI
 override DEPS_USE_HAIKU_GUI := USE_GUI
-
-override DEPS_USE_ALSA := USE_SOUND
-
-override DEPS_USE_JNI     := USE_LIB USE_NET
-override DEPS_USE_GDBSTUB := USE_NET
+override DEPS_USE_ALSA      := USE_SOUND
+override DEPS_USE_GDBSTUB   := USE_NET
+override DEPS_USE_JNI       := USE_LIB USE_NET
+override DEPS_USE_LIBRETRO  := USE_LIB USE_NET
 
 # Libraries
 override LIBS_USE_SDL     := sdl$(filter-out 1,$(USE_SDL))
