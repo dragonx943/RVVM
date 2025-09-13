@@ -210,17 +210,20 @@ endif()
 #
 
 # General sources
-file(GLOB RVVM_SRC LIST_DIRECTORIES FALSE CONFIGURE_DEPENDS
+file(GLOB_RECURSE RVVM_SRC LIST_DIRECTORIES FALSE CONFIGURE_DEPENDS
+	"${RVVM_INC_DIR}/*.h"
 	"${RVVM_SRC_DIR}/*.h"
 	"${RVVM_SRC_DIR}/*.c"
-	"${RVVM_SRC_DIR}/devices/*.c"
 )
 
+list(REMOVE_ITEM RVVM_SRC "${RVVM_SRC_DIR}/bindings/libretro/libretro.c")
+
 # Conditionally compiled sources
-set(SRC_USE_WIN32_GUI "${RVVM_SRC_DIR}/devices/win32window.c")
-set(SRC_USE_HAIKU_GUI "${RVVM_SRC_DIR}/devices/haiku_window.cpp")
-set(SRC_USE_X11 "${RVVM_SRC_DIR}/devices/x11window_xlib.c")
-set(SRC_USE_SDL "${RVVM_SRC_DIR}/devices/sdl_window.c")
+set(SRC_USE_WIN32_GUI "${RVVM_SRC_DIR}/gui/win32_window.c")
+set(SRC_USE_HAIKU_GUI "${RVVM_SRC_DIR}/gui/haiku_window.cpp")
+set(SRC_USE_WAYLAND "${RVVM_SRC_DIR}/gui/wayland_window.c")
+set(SRC_USE_X11 "${RVVM_SRC_DIR}/gui/x11_window.c")
+set(SRC_USE_SDL "${RVVM_SRC_DIR}/gui/sdl_window.c")
 
 set(SRC_USE_TAP_LINUX "${RVVM_SRC_DIR}/devices/tap_linux.c")
 set(SRC_USE_NET "${RVVM_SRC_DIR}/networking.c" "${RVVM_SRC_DIR}/devices/tap_user.c")
