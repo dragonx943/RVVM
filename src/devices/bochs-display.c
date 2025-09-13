@@ -11,10 +11,14 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #include "mem_ops.h"
 #include "utils.h"
+#include "vma_ops.h"
+
+PUSH_OPTIMIZATION_SIZE
 
 typedef struct {
     rvvm_fbdev_t* fbdev;
 
+    uint32_t version;
     uint32_t enable;
     uint32_t xres;
     uint32_t yres;
@@ -37,8 +41,9 @@ typedef struct {
 #define BOCHS_DISPI_Y_OFFSET    0x0512
 #define BOCHS_DISPI_VRAM        0x0514
 
-// Bochs VBE version 5
-#define BOCHS_VER_ID5           0xB0C5
+// Bochs VBE verions
+#define BOCHS_VER_ID0           0xB0C0 // Bochs VBE version 0
+#define BOCHS_VER_ID5           0xB0C5 // Bochs VBE version 5
 
 // Enable register bits
 #define BOCHS_ENABLE            0x01
@@ -48,6 +53,22 @@ typedef struct {
 #define BOCHS_NOCLR             0x80
 #define BOCHS_ENABLE_MASK       0xE3
 
+static void bochs_display_update_mode(bochs_display_t* disp, bool upd_res)
+{
+    rvvm_fb_t fb   = ZERO_INIT;
+    uint8_t*  vram = rvvm_fbdev_get_vram(disp->fbdev, NULL);
+    uint32_t  off  = atomic_load_uint32_relax(&disp->xoff);
+    rvvm_fbdev_get_scanout(disp->fbdev, &fb);
+    if (upd_res) {
+        fb.width  = atomic_load_uint32_relax(&disp->xres);
+        fb.height = atomic_load_uint32_relax(&disp->yres);
+    }
+    fb.stride = EVAL_MAX(atomic_load_uint32_relax(&disp->xvirt), fb.width * 4);
+    fb.format = RVVM_RGB_XRGB8888;
+    fb.buffer = vram + off + (atomic_load_uint32_relax(&disp->yoff) * fb.stride);
+    rvvm_fbdev_set_scanout(disp->fbdev, &fb);
+}
+
 static bool bochs_display_read(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint8_t size)
 {
     bochs_display_t* disp = dev->data;
@@ -56,18 +77,21 @@ static bool bochs_display_read(rvvm_mmio_dev_t* dev, void* data, size_t offset, 
 
     switch (offset) {
         case BOCHS_DISPI_ID:
-            val = BOCHS_VER_ID5;
+            val = atomic_load_uint32_relax(&disp->version);
+            if (val < BOCHS_VER_ID0 || val > BOCHS_VER_ID5) {
+                val = BOCHS_VER_ID5;
+            }
             break;
         case BOCHS_DISPI_XRES:
             if (atomic_load_uint32_relax(&disp->enable) & BOCHS_CAPS) {
-                val = 1920;
+                val = 2560;
             } else {
                 val = atomic_load_uint32_relax(&disp->xres);
             }
             break;
         case BOCHS_DISPI_YRES:
             if (atomic_load_uint32_relax(&disp->enable) & BOCHS_CAPS) {
-                val = 1080;
+                val = 1440;
             } else {
                 val = atomic_load_uint32_relax(&disp->yres);
             }
@@ -109,42 +133,46 @@ static bool bochs_display_write(rvvm_mmio_dev_t* dev, void* data, size_t offset,
     UNUSED(size);
 
     switch (offset) {
+        case BOCHS_DISPI_ID:
+            atomic_store_uint32_relax(&disp->version, val);
+            break;
         case BOCHS_DISPI_XRES:
-            atomic_store_uint32_relax(&disp->xres, val);
+            if (!(atomic_load_uint32_relax(&disp->enable) & BOCHS_ENABLE_MASK)) {
+                atomic_store_uint32_relax(&disp->xres, val);
+            }
             break;
         case BOCHS_DISPI_YRES:
-            atomic_store_uint32_relax(&disp->yres, val);
+            if (!(atomic_load_uint32_relax(&disp->enable) & BOCHS_ENABLE_MASK)) {
+                atomic_store_uint32_relax(&disp->yres, val);
+            }
             break;
         case BOCHS_DISPI_VIRT_WIDTH:
             atomic_store_uint32_relax(&disp->xvirt, val);
+            bochs_display_update_mode(disp, false);
             break;
         case BOCHS_DISPI_VIRT_HEIGHT:
+            // NOTE: This has no effect
             atomic_store_uint32_relax(&disp->yvirt, val);
             break;
         case BOCHS_DISPI_X_OFFSET:
             atomic_store_uint32_relax(&disp->xoff, val);
+            bochs_display_update_mode(disp, false);
             break;
         case BOCHS_DISPI_Y_OFFSET:
             atomic_store_uint32_relax(&disp->yoff, val);
+            bochs_display_update_mode(disp, false);
             break;
         case BOCHS_DISPI_ENABLE:
             atomic_store_uint32_relax(&disp->enable, val & BOCHS_ENABLE_MASK);
             if (val & BOCHS_ENABLE) {
-                // Update video mode
-                uint8_t* vram    = rvvm_fbdev_get_vram(disp->fbdev, NULL);
-                uint32_t width   = atomic_load_uint32_relax(&disp->xres);
-                uint32_t height  = atomic_load_uint32_relax(&disp->yres);
-                uint32_t stride  = EVAL_MAX(atomic_load_uint32_relax(&disp->xvirt), width * 4);
-                uint32_t vramoff = atomic_load_uint32_relax(&disp->xoff) //
-                                 + (atomic_load_uint32_relax(&disp->yoff) * stride);
-                rvvm_fb_t fb = {
-                    .width  = width,
-                    .height = height,
-                    .stride = stride,
-                    .format = RVVM_RGB_XRGB8888,
-                    .buffer = vram + vramoff,
-                };
-                rvvm_fbdev_set_scanout(disp->fbdev, &fb);
+                if (!(val & BOCHS_NOCLR)) {
+                    // Clear VRAM
+                    size_t vsiz = 0;
+                    void*  vram = rvvm_fbdev_get_vram(disp->fbdev, &vsiz);
+                    vma_clean(vram, vsiz, false);
+                }
+                // Fully update video mode
+                bochs_display_update_mode(disp, true);
             }
             break;
     }
@@ -228,3 +256,5 @@ pci_dev_t* rvvm_bochs_display_init_auto(rvvm_machine_t* machine, rvvm_fbdev_t* f
 {
     return rvvm_bochs_display_init(rvvm_get_pci_bus(machine), fbdev);
 }
+
+POP_OPTIMIZATION_SIZE
