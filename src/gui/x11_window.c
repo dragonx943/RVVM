@@ -1,5 +1,5 @@
 /*
-x11window.c - X11 GUI Window
+x11_window.c - X11 GUI Window
 Copyright (C) 2021  LekKit <github.com/LekKit>
 
 This Source Code Form is subject to the terms of the Mozilla Public
@@ -555,6 +555,7 @@ static void x11_handle_event(const XEvent* ev, size_t pending)
                 x11->height = ev->xconfigure.height;
             }
             spin_unlock(&x11_lock);
+            gui_backend_on_resize(win, ev->xconfigure.width, ev->xconfigure.height);
             break;
         default:
             spin_unlock(&x11_lock);

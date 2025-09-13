@@ -498,7 +498,7 @@ static gui_window_t* sdl_find_window(uint32_t window_id)
 {
     vector_foreach (sdl_windows, i) {
         gui_window_t* win = vector_at(sdl_windows, i);
-        sdl_window_t* sdl = win->win_data;
+        sdl_window_t* sdl = gui_backend_get_data(win);
         if (sdl->id == window_id) {
             return win;
         }

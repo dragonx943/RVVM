@@ -1,5 +1,5 @@
 /*
-win32window.c - Win32 GUI Window
+win32_window.c - Win32 GUI Window
 Copyright (C) 2021  LekKit <github.com/LekKit>
 
 This Source Code Form is subject to the terms of the Mozilla Public
