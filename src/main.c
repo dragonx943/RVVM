@@ -30,7 +30,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include "utils.h"
 
 #include "devices/ata.h"
-#include "devices/gui_window.h"
+#include "devices/framebuffer.h"
 #include "devices/i2c-oc.h"
 #include "devices/ns16550a.h"
 #include "devices/nvme.h"
@@ -45,6 +45,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include "devices/sound-hda.h"
 #include "devices/syscon.h"
 #include "devices/usb-xhci.h"
+
+#include "gui/gui_window.h"
 
 PUSH_OPTIMIZATION_SIZE
 
@@ -253,17 +255,18 @@ static bool rvvm_cli_configure(rvvm_machine_t* machine, const char* bios, tap_de
                 }
                 ns16550a_init_auto(machine, chardev);
             } else if (rvvm_strcmp(arg_name, "res")) {
-                size_t   len  = 0;
-                uint32_t fb_x = str_to_uint_base(arg_val, &len, 10);
-                uint32_t fb_y = str_to_uint_base(arg_val + len + 1, NULL, 10);
-                if (arg_val[len] != 'x') {
-                    fb_y = 0;
-                }
-                if (fb_x < 100 || fb_y < 100) {
-                    rvvm_error("Invalid resolution: %s, expects 640x480", arg_val);
+                size_t    len = 0;
+                rvvm_fb_t fb  = {
+                     .width  = str_to_uint_base(arg_val, &len, 10),
+                     .height = str_to_uint_base(arg_val + len + 1, NULL, 10),
+                     .format = RVVM_RGB_XRGB8888,
+                };
+                if (arg_val[len] == 'x' && rvvm_fb_size(&fb)) {
+                    rvvm_simplefb_init_auto(machine, gui_window_get_fbdev(gui_rvvm_init(0, &fb, machine)));
+                } else {
+                    rvvm_error("Invalid resolution: %s, expects WxH", arg_val);
                     return false;
                 }
-                gui_window_init_auto(machine, fb_x, fb_y);
 #if defined(USE_NET)
             } else if (tap && rvvm_strcmp(arg_name, "portfwd")) {
                 if (!tap_portfwd(tap, arg_val)) {
@@ -358,7 +361,7 @@ static int rvvm_cli_main(int argc, char** argv)
     }
 
     if (!rvvm_has_arg("nogui") && !rvvm_has_arg("res")) {
-        gui_window_init_auto(machine, 640, 480);
+        rvvm_simplefb_init_auto(machine, gui_window_get_fbdev(gui_rvvm_init(0, NULL, machine)));
     }
 
     if (rvvm_has_arg("hda_test")) {
