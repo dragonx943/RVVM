@@ -552,7 +552,7 @@ static void sdl_handle_mouse_moution(const SDL_Event* event)
     sdl_window_t* sdl = gui_backend_get_data(win);
     if (sdl && sdl->grab) {
         gui_backend_on_mouse_move(win, (int)event->motion.xrel, (int)event->motion.yrel);
-    } else {
+    } else if (sdl) {
         const rvvm_fb_t* fb = gui_backend_get_scanout(win);
         // Calculate view offset
         int off_x = EVAL_MAX((int)sdl->width - (int)rvvm_fb_width(fb), 0) >> 1;
