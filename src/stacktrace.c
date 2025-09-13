@@ -15,7 +15,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 PUSH_OPTIMIZATION_SIZE
 
 // Do not set signal handlers under sanitizers to prevent breakage
-#if !defined(USE_NO_STACKTRACE) && (defined(USE_NO_DLIB) || defined(SANITIZERS_ENABLED))
+#if !defined(USE_NO_STACKTRACE) && defined(USE_NO_DLIB)
 #define USE_NO_STACKTRACE 1
 #endif
 
@@ -24,7 +24,8 @@ PUSH_OPTIMIZATION_SIZE
 #include "dlib.h"
 #include <stdio.h>
 
-#if defined(HOST_TARGET_POSIX) && !defined(HOST_TARGET_HAIKU) && CHECK_INCLUDE(signal.h, 1)
+#if defined(HOST_TARGET_POSIX) && !defined(SANITIZERS_ENABLED) /**/                                                    \
+    && !defined(HOST_TARGET_HAIKU) && CHECK_INCLUDE(signal.h, 1)
 
 // Set up stacktrace dump on SIGSEGV/SIGBUS/SIGILL/SIGFPE via sigaction()
 #include "rvtimer.h"
@@ -49,7 +50,7 @@ PUSH_OPTIMIZATION_SIZE
 
 #endif
 
-#if defined(HOST_TARGET_WINNT)
+#if defined(HOST_TARGET_WINNT) && !defined(SANITIZERS_ENABLED)
 
 // Set up stacktrace dump on SEH via SetUnhandledExceptionFilter()
 #include "rvtimer.h"
