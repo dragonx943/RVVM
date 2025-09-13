@@ -370,13 +370,14 @@ JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_mtd_1physmap_1init_1auto(JNI
 
 static void jni_framebuffer_remove(rvvm_mmio_dev_t* dev)
 {
+    rvvm_fbdev_dec_ref(dev->data);
     if (dev->mapping && dev->size) {
         vma_free(dev->mapping, dev->size);
     }
 }
 
 static const rvvm_mmio_type_t jni_framebuffer_dev_type = {
-    .name   = "framebuffer",
+    .name   = "simple-framebuffer",
     .remove = jni_framebuffer_remove,
 };
 
@@ -384,28 +385,32 @@ JNIEXPORT jlong JNICALL Java_lekkit_rvvm_RVVMNative_framebuffer_1init_1auto(JNIE
                                                                             jlong machine, jobjectArray fb, jint x,
                                                                             jint y, jint bpp)
 {
-    fb_ctx_t fb_ctx = {
-        .format = rgb_format_from_bpp(bpp),
+    rvvm_fb_t fb_ctx = {
+        .format = rvvm_rgb_from_bpp(bpp),
         .width  = x,
         .height = y,
     };
     UNUSED(cls);
 
-    if (!framebuffer_size(&fb_ctx)) {
-        rvvm_warn("Invalid framebuffer size/bpp!");
+    if (!rvvm_fb_size(&fb_ctx)) {
+        rvvm_error("Invalid framebuffer size/bpp!");
         return 0;
     }
 
-    fb_ctx.buffer = vma_alloc(NULL, framebuffer_size(&fb_ctx), VMA_RDWR);
+    fb_ctx.buffer = vma_alloc(NULL, rvvm_fb_size(&fb_ctx), VMA_RDWR);
     if (!fb_ctx.buffer) {
         rvvm_warn("Failed to allocate framebuffer via vma_alloc()!");
         return 0;
     }
 
-    rvvm_mmio_dev_t* mmio = framebuffer_init_auto((rvvm_machine_t*)(size_t)machine, &fb_ctx);
+    rvvm_fbdev_t* fbdev = rvvm_fbdev_init();
+    rvvm_fbdev_set_vram(fbdev, rvvm_fb_buffer(&fb_ctx), rvvm_fb_size(&fb_ctx));
+    rvvm_fbdev_set_scanout(fbdev, &fb_ctx);
+
+    rvvm_mmio_dev_t* mmio = rvvm_simplefb_init_auto((rvvm_machine_t*)(size_t)machine, fbdev);
     if (mmio) {
         // Return direct ByteBuffer to Java side, register framebuffer cleanup callback
-        jobject bytebuf = (*env)->NewDirectByteBuffer(env, fb_ctx.buffer, framebuffer_size(&fb_ctx));
+        jobject bytebuf = (*env)->NewDirectByteBuffer(env, rvvm_fb_buffer(&fb_ctx), rvvm_fb_size(&fb_ctx));
         mmio->type      = &jni_framebuffer_dev_type;
 
         if (!bytebuf) {
