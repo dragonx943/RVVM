@@ -281,9 +281,9 @@ RVVM_PUBLIC rvvm_fbdev_t* rvvm_fbdev_init(void);
 RVVM_PUBLIC void rvvm_fbdev_inc_ref(rvvm_fbdev_t* fbdev);
 
 /**
- * Unreference fbdev handle
+ * Unreference fbdev handle, returns true if freed
  */
-RVVM_PUBLIC void rvvm_fbdev_dec_ref(rvvm_fbdev_t* fbdev);
+RVVM_PUBLIC bool rvvm_fbdev_dec_ref(rvvm_fbdev_t* fbdev);
 
 /**
  * Register fbdev callbacks

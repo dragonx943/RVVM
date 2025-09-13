@@ -65,14 +65,16 @@ RVVM_PUBLIC void rvvm_fbdev_inc_ref(rvvm_fbdev_t* fbdev)
     }
 }
 
-RVVM_PUBLIC void rvvm_fbdev_dec_ref(rvvm_fbdev_t* fbdev)
+RVVM_PUBLIC bool rvvm_fbdev_dec_ref(rvvm_fbdev_t* fbdev)
 {
     if (fbdev && !atomic_sub_uint32(&fbdev->ref, 1)) {
         if (fbdev->display_cb && fbdev->display_cb->free) {
             fbdev->display_cb->free(fbdev);
         }
         safe_free(fbdev);
+        return true;
     }
+    return false;
 }
 
 RVVM_PUBLIC void rvvm_fbdev_register_dev(rvvm_fbdev_t* fbdev, const rvvm_fb_dev_cb_t* cb)
