@@ -91,16 +91,6 @@ static void rvvm_gui_on_focus_lost(gui_window_t* win)
     rvvm_gui_grab_input(win, false);
 }
 
-static bool rvvm_gui_on_resize(gui_window_t* win, uint32_t w, uint32_t h)
-{
-    rvvm_fb_t fb = ZERO_INIT;
-    UNUSED(w && h);
-    // Soft dirty the framebuffer
-    rvvm_fbdev_get_scanout(win->fbdev, &fb);
-    rvvm_fbdev_set_scanout(win->fbdev, &fb);
-    return false;
-}
-
 static void rvvm_gui_handle_modkeys(rvvm_window_t* rvvm, hid_key_t key, bool pressed)
 {
     switch (key) {
@@ -207,7 +197,6 @@ static gui_event_cb_t rvvm_gui_cb = {
     .remove           = rvvm_gui_remove,
     .on_close         = rvvm_gui_on_close,
     .on_focus_lost    = rvvm_gui_on_focus_lost,
-    .on_resize        = rvvm_gui_on_resize,
     .on_key_press     = rvvm_gui_on_key_press,
     .on_key_release   = rvvm_gui_on_key_release,
     .on_mouse_press   = rvvm_gui_on_mouse_press,
@@ -228,6 +217,7 @@ void gui_rvvm_register(gui_window_t* win, rvvm_machine_t* machine)
     gui_window_set_data(win, rvvm);
     gui_window_register(win, &rvvm_gui_cb);
 
+    rvvm_gui_update_title(win);
     rvvm_gui_draw_logo(win);
 }
 
