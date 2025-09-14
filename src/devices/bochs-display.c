@@ -28,30 +28,43 @@ typedef struct {
     uint32_t yoff;
 } bochs_display_t;
 
-// Bochs display registers
-#define BOCHS_DISPI_ID          0x0500
-#define BOCHS_DISPI_XRES        0x0502
-#define BOCHS_DISPI_YRES        0x0504
-#define BOCHS_DISPI_BPP         0x0506
-#define BOCHS_DISPI_ENABLE      0x0508
-#define BOCHS_DISPI_BANK        0x050A
-#define BOCHS_DISPI_VIRT_WIDTH  0x050C // Scanout stride
-#define BOCHS_DISPI_VIRT_HEIGHT 0x050E // Not useful
-#define BOCHS_DISPI_X_OFFSET    0x0510
-#define BOCHS_DISPI_Y_OFFSET    0x0512
-#define BOCHS_DISPI_VRAM        0x0514
+/*
+ * Bochs Display registers
+ */
+#define BOCHS_REG_ID          0x0500 // Version ID (0xBOC0 - 0xBOC5)
+#define BOCHS_REG_XRES        0x0502 // X Resolution
+#define BOCHS_REG_YRES        0x0504 // Y Resolution
+#define BOCHS_REG_BPP         0x0506 // Bits per pixel (32bpp is XRGB8888)
+#define BOCHS_REG_ENABLE      0x0508 // Enable register
+#define BOCHS_REG_BANK        0x050A // Current 64KiB VRAM bank exposed at 0xA0000 (x86 VGA only)
+#define BOCHS_REG_VIRT_WIDTH  0x050C // Framebuffer stride
+#define BOCHS_REG_VIRT_HEIGHT 0x050E // Not meaningful, should be set >= YRES by the guest
+#define BOCHS_REG_X_OFFSET    0x0510 // Framebuffer X offset in VRAM
+#define BOCHS_REG_Y_OFFSET    0x0512 // Framebuffer Y offset in VRAM
+#define BOCHS_REG_VRAM        0x0514 // VRAM size (In 64KiB units, i.e. shifted right by 16)
 
-// Bochs VBE verions
-#define BOCHS_VER_ID0           0xB0C0 // Bochs VBE version 0
-#define BOCHS_VER_ID5           0xB0C5 // Bochs VBE version 5
+/*
+ * Extended registers (Added in device PCI Revision 2)
+ */
+#define BOCHS_REG_QEXT_SIZE   0x0600 // Extended registers region size, should be 8
+#define BOCHS_REG_ENDIAN_LO   0x0604 // Framebuffer endianness register, should be 0x1E1E
+#define BOCHS_REG_ENDIAN_HI   0x0606 // Framebuffer endianness register, should be 0x1E1E
 
-// Enable register bits
-#define BOCHS_ENABLE            0x01
-#define BOCHS_CAPS              0x02
-#define BOCHS_8BIT              0x20
-#define BOCHS_LFB               0x40
-#define BOCHS_NOCLR             0x80
-#define BOCHS_ENABLE_MASK       0xE3
+/*
+ * Bochs Display verions in ID register
+ */
+#define BOCHS_VER_ID0         0xB0C0 // Bochs VBE version 0
+#define BOCHS_VER_ID5         0xB0C5 // Bochs VBE version 5
+
+/*
+ * Enable register bits
+ */
+#define BOCHS_ENABLE          0x01 // Enable the display engine, applies XRES/YRES/BPP and disallows writes to them
+#define BOCHS_ENABLE_CAPS     0x02 // Enable capabilities (XRES/YRES/BPP report max values instead)
+#define BOCHS_ENABLE_8BIT     0x20 // Enable 8-bit DAC (x86 VGA only)
+#define BOCHS_ENABLE_LFB      0x40 // Enable Linear Framebuffer in BAR 0 (x86 VGA only)
+#define BOCHS_ENABLE_NOCLR    0x80 // Do not zero VRAM on enable
+#define BOCHS_ENABLE_MASK     0xE3 // Mask of valid bits
 
 static void bochs_display_update_mode(bochs_display_t* disp, bool upd_res)
 {
@@ -76,50 +89,58 @@ static bool bochs_display_read(rvvm_mmio_dev_t* dev, void* data, size_t offset, 
     UNUSED(size);
 
     switch (offset) {
-        case BOCHS_DISPI_ID:
+        case BOCHS_REG_ID:
             val = atomic_load_uint32_relax(&disp->version);
             if (val < BOCHS_VER_ID0 || val > BOCHS_VER_ID5) {
                 val = BOCHS_VER_ID5;
             }
             break;
-        case BOCHS_DISPI_XRES:
-            if (atomic_load_uint32_relax(&disp->enable) & BOCHS_CAPS) {
+        case BOCHS_REG_XRES:
+            if (atomic_load_uint32_relax(&disp->enable) & BOCHS_ENABLE_CAPS) {
                 val = 2560;
             } else {
                 val = atomic_load_uint32_relax(&disp->xres);
             }
             break;
-        case BOCHS_DISPI_YRES:
-            if (atomic_load_uint32_relax(&disp->enable) & BOCHS_CAPS) {
+        case BOCHS_REG_YRES:
+            if (atomic_load_uint32_relax(&disp->enable) & BOCHS_ENABLE_CAPS) {
                 val = 1440;
             } else {
                 val = atomic_load_uint32_relax(&disp->yres);
             }
             break;
-        case BOCHS_DISPI_BPP:
+        case BOCHS_REG_BPP:
+            // NOTE: Only claim bpp32 (XRGB8888) support for now
             val = 32;
             break;
-        case BOCHS_DISPI_ENABLE:
+        case BOCHS_REG_ENABLE:
             val = atomic_load_uint32_relax(&disp->enable);
             break;
-        case BOCHS_DISPI_VIRT_WIDTH:
+        case BOCHS_REG_VIRT_WIDTH:
             val = atomic_load_uint32_relax(&disp->xvirt);
             break;
-        case BOCHS_DISPI_VIRT_HEIGHT:
+        case BOCHS_REG_VIRT_HEIGHT:
             val = atomic_load_uint32_relax(&disp->yvirt);
             break;
-        case BOCHS_DISPI_X_OFFSET:
+        case BOCHS_REG_X_OFFSET:
             val = atomic_load_uint32_relax(&disp->xoff);
             break;
-        case BOCHS_DISPI_Y_OFFSET:
+        case BOCHS_REG_Y_OFFSET:
             val = atomic_load_uint32_relax(&disp->yoff);
             break;
-        case BOCHS_DISPI_VRAM: {
+        case BOCHS_REG_VRAM: {
             size_t vram_size = RVVM_BOCHS_DISPLAY_VRAM;
             rvvm_fbdev_get_vram(disp->fbdev, &vram_size);
             val = vram_size >> 16;
             break;
         }
+        case BOCHS_REG_QEXT_SIZE:
+            val = 8;
+            break;
+        case BOCHS_REG_ENDIAN_LO:
+        case BOCHS_REG_ENDIAN_HI:
+            val = 0x1E1EU;
+            break;
     }
 
     write_uint16_le(data, val);
@@ -133,39 +154,38 @@ static bool bochs_display_write(rvvm_mmio_dev_t* dev, void* data, size_t offset,
     UNUSED(size);
 
     switch (offset) {
-        case BOCHS_DISPI_ID:
+        case BOCHS_REG_ID:
             atomic_store_uint32_relax(&disp->version, val);
             break;
-        case BOCHS_DISPI_XRES:
-            if (!(atomic_load_uint32_relax(&disp->enable) & BOCHS_ENABLE_MASK)) {
+        case BOCHS_REG_XRES:
+            if (!(atomic_load_uint32_relax(&disp->enable) & BOCHS_ENABLE)) {
                 atomic_store_uint32_relax(&disp->xres, val);
             }
             break;
-        case BOCHS_DISPI_YRES:
-            if (!(atomic_load_uint32_relax(&disp->enable) & BOCHS_ENABLE_MASK)) {
+        case BOCHS_REG_YRES:
+            if (!(atomic_load_uint32_relax(&disp->enable) & BOCHS_ENABLE)) {
                 atomic_store_uint32_relax(&disp->yres, val);
             }
             break;
-        case BOCHS_DISPI_VIRT_WIDTH:
+        case BOCHS_REG_VIRT_WIDTH:
             atomic_store_uint32_relax(&disp->xvirt, val);
             bochs_display_update_mode(disp, false);
             break;
-        case BOCHS_DISPI_VIRT_HEIGHT:
-            // NOTE: This has no effect
+        case BOCHS_REG_VIRT_HEIGHT:
             atomic_store_uint32_relax(&disp->yvirt, val);
             break;
-        case BOCHS_DISPI_X_OFFSET:
+        case BOCHS_REG_X_OFFSET:
             atomic_store_uint32_relax(&disp->xoff, val);
             bochs_display_update_mode(disp, false);
             break;
-        case BOCHS_DISPI_Y_OFFSET:
+        case BOCHS_REG_Y_OFFSET:
             atomic_store_uint32_relax(&disp->yoff, val);
             bochs_display_update_mode(disp, false);
             break;
-        case BOCHS_DISPI_ENABLE:
+        case BOCHS_REG_ENABLE:
             atomic_store_uint32_relax(&disp->enable, val & BOCHS_ENABLE_MASK);
             if (val & BOCHS_ENABLE) {
-                if (!(val & BOCHS_NOCLR)) {
+                if (!(val & BOCHS_ENABLE_NOCLR)) {
                     // Clear VRAM
                     size_t vsiz = 0;
                     void*  vram = rvvm_fbdev_get_vram(disp->fbdev, &vsiz);
@@ -222,14 +242,15 @@ pci_dev_t* rvvm_bochs_display_init(pci_bus_t* pci_bus, rvvm_fbdev_t* fbdev)
     size_t vram_size = RVVM_BOCHS_DISPLAY_VRAM;
     void*  vram      = rvvm_fbdev_get_vram(fbdev, &vram_size);
 
-    // fbdev is released twice
+    // Handle is released twice
     rvvm_fbdev_inc_ref(fbdev);
     disp->fbdev = fbdev;
 
     pci_func_desc_t bochs_desc = {
         .vendor_id  = 0x1234, // Not in PCI ID database yet, should be Bochs
         .device_id  = 0x1111, // Not in PCI ID database yet, should be Bochs-Display
-        .class_code = 0x0380, // Display controller
+        .class_code = 0x0380, // Display controller (Legacy-free, no VGA)
+        .rev        = 2,      // Revision 2
         .bar[0] = {
             .size    = vram_size,
             .data    = disp,
