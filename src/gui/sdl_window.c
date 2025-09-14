@@ -85,12 +85,15 @@ SDL_DLIB_SYM(SDL_CreateWindow)
 SDL_DLIB_SYM(SDL_DestroyRenderer)
 SDL_DLIB_SYM(SDL_DestroyTexture)
 SDL_DLIB_SYM(SDL_DestroyWindow)
+SDL_DLIB_SYM(SDL_GetCurrentDisplayMode)
 SDL_DLIB_SYM(SDL_GetCurrentVideoDriver)
 SDL_DLIB_SYM(SDL_GetWindowID)
+SDL_DLIB_SYM(SDL_GetWindowPosition)
 SDL_DLIB_SYM(SDL_RenderClear)
 SDL_DLIB_SYM(SDL_RenderPresent)
 SDL_DLIB_SYM(SDL_SetHint)
 SDL_DLIB_SYM(SDL_SetWindowMinimumSize)
+SDL_DLIB_SYM(SDL_SetWindowPosition)
 SDL_DLIB_SYM(SDL_SetWindowSize)
 SDL_DLIB_SYM(SDL_SetWindowTitle)
 SDL_DLIB_SYM(SDL_UpdateTexture)
@@ -101,12 +104,15 @@ SDL_DLIB_SYM(SDL_UpdateTexture)
 #define SDL_DestroyRenderer       SDL_DestroyRenderer_dlib
 #define SDL_DestroyTexture        SDL_DestroyTexture_dlib
 #define SDL_DestroyWindow         SDL_DestroyWindow_dlib
+#define SDL_GetCurrentDisplayMode SDL_GetCurrentDisplayMode_dlib
 #define SDL_GetCurrentVideoDriver SDL_GetCurrentVideoDriver_dlib
 #define SDL_GetWindowID           SDL_GetWindowID_dlib
+#define SDL_GetWindowPosition     SDL_GetWindowPosition_dlib
 #define SDL_RenderClear           SDL_RenderClear_dlib
 #define SDL_RenderPresent         SDL_RenderPresent_dlib
 #define SDL_SetHint               SDL_SetHint_dlib
 #define SDL_SetWindowMinimumSize  SDL_SetWindowMinimumSize_dlib
+#define SDL_SetWindowPosition     SDL_SetWindowPosition_dlib
 #define SDL_SetWindowSize         SDL_SetWindowSize_dlib
 #define SDL_SetWindowTitle        SDL_SetWindowTitle_dlib
 #define SDL_UpdateTexture         SDL_UpdateTexture_dlib
@@ -761,29 +767,61 @@ static void sdl_window_draw(gui_window_t* win)
     const rvvm_fb_t* fb  = gui_backend_get_scanout(win);
     if (sdl_thread_ok && sdl->window && rvvm_fb_buffer(fb)) {
         // Resize window if needed
+        uint32_t width  = rvvm_fb_width(fb);
+        uint32_t height = rvvm_fb_height(fb);
         if (!rvvm_fb_same_res(fb, &sdl->fb)) {
-            bool empty = !rvvm_fb_width(&sdl->fb) || !rvvm_fb_height(&sdl->fb);
+            /*
+             * Change window size if:
+             * - It currently matches the previous video mode
+             * - It is currently smaller than the new mode, and shrinking is not allowed
+             */
             bool match = sdl->width == rvvm_fb_width(&sdl->fb) && sdl->height == rvvm_fb_height(&sdl->fb);
-            bool small = sdl->width < rvvm_fb_width(fb) || sdl->height < rvvm_fb_height(fb);
+            bool small = sdl->width < width || sdl->height < height;
+            bool resiz = match || (small && !gui_backend_allow_shrink(win));
 #if USE_SDL >= 2
+            // Clamp the new window size to fit onto host screen
+            if (resiz) {
+                const SDL_DisplayMode* mode = NULL;
+#if USE_SDL == 3
+                mode = SDL_GetCurrentDisplayMode(0);
+#else
+                SDL_DisplayMode tmp = ZERO_INIT;
+                if (!SDL_GetCurrentDisplayMode(0, &tmp)) {
+                    mode = &tmp;
+                }
+#endif
+                if (mode) {
+                    width  = EVAL_MIN(width, (uint32_t)mode->w);
+                    height = EVAL_MIN(height, (uint32_t)mode->h);
+                }
+            }
+            // Reposition window to match previous center
+            if (resiz && sdl->width && sdl->height) {
+                int x = 0, y = 0;
+                SDL_GetWindowPosition(sdl->window, &x, &y);
+                x = EVAL_MAX(x - ((width - sdl->width) / 2), 0);
+                y = EVAL_MAX(y - ((height - sdl->height) / 2), 0);
+                SDL_SetWindowPosition(sdl->window, x, y);
+            }
+            // Update window minimum size
             if (gui_backend_allow_shrink(win)) {
                 SDL_SetWindowMinimumSize(sdl->window, 128, 128);
             } else {
-                SDL_SetWindowMinimumSize(sdl->window, rvvm_fb_width(fb), rvvm_fb_height(fb));
+                SDL_SetWindowMinimumSize(sdl->window, width, height);
             }
 #endif
-            if (empty || match || (small && !gui_backend_allow_shrink(win))) {
-                sdl->width  = rvvm_fb_width(fb);
-                sdl->height = rvvm_fb_height(fb);
+            if (resiz) {
 #if USE_SDL >= 2
-                SDL_SetWindowSize(sdl->window, sdl->width, sdl->height);
+                SDL_SetWindowSize(sdl->window, width, height);
 #else
-                SDL_Surface* new_win = SDL_SetVideoMode(sdl->width, sdl->height, //
+                SDL_Surface* new_win = SDL_SetVideoMode(width, height, //
                                                         0, SDL_SWSURFACE | SDL_ANYFORMAT);
                 if (new_win) {
                     sdl->window = new_win;
                 }
 #endif
+                sdl->width  = width;
+                sdl->height = height;
             }
         }
         // Recreate texture if needed
@@ -977,12 +1015,15 @@ static bool sdl_init_libs(void)
     SDL_DLIB_RESOLVE(libsdl, SDL_DestroyRenderer);
     SDL_DLIB_RESOLVE(libsdl, SDL_DestroyTexture);
     SDL_DLIB_RESOLVE(libsdl, SDL_DestroyWindow);
+    SDL_DLIB_RESOLVE(libsdl, SDL_GetCurrentDisplayMode);
     SDL_DLIB_RESOLVE(libsdl, SDL_GetCurrentVideoDriver);
     SDL_DLIB_RESOLVE(libsdl, SDL_GetWindowID);
+    SDL_DLIB_RESOLVE(libsdl, SDL_GetWindowPosition);
     SDL_DLIB_RESOLVE(libsdl, SDL_RenderClear);
     SDL_DLIB_RESOLVE(libsdl, SDL_RenderPresent);
     SDL_DLIB_RESOLVE(libsdl, SDL_SetHint);
     SDL_DLIB_RESOLVE(libsdl, SDL_SetWindowMinimumSize);
+    SDL_DLIB_RESOLVE(libsdl, SDL_SetWindowPosition);
     SDL_DLIB_RESOLVE(libsdl, SDL_SetWindowSize);
     SDL_DLIB_RESOLVE(libsdl, SDL_SetWindowTitle);
     SDL_DLIB_RESOLVE(libsdl, SDL_UpdateTexture);
