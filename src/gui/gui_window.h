@@ -38,13 +38,23 @@ typedef struct {
 
 // GUI Backend callbacks
 typedef struct {
+    // Base window features
     void (*remove)(gui_window_t* win);
     void (*draw)(gui_window_t* win);
     void (*poll)(gui_window_t* win);
     void (*set_title)(gui_window_t* win, const char* title);
+
+    // Usability features
     void (*grab_input)(gui_window_t* win, bool grab);
     void (*hide_cursor)(gui_window_t* win, bool hide);
+    void (*hide_window)(gui_window_t* win, bool hide);
     void (*get_clipboard)(gui_window_t* win, char* buf, size_t size);
+
+    // Positioning
+    void (*get_position)(gui_window_t* win, uint32_t* w, uint32_t* h);
+    void (*set_position)(gui_window_t* win, uint32_t w, uint32_t h);
+    void (*set_win_size)(gui_window_t* win, uint32_t w, uint32_t h);
+    void (*set_min_size)(gui_window_t* win, uint32_t w, uint32_t h);
     void (*set_fullscreen)(gui_window_t* win, bool fullscreen);
 } gui_backend_cb_t;
 
@@ -162,6 +172,15 @@ static inline bool gui_window_hide_cursor(gui_window_t* win, bool hide)
     return false;
 }
 
+static inline bool gui_window_hide_window(gui_window_t* win, bool hide)
+{
+    if (win && win->bknd_cb->hide_window) {
+        win->bknd_cb->hide_window(win, hide);
+        return true;
+    }
+    return false;
+}
+
 static inline size_t gui_window_get_clipboard(gui_window_t* win, char* buf, size_t size)
 {
     if (win && buf && size && win->bknd_cb->get_clipboard) {
@@ -170,6 +189,42 @@ static inline size_t gui_window_get_clipboard(gui_window_t* win, char* buf, size
         return rvvm_strlen(buf);
     }
     return 0;
+}
+
+static inline bool gui_window_get_position(gui_window_t* win, uint32_t* w, uint32_t* h)
+{
+    if (win && win->bknd_cb->get_position && w && h) {
+        win->bknd_cb->get_position(win, w, h);
+        return true;
+    }
+    return false;
+}
+
+static inline bool gui_window_set_position(gui_window_t* win, uint32_t w, uint32_t h)
+{
+    if (win && win->bknd_cb->set_position) {
+        win->bknd_cb->set_position(win, w, h);
+        return true;
+    }
+    return false;
+}
+
+static inline bool gui_window_set_size(gui_window_t* win, uint32_t w, uint32_t h)
+{
+    if (win && win->bknd_cb->set_win_size) {
+        win->bknd_cb->set_win_size(win, w, h);
+        return true;
+    }
+    return false;
+}
+
+static inline bool gui_window_set_min_size(gui_window_t* win, uint32_t w, uint32_t h)
+{
+    if (win && win->bknd_cb->set_min_size) {
+        win->bknd_cb->set_min_size(win, w, h);
+        return true;
+    }
+    return false;
 }
 
 static inline bool gui_window_set_fullscreen(gui_window_t* win, bool fullscreen)
