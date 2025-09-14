@@ -780,27 +780,25 @@ static void sdl_window_draw(gui_window_t* win)
             bool resiz = match || (small && !gui_backend_allow_shrink(win));
 #if USE_SDL >= 2
             // Clamp the new window size to fit onto host screen
+            SDL_DisplayMode mode = {.w = 1024, .h = 768};
             if (resiz) {
-                const SDL_DisplayMode* mode = NULL;
 #if USE_SDL == 3
-                mode = SDL_GetCurrentDisplayMode(0);
+                const SDL_DisplayMode* tmp = SDL_GetCurrentDisplayMode(0);
+                if (tmp) {
+                    mode = *tmp;
+                }
 #else
-                SDL_DisplayMode tmp = ZERO_INIT;
-                if (!SDL_GetCurrentDisplayMode(0, &tmp)) {
-                    mode = &tmp;
-                }
+                SDL_GetCurrentDisplayMode(0, &mode);
 #endif
-                if (mode) {
-                    width  = EVAL_MIN(width, (uint32_t)mode->w);
-                    height = EVAL_MIN(height, (uint32_t)mode->h);
-                }
+                width  = EVAL_MIN(width, (uint32_t)mode.w);
+                height = EVAL_MIN(height, (uint32_t)mode.h);
             }
             // Reposition window to match previous center
             if (resiz && sdl->width && sdl->height) {
                 int x = 0, y = 0;
                 SDL_GetWindowPosition(sdl->window, &x, &y);
-                x = EVAL_MAX(x - ((width - sdl->width) / 2), 0);
-                y = EVAL_MAX(y - ((height - sdl->height) / 2), 0);
+                x = EVAL_MIN(EVAL_MAX(x - ((int)(width - sdl->width) / 2), 0), (int)mode.w - 64);
+                y = EVAL_MIN(EVAL_MAX(y - ((int)(height - sdl->height) / 2), 0), (int)mode.h - 64);
                 SDL_SetWindowPosition(sdl->window, x, y);
             }
             // Update window minimum size
