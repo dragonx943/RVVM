@@ -21,8 +21,8 @@ endef
 #
 
 ifneq (,$(filter linux,$(OS)))
-# TODO: Enable Wayland on Linux by default (Event thread sometimes hangs)
-#USE_WAYLAND ?= 1
+# Enable Wayland on Linux by default
+USE_WAYLAND ?= 1
 endif
 ifneq (,$(filter linux %bsd sunos,$(OS)))
 # Enable X11 on Linux, *BSD, Solaris by default
