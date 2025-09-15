@@ -134,6 +134,9 @@ static void seh_suspend_access_violation(void)
 #include <mach/task.h>         // For mach_msg_type_number_t, thread_act_t, task_threads()
 #include <mach/thread_state.h> // For mach_task_self(), thread_get_register_pointer_values()
 #include <mach/vm_map.h>       // For vm_address_t, vm_deallocate()
+#else
+// Passing MAP_JIT on non-ARM64 is pointless, and causes an mmap() error on old Darwin
+#undef MAP_JIT
 #endif
 
 #ifndef MAP_ANON
