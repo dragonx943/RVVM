@@ -37,7 +37,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #undef HOST_TARGET_ANDROID
 #undef HOST_TARGET_ILLUMOS
 #undef HOST_TARGET_SOLARIS
-#undef HOST_TARGET_DFLYBSD
+#undef HOST_TARGET_DRAGONFLYBSD
+#undef HOST_TARGET_MIDNIGHTBSD
 #undef HOST_TARGET_FREEBSD
 #undef HOST_TARGET_OPENBSD
 #undef HOST_TARGET_NETBSD
@@ -105,9 +106,13 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define HOST_TARGET_ILLUMOS 1
 #endif
 #elif defined(__DragonFly__)
-#define HOST_TARGET_POSIX   200809L
-#define HOST_TARGET_BSD     1
-#define HOST_TARGET_DFLYBSD 1
+#define HOST_TARGET_POSIX        200809L
+#define HOST_TARGET_BSD          1
+#define HOST_TARGET_DRAGONFLYBSD 1
+#elif defined(__MidnightBSD__)
+#define HOST_TARGET_POSIX       200809L
+#define HOST_TARGET_BSD         1
+#define HOST_TARGET_MIDNIGHTBSD 1
 #elif defined(__FreeBSD__)
 #define HOST_TARGET_POSIX   200809L
 #define HOST_TARGET_BSD     1
