@@ -103,7 +103,7 @@ WAYLAND_DLIB_SYM(xkb_keymap_unref)
 #endif
 
 // Protocol autogen
-#include "wayland_window.h"
+#include "wayland_client_protocols.h"
 
 // From <linux/input-event-codes.h>
 #define WL_BTN_LEFT   0x110
