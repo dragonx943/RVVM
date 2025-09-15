@@ -13,8 +13,6 @@ PUSH_OPTIMIZATION_SIZE
 
 #if defined(USE_GUI)
 
-#include "mem_ops.h"
-
 typedef struct {
     rvvm_machine_t* machine;
     hid_keyboard_t* keyboard;
@@ -60,7 +58,7 @@ static void rvvm_gui_grab_input(gui_window_t* win, bool grab)
     }
 }
 
-static void rvvm_gui_remove(gui_window_t* win)
+static void rvvm_gui_free(gui_window_t* win)
 {
     rvvm_window_t* rvvm = gui_window_get_data(win);
     safe_free(rvvm);
@@ -173,6 +171,7 @@ static void rvvm_gui_draw_logo(gui_window_t* win)
     rvvm_fb_t fb = ZERO_INIT;
     rvvm_fbdev_get_scanout(win->fbdev, &fb);
 
+    uint8_t* buffer = rvvm_fb_buffer(&fb);
     uint32_t bytes  = rvvm_fb_rgb_bytes(&fb);
     uint32_t width  = rvvm_fb_width(&fb);
     uint32_t height = rvvm_fb_height(&fb);
@@ -188,13 +187,15 @@ static void rvvm_gui_draw_logo(gui_window_t* win)
                 uint32_t pos = ((y - pos_y) >> 3) * 38 + ((x - pos_x) >> 3);
                 pix          = ((rvvm_logo_pix[pos >> 2] >> ((pos & 0x3) << 1)) & 0x3) << 6;
             }
-            memset(((uint8_t*)rvvm_fb_buffer(&fb)) + tmp_stride + (x * bytes), pix, bytes);
+            for (uint32_t i = 0; i < bytes; ++i) {
+                buffer[i + tmp_stride + (x * bytes)] = pix;
+            }
         }
     }
 }
 
 static gui_event_cb_t rvvm_gui_cb = {
-    .remove           = rvvm_gui_remove,
+    .free             = rvvm_gui_free,
     .on_close         = rvvm_gui_on_close,
     .on_focus_lost    = rvvm_gui_on_focus_lost,
     .on_key_press     = rvvm_gui_on_key_press,

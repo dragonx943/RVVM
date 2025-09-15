@@ -146,20 +146,21 @@ gui_window_t* gui_window_init(size_t vram_size, const rvvm_fb_t* fb)
 void gui_window_free(gui_window_t* win)
 {
     if (win) {
-        gui_backend_free(win);
-        if (win->ev_cb->remove) {
-            win->ev_cb->remove(win);
+        if (!rvvm_fbdev_dec_ref(win->fbdev)) {
+            gui_backend_free(win);
+            if (win->ev_cb->free) {
+                win->ev_cb->free(win);
+            }
+            safe_free(win);
         }
-        rvvm_fbdev_dec_ref(win->fbdev);
-        safe_free(win);
     }
 }
 
 void gui_window_poll(gui_window_t* win)
 {
     if (win) {
-        if (win->ev_cb->update) {
-            win->ev_cb->update(win);
+        if (win->ev_cb->poll) {
+            win->ev_cb->poll(win);
         }
         if (win->bknd_cb->poll) {
             win->bknd_cb->poll(win);
@@ -170,6 +171,9 @@ void gui_window_poll(gui_window_t* win)
 void gui_window_draw(gui_window_t* win)
 {
     if (win) {
+        if (win->ev_cb->draw) {
+            win->ev_cb->draw(win);
+        }
         if (win->bknd_cb->draw) {
             win->bknd_cb->draw(win);
         }

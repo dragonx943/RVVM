@@ -21,8 +21,9 @@ typedef struct gui_window_t gui_window_t;
 
 // GUI Window callbacks
 typedef struct {
-    void (*remove)(gui_window_t* win);
-    void (*update)(gui_window_t* win);
+    void (*free)(gui_window_t* win);
+    void (*poll)(gui_window_t* win);
+    void (*draw)(gui_window_t* win);
     void (*on_close)(gui_window_t* win);
     void (*on_focus_lost)(gui_window_t* win);
     bool (*on_resize)(gui_window_t* win, uint32_t w, uint32_t h);
@@ -51,8 +52,8 @@ typedef struct {
     void (*get_clipboard)(gui_window_t* win, char* buf, size_t size);
 
     // Positioning
-    void (*get_position)(gui_window_t* win, uint32_t* w, uint32_t* h);
-    void (*set_position)(gui_window_t* win, uint32_t w, uint32_t h);
+    void (*get_position)(gui_window_t* win, int32_t* w, int32_t* h);
+    void (*set_position)(gui_window_t* win, int32_t w, int32_t h);
     void (*set_win_size)(gui_window_t* win, uint32_t w, uint32_t h);
     void (*set_min_size)(gui_window_t* win, uint32_t w, uint32_t h);
     void (*set_fullscreen)(gui_window_t* win, bool fullscreen);
@@ -191,7 +192,7 @@ static inline size_t gui_window_get_clipboard(gui_window_t* win, char* buf, size
     return 0;
 }
 
-static inline bool gui_window_get_position(gui_window_t* win, uint32_t* w, uint32_t* h)
+static inline bool gui_window_get_position(gui_window_t* win, int32_t* w, int32_t* h)
 {
     if (win && win->bknd_cb->get_position && w && h) {
         win->bknd_cb->get_position(win, w, h);
