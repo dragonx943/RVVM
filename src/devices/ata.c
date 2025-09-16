@@ -9,13 +9,15 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
 #include "ata.h"
+
 #include "bit_ops.h"
-#include "blk_io.h"
 #include "fdtlib.h"
 #include "mem_ops.h"
 #include "spinlock.h"
 #include "threading.h"
 #include "utils.h"
+
+#include <rvvm/rvvm_blk.h>
 
 PUSH_OPTIMIZATION_SIZE
 
@@ -84,9 +86,11 @@ PUSH_OPTIMIZATION_SIZE
 
 typedef struct {
     pci_func_t* pci_func;
-    blkdev_t*   blk;
-    spinlock_t  lock;
-    spinlock_t  dma_lock;
+
+    rvvm_blk_dev_t* blk;
+
+    spinlock_t lock;
+    spinlock_t dma_lock;
 
     // Current LBA
     uint64_t lba;
@@ -158,10 +162,10 @@ static void ata_cmd_identify(ata_dev_t* ata)
     write_uint16_le(id_buf + 112, 0x3F);   // Sectors per track
 
     // Capacity in sectors
-    write_uint16_le(id_buf + 114, blk_getsize(ata->blk) >> 9);
-    write_uint16_le(id_buf + 116, blk_getsize(ata->blk) >> 25);
-    write_uint16_le(id_buf + 120, blk_getsize(ata->blk) >> 9);
-    write_uint16_le(id_buf + 122, blk_getsize(ata->blk) >> 25);
+    write_uint16_le(id_buf + 114, rvvm_blk_get_size(ata->blk) >> 9);
+    write_uint16_le(id_buf + 116, rvvm_blk_get_size(ata->blk) >> 25);
+    write_uint16_le(id_buf + 120, rvvm_blk_get_size(ata->blk) >> 9);
+    write_uint16_le(id_buf + 122, rvvm_blk_get_size(ata->blk) >> 25);
 
     write_uint16_le(id_buf + 128, 0x3);    // Advanced PIO modes supported
     write_uint16_le(id_buf + 134, 0x1);    // PIO transfer cycle time without flow control
@@ -184,7 +188,7 @@ static void ata_cmd_identify(ata_dev_t* ata)
 
 static void ata_read_sector(ata_dev_t* ata)
 {
-    if (blk_read(ata->blk, ata->buf, ATA_SECTOR_SIZE, BLKDEV_POSITION)) {
+    if (rvvm_blk_read_head(ata->blk, ata->buf, ATA_SECTOR_SIZE)) {
         ata->bytes_to_rw = ATA_SECTOR_SIZE;
         ata->status      = ATA_STATUS_RDY | ATA_STATUS_DRQ;
         ata_send_interrupt(ata);
@@ -196,7 +200,7 @@ static void ata_read_sector(ata_dev_t* ata)
 
 static void ata_write_sector(ata_dev_t* ata)
 {
-    if (blk_write(ata->blk, ata->buf, ATA_SECTOR_SIZE, BLKDEV_POSITION)) {
+    if (rvvm_blk_write_head(ata->blk, ata->buf, ATA_SECTOR_SIZE)) {
         ata_send_interrupt(ata);
     } else {
         // IO failed
@@ -207,7 +211,7 @@ static void ata_write_sector(ata_dev_t* ata)
 // Perform PIO read/write sectors
 static void ata_perform_pio_rw(ata_dev_t* ata, bool write)
 {
-    if (blk_seek(ata->blk, ata_get_seek(ata), BLKDEV_SEEK_SET)) {
+    if (rvvm_blk_seek_head(ata->blk, ata_get_seek(ata), RVVM_BLK_SEEK_SET)) {
         if (write) {
             ata_write_sector(ata);
         } else {
@@ -230,7 +234,7 @@ static void ata_handle_cmd(ata_dev_t* ata, uint8_t cmd)
         case ATA_CMD_READ_DMA:
         case ATA_CMD_WRITE_DMA:
             // Perform a seek without doing any IO yet
-            if (blk_seek(ata->blk, ata_get_seek(ata), BLKDEV_SEEK_SET)) {
+            if (rvvm_blk_seek_head(ata->blk, ata_get_seek(ata), RVVM_BLK_SEEK_SET)) {
                 ata_send_interrupt(ata);
             } else {
                 // Seek failed
@@ -420,7 +424,7 @@ static void ata_data_remove(rvvm_mmio_dev_t* dev)
     ata_dev_t* ata = dev->data;
     if (ata) {
         spin_lock(&ata->dma_lock);
-        blk_close(ata->blk);
+        rvvm_blk_close(ata->blk);
         spin_unlock(&ata->dma_lock);
         free(ata);
     }
@@ -444,9 +448,9 @@ static rvvm_mmio_type_t ata_ctl_dev_type = {
 
 static ata_dev_t* ata_create(const char* image, bool rw)
 {
-    blkdev_t* blk = NULL;
+    rvvm_blk_dev_t* blk = NULL;
     if (image) {
-        blk = blk_open(image, rw ? BLKDEV_RW : 0);
+        blk = rvvm_blk_open(image, NULL, rw ? RVVM_BLK_RW : RVVM_BLK_READ);
         if (!blk) {
             // Failed to open image
             return NULL;
@@ -458,8 +462,8 @@ static ata_dev_t* ata_create(const char* image, bool rw)
     return ata;
 }
 
-PUBLIC bool ata_pio_init(rvvm_machine_t* machine, rvvm_addr_t ata_data_addr, rvvm_addr_t ata_ctl_addr,
-                         const char* image, bool rw)
+bool ata_pio_init(rvvm_machine_t* machine, rvvm_addr_t ata_data_addr, rvvm_addr_t ata_ctl_addr, const char* image,
+                  bool rw)
 {
     ata_dev_t* ata = ata_create(image, rw);
     if (!ata) {
@@ -510,7 +514,7 @@ PUBLIC bool ata_pio_init(rvvm_machine_t* machine, rvvm_addr_t ata_data_addr, rvv
     return true;
 }
 
-PUBLIC bool ata_pio_init_auto(rvvm_machine_t* machine, const char* image, bool rw)
+bool ata_pio_init_auto(rvvm_machine_t* machine, const char* image, bool rw)
 {
     rvvm_addr_t addr = rvvm_mmio_zone_auto(machine, ATA_DATA_ADDR_DEFAULT, 0x2000);
     return ata_pio_init(machine, addr, addr + 0x1000, image, rw);
@@ -554,12 +558,12 @@ static void ata_process_prdt(ata_dev_t* ata)
 
         // Read/write data to/from RAM
         if (is_read) {
-            if (blk_read(ata->blk, buffer, buf_size, BLKDEV_POSITION) != buf_size) {
+            if (rvvm_blk_read_head(ata->blk, buffer, buf_size) != buf_size) {
                 // IO error
                 break;
             }
         } else {
-            if (blk_write(ata->blk, buffer, buf_size, BLKDEV_POSITION) != buf_size) {
+            if (rvvm_blk_write_head(ata->blk, buffer, buf_size) != buf_size) {
                 // IO error
                 break;
             }
@@ -658,7 +662,7 @@ static bool ata_pci_ctl_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, u
     return ata_ctl_write(dev, data, offset - 2, size);
 }
 
-PUBLIC pci_dev_t* ata_pci_init(pci_bus_t* pci_bus, const char* image, bool rw)
+pci_dev_t* ata_pci_init(pci_bus_t* pci_bus, const char* image, bool rw)
 {
     ata_dev_t* ata = ata_create(image, rw);
     if (ata == NULL) {
@@ -734,7 +738,7 @@ PUBLIC pci_dev_t* ata_pci_init(pci_bus_t* pci_bus, const char* image, bool rw)
     return pci_dev;
 }
 
-PUBLIC pci_dev_t* ata_pci_init_auto(rvvm_machine_t* machine, const char* image, bool rw)
+pci_dev_t* ata_pci_init_auto(rvvm_machine_t* machine, const char* image, bool rw)
 {
     pci_bus_t* pci_bus = rvvm_get_pci_bus(machine);
     if (pci_bus) {
@@ -743,7 +747,7 @@ PUBLIC pci_dev_t* ata_pci_init_auto(rvvm_machine_t* machine, const char* image, 
     return NULL;
 }
 
-PUBLIC bool ata_init_auto(rvvm_machine_t* machine, const char* image, bool rw)
+bool ata_init_auto(rvvm_machine_t* machine, const char* image, bool rw)
 {
     return ata_pci_init_auto(machine, image, rw) || ata_pio_init_auto(machine, image, rw);
 }
