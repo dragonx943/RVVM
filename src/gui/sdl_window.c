@@ -726,7 +726,7 @@ static void sdl_window_remove(gui_window_t* win)
 {
     sdl_window_t* sdl = gui_backend_get_data(win);
     gui_backend_set_data(win, NULL);
-    if (sdl) {
+    if (sdl_thread_ok && sdl) {
         // Remove from window list
         vector_foreach_back (sdl_windows, i) {
             if (vector_at(sdl_windows, i) == win) {
@@ -758,6 +758,8 @@ static void sdl_window_remove(gui_window_t* win)
         // Free VRAM VMA
         vma_free(gui_backend_get_vram(win), gui_backend_get_vram_size(win));
         safe_free(sdl);
+    } else if (sdl) {
+        rvvm_warn("sdl_window_remove() called from non-GUI thread!");
     }
 }
 
@@ -779,11 +781,12 @@ static void sdl_window_draw(gui_window_t* win)
             bool small = sdl->width < width || sdl->height < height;
             bool resiz = match || (small && !gui_backend_allow_shrink(win));
 #if USE_SDL >= 2
-            // Clamp the new window size to fit onto host screen
-            SDL_DisplayMode mode = {.w = 1024, .h = 768};
+            // Clamp the new window size to fit onto host workspace
+            // Fallback to 1920x1080 in case SDL_GetCurrentDisplayMode() fails
+            SDL_DisplayMode mode = {.w = 1920, .h = 1080};
             if (resiz) {
 #if USE_SDL == 3
-                const SDL_DisplayMode* tmp = SDL_GetCurrentDisplayMode(0);
+                const SDL_DisplayMode* tmp = SDL_GetCurrentDisplayMode(1);
                 if (tmp) {
                     mode = *tmp;
                 }
@@ -1081,6 +1084,8 @@ static bool sdl_global_init(void)
             rvvm_error("Failed to initialize " SDL_LIB_NAME);
             return false;
         }
+        // Mark that this thread initialized video subsystem
+        sdl_thread_ok = true;
         // Set SDL hints
 #if USE_SDL >= 2 && defined(SDL_HINT_GRAB_KEYBOARD)
         SDL_SetHint(SDL_HINT_GRAB_KEYBOARD, "1");
@@ -1103,7 +1108,7 @@ static bool sdl_global_init(void)
         return false;
 #endif
     }
-    return true;
+    return sdl_thread_ok;
 }
 
 static const gui_backend_cb_t sdl_window_cb = {
@@ -1127,9 +1132,6 @@ bool sdl_window_init(gui_window_t* win)
     if (!sdl_global_init()) {
         return false;
     }
-
-    // Mark that this thread owns SDL Windows
-    sdl_thread_ok = true;
 
     // Create SDL window
 #if USE_SDL == 3
