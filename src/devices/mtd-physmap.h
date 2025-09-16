@@ -10,7 +10,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef RVVM_MTD_PHYSMAP_H
 #define RVVM_MTD_PHYSMAP_H
 
-#include "rvvmlib.h"
+#include <rvvm/rvvm_blk.h>
 
 /*
  * The main purpose of this device is to allow guests to flash
@@ -19,9 +19,10 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #define MTD_PHYSMAP_DEFAULT_MMIO 0x04000000
 
-PUBLIC rvvm_mmio_dev_t* mtd_physmap_init_blk(rvvm_machine_t* machine, rvvm_addr_t addr, void* blk_dev);
-PUBLIC rvvm_mmio_dev_t* mtd_physmap_init(rvvm_machine_t* machine, rvvm_addr_t addr, const char* image_path, bool rw);
-PUBLIC rvvm_mmio_dev_t* mtd_physmap_init_auto(rvvm_machine_t* machine, const char* image_path, bool rw);
+RVVM_PUBLIC rvvm_mmio_dev_t* mtd_physmap_init_blk(rvvm_machine_t* machine, rvvm_addr_t addr, rvvm_blk_dev_t* blk);
+
+RVVM_PUBLIC rvvm_mmio_dev_t* mtd_physmap_init(rvvm_machine_t* machine, rvvm_addr_t addr, const char* image, bool rw);
+RVVM_PUBLIC rvvm_mmio_dev_t* mtd_physmap_init_auto(rvvm_machine_t* machine, const char* image, bool rw);
 
 #endif
 
