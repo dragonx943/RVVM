@@ -7,14 +7,16 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#ifndef NVME_H
-#define NVME_H
+#ifndef RVVM_NVME_H
+#define RVVM_NVME_H
 
-#include "rvvmlib.h"
+#include <rvvm/rvvm_blk.h>
+
 #include "pci-bus.h"
 
-PUBLIC pci_dev_t* nvme_init_blk(pci_bus_t* pci_bus, void* blk_dev);
-PUBLIC pci_dev_t* nvme_init(pci_bus_t* pci_bus, const char* image_path, bool rw);
-PUBLIC pci_dev_t* nvme_init_auto(rvvm_machine_t* machine, const char* image_path, bool rw);
+RVVM_PUBLIC pci_dev_t* nvme_init_blk(pci_bus_t* pci_bus, rvvm_blk_dev_t* blk);
+
+RVVM_PUBLIC pci_dev_t* nvme_init(pci_bus_t* pci_bus, const char* image, bool rw);
+RVVM_PUBLIC pci_dev_t* nvme_init_auto(rvvm_machine_t* machine, const char* image, bool rw);
 
 #endif
