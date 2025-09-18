@@ -1187,6 +1187,22 @@ static const gui_backend_cb_t wayland_window_cb = {
     .set_fullscreen = wayland_window_set_fullscreen,
 };
 
+static bool wayland_is_x11_fallback_allowed(void)
+{
+    if (rvvm_has_arg("ignore_nodecor")) {
+        return false;
+    }
+
+    const char* current_desktop = getenv("XDG_CURRENT_DESKTOP");
+
+    // Certain compositors like niri don't provide full server-side decorations even with an X11-fallback trick
+    if (current_desktop && rvvm_strcmp(current_desktop, "niri")) {
+        return false;
+    }
+
+    return true;
+}
+
 bool wayland_window_init(gui_window_t* win)
 {
     // Register Wayland backend
@@ -1262,7 +1278,7 @@ bool wayland_window_init(gui_window_t* win)
             xdg_decor_mgr, wl->xdg_toplevel);
         zxdg_toplevel_decoration_v1_set_mode( //
             wl->xdg_decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
-    } else if (!rvvm_has_arg("ignore_nodecor")) {
+    } else if (wayland_is_x11_fallback_allowed()) {
         // Probably running on Gnome or something, report an info message and fallback to X11
         rvvm_info("Your Wayland compositor doesn't support XDG decorations, ew");
         return false;
