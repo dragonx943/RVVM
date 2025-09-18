@@ -1283,7 +1283,7 @@ bool wayland_window_init(gui_window_t* win)
     xdg_toplevel_add_listener(wl->xdg_toplevel, &xdg_toplevel_listener, win);
 
     // Set app ID, otherwise window icon is missing
-    xdg_toplevel_set_app_id(wl->xdg_toplevel, "dev.0xcatpkg.wayland-window");
+    xdg_toplevel_set_app_id(wl->xdg_toplevel, "rvvm");
 
     // Commit surface, otherwise nothing appears
     wl_surface_commit(wl->surface);
