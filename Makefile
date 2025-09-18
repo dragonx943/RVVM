@@ -623,14 +623,14 @@ override DEPS_USE_LIB_SHARING := USE_LIB
 
 override DEPS_USE_UBSAN := CC_IS_GNU
 override DEPS_USE_ASAN  := CC_IS_GNU
-override DEPS_USE_TSAN  := CC_IS_CLANG
+override DEPS_USE_TSAN  := CC_IS_GNU
 override DEPS_USE_MSAN  := CC_IS_CLANG
 
 override CFLAGS_USE_DEBUG := -DDEBUG -g -fno-omit-frame-pointer
 override CFLAGS_USE_LIB   := $(if $(filter-out windows amigaos,$(OS)),-fPIC)
 override CFLAGS_USE_UBSAN := -fsanitize=undefined,float-cast-overflow -fsanitize-recover=undefined,float-cast-overflow
 override CFLAGS_USE_ASAN  := -fsanitize=address -fsanitize-recover=address
-override CFLAGS_USE_TSAN  := -fsanitize=thread -fsanitize-recover=thread
+override CFLAGS_USE_TSAN  := -fsanitize=thread -Wno-tsan
 override CFLAGS_USE_MSAN  := -fsanitize=memory -fsanitize-recover=memory
 
 override LDFLAGS_USE_FPU := -lm
