@@ -442,28 +442,20 @@ SDL_DLIB_SYM(SDL_SetWindowRelativeMouseMode)
 #define SDL_INIT_SUCCESS 0
 #endif
 
-#if USE_SDL == 2
+#if USE_SDL == 3
 
-static inline void SDL_FRect_to_Rect_internal(SDL_Rect* rect, const SDL_FRect* frect)
+static inline int SDL_RenderCopy(SDL_Renderer* renderer, SDL_Texture* texture, //
+                                 const SDL_Rect* src, const SDL_Rect* dst)
 {
-    rect->x = (int)frect->x;
-    rect->y = (int)frect->y;
-    rect->w = (int)frect->w;
-    rect->h = (int)frect->h;
-}
-
-static inline bool SDL_RenderTexture(SDL_Renderer* renderer, SDL_Texture* texture, //
-                                     const SDL_FRect* fsrc, const SDL_FRect* fdst)
-{
-    SDL_Rect src = ZERO_INIT;
-    SDL_Rect dst = ZERO_INIT;
-    if (fsrc) {
-        SDL_FRect_to_Rect_internal(&src, fsrc);
+    SDL_FRect fsrc = ZERO_INIT;
+    SDL_FRect fdst = ZERO_INIT;
+    if (src) {
+        SDL_RectToFRect(src, &fsrc);
     }
-    if (fdst) {
-        SDL_FRect_to_Rect_internal(&dst, fdst);
+    if (dst) {
+        SDL_RectToFRect(dst, &fdst);
     }
-    return !SDL_RenderCopy(renderer, texture, fsrc ? &src : NULL, fdst ? &dst : NULL);
+    return SDL_RenderTexture(renderer, texture, src ? &fsrc : NULL, dst ? &fdst : NULL) ? 0 : -1;
 }
 
 #endif
@@ -483,9 +475,6 @@ typedef struct {
 
     // Window ID
     uint32_t id;
-
-    uint32_t width;
-    uint32_t height;
 
     // Input grab flag
     bool grab;
@@ -558,12 +547,8 @@ static void sdl_handle_mouse_moution(const SDL_Event* event)
     sdl_window_t* sdl = gui_backend_get_data(win);
     if (sdl && sdl->grab) {
         gui_backend_on_mouse_move(win, (int)event->motion.xrel, (int)event->motion.yrel);
-    } else if (sdl) {
-        const rvvm_fb_t* fb = gui_backend_get_scanout(win);
-        // Calculate view offset
-        int off_x = EVAL_MAX((int)sdl->width - (int)rvvm_fb_width(fb), 0) >> 1;
-        int off_y = EVAL_MAX((int)sdl->height - (int)rvvm_fb_height(fb), 0) >> 1;
-        gui_backend_on_mouse_place(win, ((int)event->motion.x) - off_x, ((int)event->motion.y) - off_y);
+    } else {
+        gui_backend_on_mouse_place(win, (int)event->motion.x, (int)event->motion.y);
     }
 }
 
@@ -631,12 +616,7 @@ static void sdl_handle_mouse_scroll(const SDL_Event* event)
 static void sdl_handle_window_resize(const SDL_Event* event)
 {
     gui_window_t* win = sdl_find_window(event->window.windowID);
-    sdl_window_t* sdl = gui_backend_get_data(win);
-    if (sdl) {
-        sdl->width  = event->window.data1;
-        sdl->height = event->window.data2;
-        gui_backend_on_resize(win, sdl->width, sdl->height);
-    }
+    gui_backend_on_resize(win, event->window.data1, event->window.data2);
 }
 
 #endif
@@ -722,7 +702,7 @@ static void* sdl_create_texture(sdl_window_t* sdl, const rvvm_fb_t* fb)
  * SDL Window handling
  */
 
-static void sdl_window_remove(gui_window_t* win)
+static void sdl_window_free(gui_window_t* win)
 {
     sdl_window_t* sdl = gui_backend_get_data(win);
     gui_backend_set_data(win, NULL);
@@ -759,111 +739,7 @@ static void sdl_window_remove(gui_window_t* win)
         vma_free(gui_backend_get_vram(win), gui_backend_get_vram_size(win));
         safe_free(sdl);
     } else if (sdl) {
-        rvvm_warn("sdl_window_remove() called from non-GUI thread!");
-    }
-}
-
-static void sdl_window_draw(gui_window_t* win)
-{
-    sdl_window_t*    sdl = gui_backend_get_data(win);
-    const rvvm_fb_t* fb  = gui_backend_get_scanout(win);
-    if (sdl_thread_ok && sdl->window && rvvm_fb_buffer(fb)) {
-        // Resize window if needed
-        uint32_t width  = rvvm_fb_width(fb);
-        uint32_t height = rvvm_fb_height(fb);
-        if (!rvvm_fb_same_res(fb, &sdl->fb)) {
-            /*
-             * Change window size if:
-             * - It currently matches the previous video mode
-             * - It is currently smaller than the new mode, and shrinking is not allowed
-             */
-            bool match = sdl->width == rvvm_fb_width(&sdl->fb) && sdl->height == rvvm_fb_height(&sdl->fb);
-            bool small = sdl->width < width || sdl->height < height;
-            bool resiz = match || (small && !gui_backend_allow_shrink(win));
-#if USE_SDL >= 2
-            // Clamp the new window size to fit onto host workspace
-            // Fallback to 1920x1080 in case SDL_GetCurrentDisplayMode() fails
-            SDL_DisplayMode mode = {.w = 1920, .h = 1080};
-            if (resiz) {
-#if USE_SDL == 3
-                const SDL_DisplayMode* tmp = SDL_GetCurrentDisplayMode(1);
-                if (tmp) {
-                    mode = *tmp;
-                }
-#else
-                SDL_GetCurrentDisplayMode(0, &mode);
-#endif
-                width  = EVAL_MIN(width, (uint32_t)mode.w);
-                height = EVAL_MIN(height, (uint32_t)mode.h);
-            }
-            // Reposition window to match previous center
-            if (resiz && sdl->width && sdl->height) {
-                int x = 0, y = 0;
-                SDL_GetWindowPosition(sdl->window, &x, &y);
-                x = EVAL_MIN(EVAL_MAX(x - ((int)(width - sdl->width) / 2), 0), (int)mode.w - 64);
-                y = EVAL_MIN(EVAL_MAX(y - ((int)(height - sdl->height) / 2), 0), (int)mode.h - 64);
-                SDL_SetWindowPosition(sdl->window, x, y);
-            }
-            // Update window minimum size
-            if (gui_backend_allow_shrink(win)) {
-                SDL_SetWindowMinimumSize(sdl->window, 128, 128);
-            } else {
-                SDL_SetWindowMinimumSize(sdl->window, width, height);
-            }
-#endif
-            if (resiz) {
-#if USE_SDL >= 2
-                SDL_SetWindowSize(sdl->window, width, height);
-#else
-                SDL_Surface* new_win = SDL_SetVideoMode(width, height, //
-                                                        0, SDL_SWSURFACE | SDL_ANYFORMAT);
-                if (new_win) {
-                    sdl->window = new_win;
-                }
-#endif
-                sdl->width  = width;
-                sdl->height = height;
-            }
-        }
-        // Recreate texture if needed
-#if USE_SDL >= 2
-        if (!rvvm_fb_same_layout(fb, &sdl->fb)) {
-            SDL_Texture* new_tex = sdl_create_texture(sdl, fb);
-            if (new_tex) {
-                if (sdl->texture) {
-                    SDL_DestroyTexture(sdl->texture);
-                }
-                sdl->texture = new_tex;
-            }
-        }
-#else
-        if (!rvvm_fb_same_scanout(fb, &sdl->fb)) {
-            SDL_Surface* new_tex = sdl_create_texture(sdl, fb);
-            if (new_tex) {
-                if (sdl->texture) {
-                    SDL_FreeSurface(sdl->texture);
-                }
-                sdl->texture = new_tex;
-            }
-        }
-#endif
-        // Render to window
-#if USE_SDL >= 2
-        SDL_FRect dst = {
-            .x = EVAL_MAX((int)sdl->width - (int)rvvm_fb_width(fb), 0) >> 1,
-            .y = EVAL_MAX((int)sdl->height - (int)rvvm_fb_height(fb), 0) >> 1,
-            .w = rvvm_fb_width(fb),
-            .h = rvvm_fb_height(fb),
-        };
-        SDL_RenderClear(sdl->renderer);
-        SDL_UpdateTexture(sdl->texture, NULL, rvvm_fb_buffer(fb), rvvm_fb_stride(fb));
-        SDL_RenderTexture(sdl->renderer, sdl->texture, NULL, &dst);
-        SDL_RenderPresent(sdl->renderer);
-#else
-        SDL_BlitSurface(sdl->texture, NULL, sdl->window, NULL);
-        SDL_Flip(sdl->window);
-#endif
-        sdl->fb = *fb;
+        rvvm_warn("sdl_window_free() called from non-GUI thread!");
     }
 }
 
@@ -940,6 +816,52 @@ static void sdl_window_poll(gui_window_t* win)
     }
 }
 
+static void sdl_window_draw(gui_window_t* win, const rvvm_fb_t* fb, uint32_t x, uint32_t y)
+{
+    SDL_Rect dst = {
+        .x = x,
+        .y = y,
+        .w = rvvm_fb_width(fb),
+        .h = rvvm_fb_height(fb),
+    };
+    sdl_window_t* sdl = gui_backend_get_data(win);
+    if (sdl_thread_ok && sdl->window) {
+        // Recreate texture if needed
+#if USE_SDL >= 2
+        if (!rvvm_fb_same_layout(fb, &sdl->fb)) {
+            SDL_Texture* new_tex = sdl_create_texture(sdl, fb);
+            if (new_tex) {
+                if (sdl->texture) {
+                    SDL_DestroyTexture(sdl->texture);
+                }
+                sdl->texture = new_tex;
+            }
+        }
+#else
+        if (!rvvm_fb_same_scanout(fb, &sdl->fb)) {
+            SDL_Surface* new_tex = sdl_create_texture(sdl, fb);
+            if (new_tex) {
+                if (sdl->texture) {
+                    SDL_FreeSurface(sdl->texture);
+                }
+                sdl->texture = new_tex;
+            }
+        }
+#endif
+        // Render to window
+#if USE_SDL >= 2
+        SDL_RenderClear(sdl->renderer);
+        SDL_UpdateTexture(sdl->texture, NULL, rvvm_fb_buffer(fb), rvvm_fb_stride(fb));
+        SDL_RenderCopy(sdl->renderer, sdl->texture, NULL, &dst);
+        SDL_RenderPresent(sdl->renderer);
+#else
+        SDL_BlitSurface(sdl->texture, NULL, sdl->window, &dst);
+        SDL_Flip(sdl->window);
+#endif
+        sdl->fb = *fb;
+    }
+}
+
 static void sdl_window_set_title(gui_window_t* win, const char* title)
 {
     sdl_window_t* sdl = gui_backend_get_data(win);
@@ -985,6 +907,69 @@ static void sdl_window_hide_cursor(gui_window_t* win, bool hide)
 #endif
     }
 }
+
+static void sdl_window_set_win_size(gui_window_t* win, uint32_t w, uint32_t h)
+{
+    sdl_window_t* sdl = gui_backend_get_data(win);
+    if (sdl_thread_ok && sdl->window) {
+#if USE_SDL >= 2
+        SDL_SetWindowSize(sdl->window, w, h);
+#else
+        SDL_Surface* new_win = SDL_SetVideoMode(w, h, 0, SDL_SWSURFACE | SDL_ANYFORMAT);
+        if (new_win) {
+            sdl->window = new_win;
+        }
+#endif
+    }
+}
+
+#if USE_SDL >= 2
+
+static void sdl_window_set_min_size(gui_window_t* win, uint32_t w, uint32_t h)
+{
+    sdl_window_t* sdl = gui_backend_get_data(win);
+    if (sdl_thread_ok && sdl->window) {
+        SDL_SetWindowMinimumSize(sdl->window, w, h);
+    }
+}
+
+static void sdl_window_get_position(gui_window_t* win, int32_t* x, int32_t* y)
+{
+    sdl_window_t* sdl = gui_backend_get_data(win);
+    if (sdl_thread_ok && sdl->window) {
+        SDL_GetWindowPosition(sdl->window, x, y);
+    }
+}
+
+static void sdl_window_set_position(gui_window_t* win, int32_t x, int32_t y)
+{
+    sdl_window_t* sdl = gui_backend_get_data(win);
+    if (sdl_thread_ok && sdl->window) {
+        SDL_SetWindowPosition(sdl->window, x, y);
+    }
+}
+
+static void sdl_window_get_scr_size(gui_window_t* win, uint32_t* w, uint32_t* h)
+{
+    sdl_window_t* sdl = gui_backend_get_data(win);
+    if (sdl_thread_ok && sdl->window) {
+#if USE_SDL == 3
+        const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(1);
+        if (mode) {
+            *w = mode->w;
+            *h = mode->h;
+        }
+#else
+        SDL_DisplayMode mode = ZERO_INIT;
+        if (!SDL_GetCurrentDisplayMode(0, &mode)) {
+            *w = mode.w;
+            *h = mode.h;
+        }
+#endif
+    }
+}
+
+#endif
 
 /*
  * Dynamic probe of libSDL at runtime
@@ -1112,19 +1097,25 @@ static bool sdl_global_init(void)
 }
 
 static const gui_backend_cb_t sdl_window_cb = {
-    .remove      = sdl_window_remove,
-    .draw        = sdl_window_draw,
-    .poll        = sdl_window_poll,
-    .set_title   = sdl_window_set_title,
-    .grab_input  = sdl_window_grab_input,
-    .hide_cursor = sdl_window_hide_cursor,
+    .free         = sdl_window_free,
+    .poll         = sdl_window_poll,
+    .draw         = sdl_window_draw,
+    .set_title    = sdl_window_set_title,
+    .grab_input   = sdl_window_grab_input,
+    .hide_cursor  = sdl_window_hide_cursor,
+    .set_win_size = sdl_window_set_win_size,
+#if USE_SDL >= 2
+    .set_min_size = sdl_window_set_min_size,
+    .get_position = sdl_window_get_position,
+    .set_position = sdl_window_set_position,
+    .get_scr_size = sdl_window_get_scr_size,
+#endif
 };
 
 bool sdl_window_init(gui_window_t* win)
 {
     // Register SDL backend
-    sdl_window_t*    sdl = safe_new_obj(sdl_window_t);
-    const rvvm_fb_t* fb  = gui_backend_get_scanout(win);
+    sdl_window_t* sdl = safe_new_obj(sdl_window_t);
 
     gui_backend_register(win, &sdl_window_cb);
     gui_backend_set_data(win, sdl);
@@ -1135,14 +1126,14 @@ bool sdl_window_init(gui_window_t* win)
 
     // Create SDL window
 #if USE_SDL == 3
-    sdl->window = SDL_CreateWindow("", rvvm_fb_width(fb), rvvm_fb_height(fb), //
+    sdl->window = SDL_CreateWindow("", gui_window_width(win), gui_window_height(win), //
                                    SDL_WINDOW_RESIZABLE);
 #elif USE_SDL == 2
     sdl->window = SDL_CreateWindow("", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, //
-                                   rvvm_fb_width(fb), rvvm_fb_height(fb),              //
+                                   gui_window_width(win), gui_window_height(win),      //
                                    SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
 #else
-    sdl->window = SDL_SetVideoMode(rvvm_fb_width(fb), rvvm_fb_height(fb), 0, //
+    sdl->window = SDL_SetVideoMode(gui_window_width(win), gui_window_height(win), 0, //
                                    SDL_SWSURFACE | SDL_ANYFORMAT);
 #endif
     if (!sdl->window) {
