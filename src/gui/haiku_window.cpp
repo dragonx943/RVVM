@@ -351,20 +351,13 @@ BBitmap* HaikuGUIWindow::CreateBitmapFromScanout(const rvvm_fb_t* fb)
 BBitmap* HaikuGUIWindow::PrepareScanoutBitmap(void)
 {
     const rvvm_fb_t* fb = gui_backend_get_scanout(m_win);
-
-    // Resize window if needed
-    if (!rvvm_fb_same_res(fb, &m_fb)) {
-        ResizeTo(rvvm_fb_width(fb) - 1, rvvm_fb_height(fb) - 1);
-    }
-
     // Recreate bitmap if needed
-    if (!rvvm_fb_same_layout(fb, &m_fb) || rvvm_fb_buffer(fb) != rvvm_fb_buffer(&m_fb)) {
+    if (!rvvm_fb_same_scanout(fb, &m_fb)) {
         BBitmap* new_bitmap = CreateBitmapFromScanout(fb);
         if (new_bitmap) {
             m_bitmap.SetTo(new_bitmap);
         }
     }
-
     m_fb = *fb;
     return m_bitmap.Get();
 }
@@ -393,7 +386,7 @@ static bool haiku_global_init(void)
     return !!be_app;
 }
 
-static void haiku_window_remove(gui_window_t* win)
+static void haiku_window_free(gui_window_t* win)
 {
     HaikuGUIWindow* hwin = (HaikuGUIWindow*)gui_backend_get_data(win);
     if (hwin) {
@@ -424,11 +417,18 @@ static void haiku_window_set_title(gui_window_t* win, const char* title)
     hwin->SetTitle(title);
 }
 
+static void haiku_window_set_win_size(gui_window_t* win, uint32_t w, uint32_t h)
+{
+    HaikuGUIWindow* hwin = (HaikuGUIWindow*)gui_backend_get_data(win);
+    hwin->ResizeTo(w - 1, h - 1);
+}
+
 // TODO: haiku_window_grab_input() - no implementation in SDL either :O
 static const gui_backend_cb_t haiku_window_cb = {
-    .remove    = haiku_window_remove,
-    .draw      = haiku_window_draw,
-    .set_title = haiku_window_set_title,
+    .free         = haiku_window_free,
+    .draw         = haiku_window_draw,
+    .set_title    = haiku_window_set_title,
+    .set_win_size = haiku_window_set_win_size,
 };
 
 bool haiku_window_init(gui_window_t* win)
