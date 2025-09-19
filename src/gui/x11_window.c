@@ -175,12 +175,13 @@ typedef struct {
     XShmSegmentInfo xshm;
 #endif
 
-    // Current window size
+    // Current window dimensions
     uint32_t width;
     uint32_t height;
 
-    // Last scanout context
-    rvvm_fb_t fb;
+    // Current window position
+    uint32_t pos_x;
+    uint32_t pos_y;
 
     // Original pointer grab position
     Window  grab_root;
@@ -467,15 +468,15 @@ static void x11_handle_mouse_button(const XEvent* ev, gui_window_t* win)
 }
 
 // Must be called under x11_lock, releases the lock before GUI callback
-static void x11_handle_mouse_motion(const XEvent* ev, gui_window_t* win, x11_window_t* x11)
+static void x11_handle_mouse_motion(const XEvent* ev, gui_window_t* win)
 {
-    const rvvm_fb_t* fb = gui_backend_get_scanout(win);
+    x11_window_t* x11 = gui_backend_get_data(win);
     if (x11) {
-        int off_x = EVAL_MAX((int)x11->width - (int)(x11->grab ? 0 : rvvm_fb_width(fb)), 0) >> 1;
-        int off_y = EVAL_MAX((int)x11->height - (int)(x11->grab ? 0 : rvvm_fb_height(fb)), 0) >> 1;
+        int off_x = x11->width >> 1;
+        int off_y = x11->height >> 1;
         // Calculate resulting mouse offset
-        int x = ev->xmotion.x - off_x;
-        int y = ev->xmotion.y - off_y;
+        int x = ev->xmotion.x - (x11->grab ? off_x : 0);
+        int y = ev->xmotion.y - (x11->grab ? off_y : 0);
         if (x11->grab && (x || y)) {
             XWarpPointer(x11_display, None, x11->window, 0, 0, 0, 0, off_x, off_y);
             XFlush(x11_display);
@@ -519,14 +520,13 @@ static void x11_handle_keyboard(const XEvent* ev, gui_window_t* win, size_t pend
 static void x11_handle_event(const XEvent* ev, size_t pending)
 {
     gui_window_t* win = x11_find_window(ev->xany.window);
-    x11_window_t* x11 = gui_backend_get_data(win);
     switch (ev->type) {
         case ButtonPress:
         case ButtonRelease:
             x11_handle_mouse_button(ev, win);
             break;
         case MotionNotify:
-            x11_handle_mouse_motion(ev, win, x11);
+            x11_handle_mouse_motion(ev, win);
             break;
         case KeyPress:
         case KeyRelease:
@@ -550,14 +550,18 @@ static void x11_handle_event(const XEvent* ev, size_t pending)
                 gui_backend_on_focus_lost(win);
             }
             break;
-        case ConfigureNotify:
+        case ConfigureNotify: {
+            x11_window_t* x11 = gui_backend_get_data(win);
             if (x11) {
                 x11->width  = ev->xconfigure.width;
                 x11->height = ev->xconfigure.height;
+                x11->pos_x  = ev->xconfigure.x;
+                x11->pos_y  = ev->xconfigure.y;
             }
             spin_unlock(&x11_lock);
             gui_backend_on_resize(win, ev->xconfigure.width, ev->xconfigure.height);
             break;
+        }
         default:
             spin_unlock(&x11_lock);
             break;
@@ -693,61 +697,64 @@ static bool x11_init_libs(void)
  * X11 Global initialization / deinitialization
  */
 
-// Perform global X11 initialization (Open display, run event thread)
+// Perform global X11 initialization (Open display, run event thread) if needed
 // NOTE: Must be called under x11_lock when vector_size(x11_windows) == 1
 static bool x11_global_init(void)
 {
+    if (vector_size(x11_windows) == 1) {
 #if defined(USE_LIBS_PROBE)
-    static bool x11_avail = false;
-    DO_ONCE_SCOPED {
-        x11_avail = x11_init_libs();
-        if (!x11_avail) {
-            rvvm_error("Failed to load libX11 or libXext, check your installation");
+        static bool x11_avail = false;
+        DO_ONCE_SCOPED {
+            x11_avail = x11_init_libs();
+            if (!x11_avail) {
+                rvvm_error("Failed to load libX11 or libXext, check your installation");
+            }
         }
-    }
-    if (!x11_avail) {
-        return false;
-    }
+        if (!x11_avail) {
+            return false;
+        }
 #endif
-    XSetIOErrorHandler(x11_io_error_handler);
-    XSetErrorHandler(x11_error_handler);
-    x11_display = XOpenDisplay(NULL);
-    if (!x11_display) {
-        rvvm_error("Failed to connect to X11 Display");
-        return false;
+        XSetIOErrorHandler(x11_io_error_handler);
+        XSetErrorHandler(x11_error_handler);
+        x11_display = XOpenDisplay(NULL);
+        if (!x11_display) {
+            rvvm_error("Failed to connect to X11 Display");
+            return false;
+        }
+        x11_update_keymap();
+        x11_wm_delete = XInternAtom(x11_display, "WM_DELETE_WINDOW", False);
+        int error     = x11_catch_error();
+        if (error) {
+            rvvm_error("Failed to connect to X11 Display: Error code %d", error);
+            return false;
+        }
+        x11_thread = thread_create(x11_event_worker, (void*)(size_t)ConnectionNumber(x11_display));
     }
-    x11_update_keymap();
-    x11_wm_delete = XInternAtom(x11_display, "WM_DELETE_WINDOW", False);
-    int error     = x11_catch_error();
-    if (error) {
-        rvvm_error("Failed to connect to X11 Display: Error code %d", error);
-        return false;
-    }
-    x11_thread = thread_create(x11_event_worker, (void*)(size_t)ConnectionNumber(x11_display));
     return !!x11_thread;
 }
 
-// Perform global X11 deinitialization
-// NOTE: Must be called when vector_size(x11_windows) == 0
+// Perform global X11 deinitialization if needed
 static void x11_global_free(void)
 {
     spin_lock(&x11_lock);
-    if (!x11_catch_error()) {
-        XFlush(x11_display);
-    }
-    if (x11_thread) {
-        spin_unlock(&x11_lock);
-        thread_join(x11_thread);
-        spin_lock(&x11_lock);
-        x11_thread = NULL;
-    }
-    if (x11_display) {
-        XCloseDisplay(x11_display);
-        x11_display = NULL;
-    }
-    if (x11_keycodemap) {
-        XFree(x11_keycodemap);
-        x11_keycodemap = NULL;
+    if (!vector_size(x11_windows)) {
+        if (!x11_catch_error()) {
+            XFlush(x11_display);
+        }
+        if (x11_thread) {
+            spin_unlock(&x11_lock);
+            thread_join(x11_thread);
+            spin_lock(&x11_lock);
+            x11_thread = NULL;
+        }
+        if (x11_display) {
+            XCloseDisplay(x11_display);
+            x11_display = NULL;
+        }
+        if (x11_keycodemap) {
+            XFree(x11_keycodemap);
+            x11_keycodemap = NULL;
+        }
     }
     spin_unlock(&x11_lock);
 }
@@ -858,9 +865,16 @@ static void x11_vram_free(gui_window_t* win)
  * Must be called under x11_lock with unwinding
  */
 
-static void x11_window_remove_internal(gui_window_t* win)
+static void x11_window_free_internal(gui_window_t* win)
 {
     x11_window_t* x11 = gui_backend_get_data(win);
+    // Remove window from x11_windows
+    vector_foreach_back (x11_windows, i) {
+        if (vector_at(x11_windows, i) == win) {
+            vector_erase(x11_windows, i);
+            break;
+        }
+    }
     // Free graphics context
     if (x11->gc) {
         XFreeGC(x11_display, x11->gc);
@@ -873,11 +887,9 @@ static void x11_window_remove_internal(gui_window_t* win)
     x11_vram_free(win);
 }
 
-static void x11_window_draw_internal(gui_window_t* win)
+static void x11_window_draw_internal(gui_window_t* win, const rvvm_fb_t* fb, uint32_t x, uint32_t y)
 {
-    x11_window_t*    x11 = gui_backend_get_data(win);
-    const rvvm_fb_t* fb  = gui_backend_get_scanout(win);
-
+    x11_window_t* x11 = gui_backend_get_data(win);
     // Prepare image scanout
     XImage image = {
         .width          = rvvm_fb_stride(fb) / 4,
@@ -895,37 +907,12 @@ static void x11_window_draw_internal(gui_window_t* win)
     };
     uint32_t width  = rvvm_fb_width(fb);
     uint32_t height = rvvm_fb_height(fb);
-    // Resize window if needed
-    if (!rvvm_fb_same_res(fb, &x11->fb)) {
-        XSizeHints hints = {
-            .flags      = PMinSize,
-            .min_width  = width,
-            .min_height = height,
-        };
-        bool empty = !rvvm_fb_width(&x11->fb) || !rvvm_fb_height(&x11->fb);
-        bool match = x11->width == rvvm_fb_width(&x11->fb) && x11->height == rvvm_fb_height(&x11->fb);
-        bool small = x11->width < width || x11->height < height;
-        if (gui_backend_allow_shrink(win)) {
-            hints.min_width  = 128;
-            hints.min_height = 128;
-        }
-        XSetWMNormalHints(x11_display, x11->window, &hints);
-        if (empty || match || (small && !gui_backend_allow_shrink(win))) {
-            x11->width  = width;
-            x11->height = height;
-            XResizeWindow(x11_display, x11->window, x11->width, x11->height);
-        }
-    }
-    x11->fb = *fb;
-    // Calculate view offset
-    uint32_t dst_x = EVAL_MAX((int)x11->width - (int)width, 0) >> 1;
-    uint32_t dst_y = EVAL_MAX((int)x11->height - (int)height, 0) >> 1;
-    if (dst_x || dst_y) {
+    if (x || y || width < x11->width || height < x11->height) {
         // Clear the area around the view
-        uint32_t edge_x = dst_x + width;
-        uint32_t edge_y = dst_y + height;
-        XFillRectangle(x11_display, x11->window, x11->gc, 0, 0, dst_x, x11->height);
-        XFillRectangle(x11_display, x11->window, x11->gc, 0, 0, x11->width, dst_y);
+        uint32_t edge_x = x + width;
+        uint32_t edge_y = y + height;
+        XFillRectangle(x11_display, x11->window, x11->gc, 0, 0, x, x11->height);
+        XFillRectangle(x11_display, x11->window, x11->gc, 0, 0, x11->width, y);
         XFillRectangle(x11_display, x11->window, x11->gc, edge_x, 0, x11->width - edge_x, x11->height);
         XFillRectangle(x11_display, x11->window, x11->gc, 0, edge_y, x11->width, x11->height - edge_y);
     }
@@ -936,21 +923,14 @@ static void x11_window_draw_internal(gui_window_t* win)
         // Update XShm image
         image.obdata = (void*)&x11->xshm;
         XShmPutImage(x11_display, x11->window, x11->gc, &image, //
-                     0, 0, dst_x, dst_y, image.width, image.height, 0);
+                     0, 0, x, y, image.width, image.height, 0);
         XFlush(x11_display);
         return;
     }
 #endif
     // Update XImage
     XPutImage(x11_display, x11->window, x11->gc, &image, //
-              0, 0, dst_x, dst_y, image.width, image.height);
-    XFlush(x11_display);
-}
-
-static void x11_window_set_title_internal(gui_window_t* win, const char* title)
-{
-    x11_window_t* x11 = gui_backend_get_data(win);
-    XStoreName(x11_display, x11->window, title);
+              0, 0, x, y, image.width, image.height);
     XFlush(x11_display);
 }
 
@@ -960,7 +940,6 @@ static void x11_window_grab_input_internal(gui_window_t* win, bool grab)
     if (x11->grab != grab) {
         x11->grab = grab;
         if (grab) {
-            const rvvm_fb_t* fb = gui_backend_get_scanout(win);
             // Save the original cursor position
             Window   child = None;
             int32_t  win_x = 0, win_y = 0;
@@ -975,7 +954,7 @@ static void x11_window_grab_input_internal(gui_window_t* win, bool grab)
                          ButtonPressMask | ButtonReleaseMask | PointerMotionMask, //
                          GrabModeAsync, GrabModeAsync, None, None, CurrentTime);
             XWarpPointer(x11_display, None, x11->window, 0, 0, 0, 0, //
-                         rvvm_fb_width(fb) >> 1, rvvm_fb_height(fb) >> 1);
+                         x11->width >> 1, x11->height >> 1);
         } else {
             // Ungrab
             XUngrabKeyboard(x11_display, CurrentTime);
@@ -1013,6 +992,7 @@ static void x11_window_hide_cursor_internal(gui_window_t* win, bool hide)
 
 static bool x11_window_init_internal(gui_window_t* win)
 {
+    x11_window_t* x11 = gui_backend_get_data(win);
     // X11 Window attributes
     XSetWindowAttributes attrs = {
         .event_mask = KeyPressMask | KeyReleaseMask         //
@@ -1021,14 +1001,11 @@ static bool x11_window_init_internal(gui_window_t* win)
                     | PointerMotionMask,
     };
 
-    x11_window_t*    x11 = gui_backend_get_data(win);
-    const rvvm_fb_t* fb  = gui_backend_get_scanout(win);
-
     x11_consume_error_sync();
 
     // Create X11 window
-    x11->window = XCreateWindow(x11_display, DefaultRootWindow(x11_display), 0, 0, //
-                                rvvm_fb_width(fb), rvvm_fb_height(fb), 0, 24,      //
+    x11->window = XCreateWindow(x11_display, DefaultRootWindow(x11_display), 0, 0,    //
+                                gui_window_width(win), gui_window_height(win), 0, 24, //
                                 InputOutput, NULL, CWEventMask, &attrs);
 
     // Create X11 Graphics Context
@@ -1056,22 +1033,13 @@ static bool x11_window_init_internal(gui_window_t* win)
  * X11 Window handling
  */
 
-static void x11_window_remove(gui_window_t* win)
+static void x11_window_free(gui_window_t* win)
 {
     x11_window_t* x11 = gui_backend_get_data(win);
     if (x11) {
-        bool last = false;
         scoped_spin_lock (&x11_lock) {
-            // Remove window from x11_windows
-            vector_foreach_back (x11_windows, i) {
-                if (vector_at(x11_windows, i) == win) {
-                    vector_erase(x11_windows, i);
-                    last = !vector_size(x11_windows);
-                    break;
-                }
-            }
             if (!x11_catch_error()) {
-                x11_window_remove_internal(win);
+                x11_window_free_internal(win);
             }
             if (x11->gc) {
                 // Display is dead, just free the GC structure
@@ -1079,29 +1047,28 @@ static void x11_window_remove(gui_window_t* win)
             }
             x11_vram_free(win);
         }
-        if (last) {
-            // This was a last window, perform global deinit
-            x11_global_free();
-        }
+        x11_global_free();
         safe_free(x11);
     }
     gui_backend_set_data(win, NULL);
 }
 
-static void x11_window_draw(gui_window_t* win)
+static void x11_window_draw(gui_window_t* win, const rvvm_fb_t* fb, uint32_t x, uint32_t y)
 {
     spin_lock(&x11_lock);
     if (!x11_catch_error()) {
-        x11_window_draw_internal(win);
+        x11_window_draw_internal(win, fb, x, y);
     }
     spin_unlock(&x11_lock);
 }
 
 static void x11_window_set_title(gui_window_t* win, const char* title)
 {
+    x11_window_t* x11 = gui_backend_get_data(win);
     spin_lock(&x11_lock);
     if (!x11_catch_error()) {
-        x11_window_set_title_internal(win, title);
+        XStoreName(x11_display, x11->window, title);
+        XFlush(x11_display);
     }
     spin_unlock(&x11_lock);
 }
@@ -1117,19 +1084,81 @@ static void x11_window_grab_input(gui_window_t* win, bool grab)
 
 static void x11_window_hide_cursor(gui_window_t* win, bool hide)
 {
-    spin_unlock(&x11_lock);
+    spin_lock(&x11_lock);
     if (!x11_catch_error()) {
         x11_window_hide_cursor_internal(win, hide);
     }
     spin_unlock(&x11_lock);
 }
 
+static void x11_window_set_win_size(gui_window_t* win, uint32_t w, uint32_t h)
+{
+    spin_lock(&x11_lock);
+    if (!x11_catch_error()) {
+        XResizeWindow(x11_display, ((x11_window_t*)gui_backend_get_data(win))->window, w, h);
+        XFlush(x11_display);
+    }
+    spin_unlock(&x11_lock);
+}
+
+static void x11_window_set_min_size(gui_window_t* win, uint32_t w, uint32_t h)
+{
+    XSizeHints hints = {
+        .flags      = PMinSize,
+        .min_width  = w,
+        .min_height = h,
+    };
+    x11_window_t* x11 = gui_backend_get_data(win);
+    spin_lock(&x11_lock);
+    if (!x11_catch_error()) {
+        XSetWMNormalHints(x11_display, x11->window, &hints);
+        XFlush(x11_display);
+    }
+    spin_unlock(&x11_lock);
+}
+
+static void x11_window_get_position(gui_window_t* win, int32_t* x, int32_t* y)
+{
+    x11_window_t* x11 = gui_backend_get_data(win);
+    spin_lock(&x11_lock);
+    *x = x11->pos_x;
+    *y = x11->pos_y;
+    spin_unlock(&x11_lock);
+}
+
+static void x11_window_set_position(gui_window_t* win, int32_t x, int32_t y)
+{
+    x11_window_t* x11 = gui_backend_get_data(win);
+    spin_lock(&x11_lock);
+    if (!x11_catch_error()) {
+        XMoveWindow(x11_display, x11->window, x, y);
+        XFlush(x11_display);
+    }
+    spin_unlock(&x11_lock);
+}
+
+static void x11_window_get_scr_size(gui_window_t* win, uint32_t* w, uint32_t* h)
+{
+    UNUSED(win);
+    spin_lock(&x11_lock);
+    if (!x11_catch_error()) {
+        *w = DisplayWidth(x11_display, DefaultScreen(x11_display));
+        *h = DisplayHeight(x11_display, DefaultScreen(x11_display));
+    }
+    spin_unlock(&x11_lock);
+}
+
 static const gui_backend_cb_t x11_window_cb = {
-    .remove      = x11_window_remove,
-    .draw        = x11_window_draw,
-    .set_title   = x11_window_set_title,
-    .grab_input  = x11_window_grab_input,
-    .hide_cursor = x11_window_hide_cursor,
+    .free         = x11_window_free,
+    .draw         = x11_window_draw,
+    .set_title    = x11_window_set_title,
+    .grab_input   = x11_window_grab_input,
+    .hide_cursor  = x11_window_hide_cursor,
+    .set_win_size = x11_window_set_win_size,
+    .set_min_size = x11_window_set_min_size,
+    .get_position = x11_window_get_position,
+    .set_position = x11_window_set_position,
+    .get_scr_size = x11_window_get_scr_size,
 };
 
 bool x11_window_init(gui_window_t* win)
@@ -1144,7 +1173,7 @@ bool x11_window_init(gui_window_t* win)
     // Register X11 window under x11_lock
     scoped_spin_lock (&x11_lock) {
         vector_push_back(x11_windows, win);
-        if (vector_size(x11_windows) == 1 && !x11_global_init()) {
+        if (!x11_global_init()) {
             // Global init failed
             break;
         }
