@@ -40,9 +40,9 @@ typedef struct {
 // GUI Backend callbacks
 typedef struct {
     // Base window features
-    void (*remove)(gui_window_t* win);
-    void (*draw)(gui_window_t* win);
+    void (*free)(gui_window_t* win);
     void (*poll)(gui_window_t* win);
+    void (*draw)(gui_window_t* win, const rvvm_fb_t* fb, uint32_t x, uint32_t y);
     void (*set_title)(gui_window_t* win, const char* title);
 
     // Usability features
@@ -52,10 +52,11 @@ typedef struct {
     void (*get_clipboard)(gui_window_t* win, char* buf, size_t size);
 
     // Positioning
-    void (*get_position)(gui_window_t* win, int32_t* w, int32_t* h);
-    void (*set_position)(gui_window_t* win, int32_t w, int32_t h);
     void (*set_win_size)(gui_window_t* win, uint32_t w, uint32_t h);
     void (*set_min_size)(gui_window_t* win, uint32_t w, uint32_t h);
+    void (*get_position)(gui_window_t* win, int32_t* x, int32_t* y);
+    void (*set_position)(gui_window_t* win, int32_t x, int32_t y);
+    void (*get_scr_size)(gui_window_t* win, uint32_t* w, uint32_t* h);
     void (*set_fullscreen)(gui_window_t* win, bool fullscreen);
 } gui_backend_cb_t;
 
@@ -78,6 +79,10 @@ struct gui_window_t {
 
     // Last scanout context
     rvvm_fb_t fb;
+
+    // Window dimensions
+    uint32_t width;
+    uint32_t height;
 };
 
 /*
@@ -115,7 +120,7 @@ void gui_rvvm_register(gui_window_t* win, rvvm_machine_t* machine);
 RVVM_PUBLIC gui_window_t* gui_rvvm_init(size_t vram_size, const rvvm_fb_t* fb, rvvm_machine_t* machine);
 
 /*
- * GUI Window handling
+ * GUI User handling
  */
 
 // Register GUI event callbacks
@@ -144,6 +149,20 @@ static inline void* gui_window_get_data(gui_window_t* win)
 static inline rvvm_fbdev_t* gui_window_get_fbdev(gui_window_t* win)
 {
     return win ? win->fbdev : NULL;
+}
+
+/*
+ * GUI Window handling
+ */
+
+static inline uint32_t gui_window_width(const gui_window_t* win)
+{
+    return win ? win->width : 0;
+}
+
+static inline uint32_t gui_window_height(const gui_window_t* win)
+{
+    return win ? win->height : 0;
 }
 
 static inline bool gui_window_set_title(gui_window_t* win, const char* title)
@@ -192,28 +211,12 @@ static inline size_t gui_window_get_clipboard(gui_window_t* win, char* buf, size
     return 0;
 }
 
-static inline bool gui_window_get_position(gui_window_t* win, int32_t* w, int32_t* h)
-{
-    if (win && win->bknd_cb->get_position && w && h) {
-        win->bknd_cb->get_position(win, w, h);
-        return true;
-    }
-    return false;
-}
-
-static inline bool gui_window_set_position(gui_window_t* win, uint32_t w, uint32_t h)
-{
-    if (win && win->bknd_cb->set_position) {
-        win->bknd_cb->set_position(win, w, h);
-        return true;
-    }
-    return false;
-}
-
 static inline bool gui_window_set_size(gui_window_t* win, uint32_t w, uint32_t h)
 {
     if (win && win->bknd_cb->set_win_size) {
         win->bknd_cb->set_win_size(win, w, h);
+        win->width  = w;
+        win->height = h;
         return true;
     }
     return false;
@@ -223,6 +226,33 @@ static inline bool gui_window_set_min_size(gui_window_t* win, uint32_t w, uint32
 {
     if (win && win->bknd_cb->set_min_size) {
         win->bknd_cb->set_min_size(win, w, h);
+        return true;
+    }
+    return false;
+}
+
+static inline bool gui_window_get_position(gui_window_t* win, int32_t* x, int32_t* y)
+{
+    if (win && win->bknd_cb->get_position && x && y) {
+        win->bknd_cb->get_position(win, x, y);
+        return true;
+    }
+    return false;
+}
+
+static inline bool gui_window_set_position(gui_window_t* win, uint32_t x, uint32_t y)
+{
+    if (win && win->bknd_cb->set_position) {
+        win->bknd_cb->set_position(win, x, y);
+        return true;
+    }
+    return false;
+}
+
+static inline bool gui_window_get_scr_size(gui_window_t* win, uint32_t* w, uint32_t* h)
+{
+    if (win && win->bknd_cb->get_scr_size && w && h) {
+        win->bknd_cb->get_scr_size(win, w, h);
         return true;
     }
     return false;
@@ -285,16 +315,6 @@ static inline size_t gui_backend_get_vram_size(gui_window_t* win)
     return vram_size;
 }
 
-// Get current scanout context
-static inline const rvvm_fb_t* gui_backend_get_scanout(gui_window_t* win)
-{
-    if (win) {
-        rvvm_fbdev_get_scanout(win->fbdev, &win->fb);
-        return &win->fb;
-    }
-    return NULL;
-}
-
 static inline void gui_backend_on_close(gui_window_t* win)
 {
     if (win && win->ev_cb->on_close) {
@@ -309,16 +329,21 @@ static inline void gui_backend_on_focus_lost(gui_window_t* win)
     }
 }
 
-static inline bool gui_backend_on_resize(gui_window_t* win, uint32_t w, uint32_t h)
+static inline void gui_backend_on_resize(gui_window_t* win, uint32_t w, uint32_t h)
 {
-    rvvm_fb_t fb = ZERO_INIT;
-    // Soft dirty the framebuffer
-    rvvm_fbdev_get_scanout(win->fbdev, &fb);
-    rvvm_fbdev_set_scanout(win->fbdev, &fb);
-    if (win && win->ev_cb->on_resize) {
-        return win->ev_cb->on_resize(win, w, h);
+    if (win) {
+        if (w != win->width || h != win->height) {
+            rvvm_fb_t fb = ZERO_INIT;
+            // Soft dirty the framebuffer
+            rvvm_fbdev_get_scanout(win->fbdev, &fb);
+            rvvm_fbdev_set_scanout(win->fbdev, &fb);
+            if (win->ev_cb->on_resize) {
+                win->ev_cb->on_resize(win, w, h);
+            }
+            win->width  = w;
+            win->height = h;
+        }
     }
-    return false;
 }
 
 static inline void gui_backend_on_input(gui_window_t* win, const char* text)
@@ -326,12 +351,6 @@ static inline void gui_backend_on_input(gui_window_t* win, const char* text)
     if (win && text && win->ev_cb->on_input) {
         win->ev_cb->on_input(win, text);
     }
-}
-
-static inline bool gui_backend_allow_shrink(gui_window_t* win)
-{
-    // Special case: Resize to 0, 0 asks whether window may be smaller than scanout
-    return gui_backend_on_resize(win, 0, 0);
 }
 
 static inline void gui_backend_on_key_press(gui_window_t* win, hid_key_t key)

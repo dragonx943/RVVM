@@ -22,8 +22,8 @@ static void gui_backend_free(gui_window_t* win)
 {
     if (win) {
         if (win->bknd_cb) {
-            if (win->bknd_cb->remove) {
-                win->bknd_cb->remove(win);
+            if (win->bknd_cb->free) {
+                win->bknd_cb->free(win);
             }
         }
         win->bknd_data = NULL;
@@ -99,6 +99,8 @@ static const rvvm_display_cb_t gui_display_cb = {
 
 static const gui_event_cb_t gui_dummy_event_cb = ZERO_INIT;
 
+static const gui_backend_cb_t gui_dummy_bknd_cb = ZERO_INIT;
+
 gui_window_t* gui_window_init_bare(size_t vram_size, const rvvm_fb_t* fb)
 {
     rvvm_fb_t tmp = {
@@ -123,8 +125,12 @@ gui_window_t* gui_window_init_bare(size_t vram_size, const rvvm_fb_t* fb)
     rvvm_fbdev_set_vram(win->fbdev, NULL, vram_size);
     rvvm_fbdev_set_scanout(win->fbdev, &tmp);
 
-    // Register dummy event callbacks
+    // Register dummy callbacks
     gui_window_register(win, &gui_dummy_event_cb);
+    gui_backend_register(win, &gui_dummy_bknd_cb);
+
+    // Initial window size
+    gui_backend_on_resize(win, rvvm_fb_width(&tmp), rvvm_fb_height(&tmp));
     return win;
 }
 
@@ -171,11 +177,57 @@ void gui_window_poll(gui_window_t* win)
 void gui_window_draw(gui_window_t* win)
 {
     if (win) {
+        rvvm_fb_t fb = ZERO_INIT;
+        rvvm_fbdev_get_scanout(win->fbdev, &fb);
+        if (!rvvm_fb_same_res(&win->fb, &fb)) {
+            uint32_t width = rvvm_fb_width(&fb), height = rvvm_fb_height(&fb);
+            /*
+             * Change window size if:
+             * - It currently matches the previous video mode
+             * - It is currently smaller than the new mode, and shrinking is not allowed
+             */
+            bool match = gui_window_width(win) == rvvm_fb_width(&win->fb) //
+                      && gui_window_height(win) == rvvm_fb_height(&win->fb);
+            bool small = gui_window_width(win) < width || gui_window_height(win) < height;
+            bool resiz = match || small;
+            if (resiz) {
+                uint32_t w = 1920, h = 1080;
+                int32_t  x = 0, y = 0;
+                gui_window_get_scr_size(win, &w, &h);
+                // Clamp the new window size to fit onto host workspace
+                width  = EVAL_MIN(width, w);
+                height = EVAL_MIN(height, h);
+                // Reposition window to match previous center
+                if (gui_window_get_position(win, &x, &y)) {
+                    bool neg_x = x < 0;
+                    bool neg_y = y < 0;
+                    // Prevent window header from falling below bottom of the host workspace
+                    x = EVAL_MIN(x - ((int32_t)(width - gui_window_width(win)) / 2), (int32_t)w - 128);
+                    y = EVAL_MIN(y - ((int32_t)(height - gui_window_height(win)) / 2), (int32_t)h - 128);
+                    // Prevent window header from going above the top of the host workspace
+                    if (!neg_x) {
+                        x = EVAL_MAX(x, 0);
+                    }
+                    if (!neg_y) {
+                        y = EVAL_MAX(y, 0);
+                    }
+                    gui_window_set_position(win, x, y);
+                }
+            }
+            // Update minimum window size
+            gui_window_set_min_size(win, width, height);
+            if (resiz) {
+                gui_window_set_size(win, width, height);
+            }
+        }
+        win->fb = fb;
         if (win->ev_cb->draw) {
             win->ev_cb->draw(win);
         }
         if (win->bknd_cb->draw) {
-            win->bknd_cb->draw(win);
+            uint32_t x = EVAL_MAX((int)gui_window_width(win) - (int)rvvm_fb_width(&fb), 0) >> 1;
+            uint32_t y = EVAL_MAX((int)gui_window_height(win) - (int)rvvm_fb_height(&fb), 0) >> 1;
+            win->bknd_cb->draw(win, &fb, x, y);
         }
     }
 }
