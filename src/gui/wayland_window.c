@@ -1000,7 +1000,7 @@ static void wayland_global_free(void)
     }
 }
 
-static void wayland_window_remove(gui_window_t* win)
+static void wayland_window_free(gui_window_t* win)
 {
     wl_window_t* wl = gui_backend_get_data(win);
     gui_backend_set_data(win, NULL);
@@ -1074,10 +1074,9 @@ static int32_t wayland_window_format(const rvvm_fb_t* fb)
 }
 
 // Check and resize wl_surface / recreate wl_buffer
-static bool wayland_window_update_scanout(gui_window_t* win)
+static bool wayland_window_update_scanout(gui_window_t* win, const rvvm_fb_t* fb)
 {
-    wl_window_t*     wl = gui_backend_get_data(win);
-    const rvvm_fb_t* fb = gui_backend_get_scanout(win);
+    wl_window_t* wl = gui_backend_get_data(win);
     if (rvvm_fb_buffer(fb)) {
         if (!rvvm_fb_same_res(fb, &wl->fb)) {
             // Resize window
@@ -1108,11 +1107,12 @@ static bool wayland_window_update_scanout(gui_window_t* win)
     return true;
 }
 
-static void wayland_window_draw(gui_window_t* win)
+static void wayland_window_draw(gui_window_t* win, const rvvm_fb_t* fb, uint32_t x, uint32_t y)
 {
+    UNUSED(x && y);
     scoped_spin_lock (&wl_lock) {
         wl_window_t* wl = gui_backend_get_data(win);
-        wayland_window_update_scanout(win);
+        wayland_window_update_scanout(win, fb);
         if (wl->surface && wl->buffer && wl->xdg_configured) {
             wl_surface_attach(wl->surface, wl->buffer, 0, 0);
             wl_surface_damage_buffer(wl->surface, 0, 0, wl->fb.width, wl->fb.height);
@@ -1180,7 +1180,7 @@ static void wayland_window_set_fullscreen(gui_window_t* win, bool fullscreen)
 }
 
 static const gui_backend_cb_t wayland_window_cb = {
-    .remove         = wayland_window_remove,
+    .free           = wayland_window_free,
     .draw           = wayland_window_draw,
     .set_title      = wayland_window_set_title,
     .grab_input     = wayland_window_grab_input,
@@ -1263,12 +1263,6 @@ bool wayland_window_init(gui_window_t* win)
     wl->xdg_toplevel = xdg_surface_get_toplevel(wl->xdg_surface);
     if (!wl->xdg_toplevel) {
         rvvm_error("Failed to get xdg_toplevel");
-        return false;
-    }
-
-    // Update window size & buffer
-    if (!wayland_window_update_scanout(win)) {
-        rvvm_info("Incompatible pixel format for Wayland");
         return false;
     }
 
