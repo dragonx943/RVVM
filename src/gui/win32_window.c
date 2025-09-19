@@ -206,7 +206,7 @@ static void win32_clip_cursor(win32_window_t* win32, bool clip)
     }
 }
 
-static void win32_window_remove(gui_window_t* win)
+static void win32_window_free(gui_window_t* win)
 {
     win32_window_t* win32 = gui_backend_get_data(win);
     gui_backend_set_data(win, NULL);
@@ -223,94 +223,6 @@ static void win32_window_remove(gui_window_t* win)
     }
 }
 
-// NOTE: Must be called with reserved space in bmi->bmiColors
-// NOTE: Windows seems to not accept BI_BITFIELDS for 24bpp, which makes BGR888 support a no-go
-static bool win32_handle_formats(BITMAPINFO* bmi, const rvvm_fb_t* fb)
-{
-    DWORD* mask = (DWORD*)(void*)&bmi->bmiColors;
-    switch (rvvm_fb_format(fb)) {
-        case RVVM_RGB_XRGB1555:
-            mask[0] = 0x7C00;
-            mask[1] = 0x03E0;
-            mask[2] = 0x001F;
-            return true;
-        case RVVM_RGB_RGB565:
-            mask[0] = 0xF800;
-            mask[1] = 0x07E0;
-            mask[2] = 0x001F;
-            return true;
-        case RVVM_RGB_XBGR8888:
-            mask[0] = 0x000000FFU;
-            mask[1] = 0x0000FF00U;
-            mask[2] = 0x00FF0000U;
-            return true;
-        case RVVM_RGB_BGRX8888:
-            mask[0] = 0x0000FF00U;
-            mask[1] = 0x00FF0000U;
-            mask[2] = 0xFF000000U;
-            return true;
-        case RVVM_RGB_RGBX8888:
-            mask[0] = 0xFF000000U;
-            mask[1] = 0x00FF0000U;
-            mask[2] = 0x0000FF00U;
-            return true;
-        case RVVM_RGB_XRGB2101010:
-            mask[0] = 0x3FF00000U;
-            mask[1] = 0x000FFC00U;
-            mask[2] = 0x000003FFU;
-            return true;
-        case RVVM_RGB_XBGR2101010:
-            mask[0] = 0x000003FFU;
-            mask[1] = 0x000FFC00U;
-            mask[2] = 0x3FF00000U;
-            return true;
-    }
-    return false;
-}
-
-static void win32_window_draw(gui_window_t* win)
-{
-    win32_window_t*  win32 = gui_backend_get_data(win);
-    const rvvm_fb_t* fb    = gui_backend_get_scanout(win);
-    if (rvvm_fb_buffer(fb)) {
-        // Bitmap info structure
-        BITMAPINFO* bmi = (BITMAPINFO*)safe_calloc(1, sizeof(BITMAPINFO) + (sizeof(DWORD) * 3));
-
-        // Initialize bitmap info
-        bmi->bmiHeader.biSize     = sizeof(BITMAPINFOHEADER);
-        bmi->bmiHeader.biWidth    = rvvm_fb_stride(fb) / rvvm_fb_rgb_bytes(fb);
-        bmi->bmiHeader.biHeight   = -rvvm_fb_height(fb);
-        bmi->bmiHeader.biPlanes   = 1;
-        bmi->bmiHeader.biBitCount = rvvm_fb_rgb_bpp(fb);
-
-        // Handle special framebuffer formats
-        if (win32_handle_formats(bmi, fb)) {
-            bmi->bmiHeader.biCompression = BI_BITFIELDS;
-        }
-
-        // Resize window if needed
-        if (!rvvm_fb_same_res(fb, &win32->fb)) {
-            RECT rect = {
-                .right  = rvvm_fb_width(fb),
-                .bottom = rvvm_fb_height(fb),
-            };
-            uint32_t flags = SWP_DRAWFRAME | SWP_NOMOVE | SWP_NOZORDER | SWP_SHOWWINDOW;
-            AdjustWindowRectEx(&rect, WINDOW_STYLE_FLAGS, false, 0);
-            SetWindowPos(win32->hwnd, NULL, 0, 0, rect.right - rect.left, rect.bottom - rect.top, flags);
-            if (win32->grab) {
-                // Update clip region
-                win32_clip_cursor(win32, true);
-            }
-        }
-
-        // Draw framebuffer
-        SetDIBitsToDevice(win32->hdc, 0, 0, rvvm_fb_width(fb), rvvm_fb_height(fb), 0, 0, 0, //
-                          rvvm_fb_height(fb), rvvm_fb_buffer(fb), bmi, DIB_RGB_COLORS);
-        safe_free(bmi);
-        win32->fb = *fb;
-    }
-}
-
 static void win32_window_poll(gui_window_t* win)
 {
     win32_window_t* win32 = gui_backend_get_data(win);
@@ -320,20 +232,17 @@ static void win32_window_poll(gui_window_t* win)
         switch (Msg.message) {
             case WM_MOUSEMOVE:
                 if (win32->grab) {
-                    const rvvm_fb_t* fb = gui_backend_get_scanout(win);
-                    if (fb) {
-                        POINTS cur = MAKEPOINTS(Msg.lParam);
-                        POINT  mid = {
-                             .x = rvvm_fb_width(fb) >> 1,
-                             .y = rvvm_fb_height(fb) >> 1,
-                        };
-                        int dx = cur.x - mid.x;
-                        int dy = cur.y - mid.y;
-                        if (dx || dy) {
-                            ClientToScreen(win32->hwnd, &mid);
-                            SetCursorPos(mid.x, mid.y);
-                            gui_backend_on_mouse_move(win, dx - (dx / 3), dy - (dy / 3));
-                        }
+                    POINTS cur = MAKEPOINTS(Msg.lParam);
+                    POINT  mid = {
+                         .x = gui_window_width(win) >> 1,
+                         .y = gui_window_height(win) >> 1,
+                    };
+                    int dx = cur.x - mid.x;
+                    int dy = cur.y - mid.y;
+                    if (dx || dy) {
+                        ClientToScreen(win32->hwnd, &mid);
+                        SetCursorPos(mid.x, mid.y);
+                        gui_backend_on_mouse_move(win, dx - (dx / 3), dy - (dy / 3));
                     }
                 } else {
                     POINTS cur = MAKEPOINTS(Msg.lParam);
@@ -387,6 +296,78 @@ static void win32_window_poll(gui_window_t* win)
     }
 }
 
+// NOTE: Must be called with reserved space in bmi->bmiColors
+// NOTE: Windows seems to not accept BI_BITFIELDS for 24bpp, which makes BGR888 support a no-go
+static bool win32_handle_formats(BITMAPINFO* bmi, const rvvm_fb_t* fb)
+{
+    DWORD* mask = (DWORD*)(void*)&bmi->bmiColors;
+    switch (rvvm_fb_format(fb)) {
+        case RVVM_RGB_XRGB1555:
+            mask[0] = 0x7C00;
+            mask[1] = 0x03E0;
+            mask[2] = 0x001F;
+            return true;
+        case RVVM_RGB_RGB565:
+            mask[0] = 0xF800;
+            mask[1] = 0x07E0;
+            mask[2] = 0x001F;
+            return true;
+        case RVVM_RGB_XBGR8888:
+            mask[0] = 0x000000FFU;
+            mask[1] = 0x0000FF00U;
+            mask[2] = 0x00FF0000U;
+            return true;
+        case RVVM_RGB_BGRX8888:
+            mask[0] = 0x0000FF00U;
+            mask[1] = 0x00FF0000U;
+            mask[2] = 0xFF000000U;
+            return true;
+        case RVVM_RGB_RGBX8888:
+            mask[0] = 0xFF000000U;
+            mask[1] = 0x00FF0000U;
+            mask[2] = 0x0000FF00U;
+            return true;
+        case RVVM_RGB_XRGB2101010:
+            mask[0] = 0x3FF00000U;
+            mask[1] = 0x000FFC00U;
+            mask[2] = 0x000003FFU;
+            return true;
+        case RVVM_RGB_XBGR2101010:
+            mask[0] = 0x000003FFU;
+            mask[1] = 0x000FFC00U;
+            mask[2] = 0x3FF00000U;
+            return true;
+    }
+    return false;
+}
+
+static void win32_window_draw(gui_window_t* win, const rvvm_fb_t* fb, uint32_t x, uint32_t y)
+{
+    win32_window_t* win32 = gui_backend_get_data(win);
+    if (rvvm_fb_buffer(fb)) {
+        // Bitmap info structure
+        BITMAPINFO* bmi = (BITMAPINFO*)safe_calloc(1, sizeof(BITMAPINFO) + (sizeof(DWORD) * 3));
+
+        // Initialize bitmap info
+        bmi->bmiHeader.biSize     = sizeof(BITMAPINFOHEADER);
+        bmi->bmiHeader.biWidth    = rvvm_fb_stride(fb) / rvvm_fb_rgb_bytes(fb);
+        bmi->bmiHeader.biHeight   = -rvvm_fb_height(fb);
+        bmi->bmiHeader.biPlanes   = 1;
+        bmi->bmiHeader.biBitCount = rvvm_fb_rgb_bpp(fb);
+
+        // Handle special framebuffer formats
+        if (win32_handle_formats(bmi, fb)) {
+            bmi->bmiHeader.biCompression = BI_BITFIELDS;
+        }
+
+        // Draw framebuffer
+        SetDIBitsToDevice(win32->hdc, x, y, rvvm_fb_width(fb), rvvm_fb_height(fb), 0, 0, 0, //
+                          rvvm_fb_height(fb), rvvm_fb_buffer(fb), bmi, DIB_RGB_COLORS);
+        safe_free(bmi);
+        win32->fb = *fb;
+    }
+}
+
 static void win32_window_set_title(gui_window_t* win, const char* title)
 {
     win32_window_t* win32 = gui_backend_get_data(win);
@@ -408,16 +389,41 @@ static void win32_window_grab_input(gui_window_t* win, bool grab)
     }
 }
 
+static void win32_window_set_win_size(gui_window_t* win, uint32_t w, uint32_t h)
+{
+    win32_window_t* win32 = gui_backend_get_data(win);
+    if (win32) {
+        RECT rect = {
+            .right  = w,
+            .bottom = h,
+        };
+        uint32_t flags = SWP_DRAWFRAME | SWP_NOMOVE | SWP_NOZORDER | SWP_SHOWWINDOW;
+        AdjustWindowRectEx(&rect, WINDOW_STYLE_FLAGS, false, 0);
+        SetWindowPos(win32->hwnd, NULL, 0, 0, rect.right - rect.left, rect.bottom - rect.top, flags);
+        if (win32->grab) {
+            // Update clip region
+            win32_clip_cursor(win32, true);
+        }
+    }
+}
+
 static const gui_backend_cb_t win32_window_cb = {
-    .remove     = win32_window_remove,
-    .draw       = win32_window_draw,
-    .poll       = win32_window_poll,
-    .set_title  = win32_window_set_title,
-    .grab_input = win32_window_grab_input,
+    .free         = win32_window_free,
+    .poll         = win32_window_poll,
+    .draw         = win32_window_draw,
+    .set_title    = win32_window_set_title,
+    .grab_input   = win32_window_grab_input,
+    .set_win_size = win32_window_set_win_size,
 };
 
 bool win32_window_init(gui_window_t* win)
 {
+    // Get window size
+    RECT rect = {
+        .right  = gui_window_width(win),
+        .bottom = gui_window_height(win),
+    };
+    // Register Win32 backend
     win32_window_t* win32 = safe_new_obj(win32_window_t);
 
     gui_backend_register(win, &win32_window_cb);
@@ -448,14 +454,7 @@ bool win32_window_init(gui_window_t* win)
         return false;
     }
 
-    // Get initial window size
-    const rvvm_fb_t* fb = gui_backend_get_scanout(win);
-
     // Adjust window rectangle
-    RECT rect = {
-        .right  = rvvm_fb_width(fb),
-        .bottom = rvvm_fb_height(fb),
-    };
     AdjustWindowRectEx(&rect, WINDOW_STYLE_FLAGS, false, 0);
 
     // Create window
