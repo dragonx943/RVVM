@@ -68,8 +68,8 @@ PUSH_OPTIMIZATION_SIZE
 
 X11_DLIB_SYM(XCloseDisplay)
 X11_DLIB_SYM(XCreateBitmapFromData)
-X11_DLIB_SYM(XCreateGC)
 X11_DLIB_SYM(XCreateFontCursor)
+X11_DLIB_SYM(XCreateGC)
 X11_DLIB_SYM(XCreatePixmapCursor)
 X11_DLIB_SYM(XCreateWindow)
 X11_DLIB_SYM(XDefineCursor)
@@ -86,6 +86,7 @@ X11_DLIB_SYM(XGrabKeyboard)
 X11_DLIB_SYM(XGrabPointer)
 X11_DLIB_SYM(XInternAtom)
 X11_DLIB_SYM(XMapWindow)
+X11_DLIB_SYM(XMoveWindow)
 X11_DLIB_SYM(XNextEvent)
 X11_DLIB_SYM(XOpenDisplay)
 X11_DLIB_SYM(XPeekEvent)
@@ -105,8 +106,8 @@ X11_DLIB_SYM(XWarpPointer)
 
 #define XCloseDisplay         XCloseDisplay_dlib
 #define XCreateBitmapFromData XCreateBitmapFromData_dlib
-#define XCreateGC             XCreateGC_dlib
 #define XCreateFontCursor     XCreateFontCursor_dlib
+#define XCreateGC             XCreateGC_dlib
 #define XCreatePixmapCursor   XCreatePixmapCursor_dlib
 #define XCreateWindow         XCreateWindow_dlib
 #define XDefineCursor         XDefineCursor_dlib
@@ -123,6 +124,7 @@ X11_DLIB_SYM(XWarpPointer)
 #define XGrabPointer          XGrabPointer_dlib
 #define XInternAtom           XInternAtom_dlib
 #define XMapWindow            XMapWindow_dlib
+#define XMoveWindow           XMoveWindow_dlib
 #define XNextEvent            XNextEvent_dlib
 #define XOpenDisplay          XOpenDisplay_dlib
 #define XPeekEvent            XPeekEvent_dlib
@@ -640,8 +642,8 @@ static bool x11_init_libs(void)
 
     X11_DLIB_RESOLVE(libx11, XCloseDisplay);
     X11_DLIB_RESOLVE(libx11, XCreateBitmapFromData);
-    X11_DLIB_RESOLVE(libx11, XCreateGC);
     X11_DLIB_RESOLVE(libx11, XCreateFontCursor);
+    X11_DLIB_RESOLVE(libx11, XCreateGC);
     X11_DLIB_RESOLVE(libx11, XCreatePixmapCursor);
     X11_DLIB_RESOLVE(libx11, XCreateWindow);
     X11_DLIB_RESOLVE(libx11, XDefineCursor);
@@ -658,6 +660,7 @@ static bool x11_init_libs(void)
     X11_DLIB_RESOLVE(libx11, XGrabPointer);
     X11_DLIB_RESOLVE(libx11, XInternAtom);
     X11_DLIB_RESOLVE(libx11, XMapWindow);
+    X11_DLIB_RESOLVE(libx11, XMoveWindow);
     X11_DLIB_RESOLVE(libx11, XNextEvent);
     X11_DLIB_RESOLVE(libx11, XOpenDisplay);
     X11_DLIB_RESOLVE(libx11, XPeekEvent);
