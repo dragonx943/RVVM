@@ -74,6 +74,12 @@ PUSH_OPTIMIZATION_SIZE
 #define NVME_GET_FEATURE      0x0A // Get Features
 
 /*
+ * Create IO Completion Queue Dword 11 bits
+ */
+#define NVME_CQ_FLAGS_PC      0x01 // Physically Contiguous
+#define NVME_CQ_FLAGS_IEN     0x02 // Interrupts Enabled
+
+/*
  * NVMe Identify command fields
  */
 #define NVME_IDENT_NS         0x00 // Identify Namespace
@@ -202,6 +208,21 @@ static inline uint32_t nvme_queue_next(uint32_t* head_or_tail, uint32_t queue_si
     return entry;
 }
 
+static void nvme_queue_raise_irq(nvme_dev_t* nvme, nvme_queue_t* queue)
+{
+    uint32_t irq_reg = atomic_load_uint32_relax(&queue->irq);
+    uint32_t irq_vec = irq_reg >> 16;
+    if ((irq_reg & NVME_CQ_FLAGS_IEN) && !(atomic_load_uint32_relax(&nvme->irq_mask) & bit_set32(irq_vec))) {
+        pci_raise_irq(nvme->pci_func, irq_vec);
+    }
+}
+
+static void nvme_queue_lower_irq(nvme_dev_t* nvme, nvme_queue_t* queue)
+{
+    uint32_t irq_vec = atomic_load_uint32_relax(&queue->irq) >> 16;
+    pci_lower_irq(nvme->pci_func, irq_vec);
+}
+
 static inline rvvm_addr_t nvme_queue_addr(const nvme_queue_t* queue)
 {
     uint32_t low  = atomic_load_uint32_relax(&queue->addr_l);
@@ -209,33 +230,41 @@ static inline rvvm_addr_t nvme_queue_addr(const nvme_queue_t* queue)
     return low | (((uint64_t)high) << 32);
 }
 
-static void nvme_setup_queue(nvme_queue_t* queue, rvvm_addr_t addr, uint32_t size)
+static void nvme_queue_setup(nvme_dev_t* nvme, nvme_queue_t* queue, rvvm_addr_t addr, uint32_t size)
 {
     atomic_store_uint32(&queue->head, 0);
     atomic_store_uint32(&queue->tail, 0);
     atomic_store_uint32(&queue->addr_l, addr & ~NVME_PAGE_MASK);
     atomic_store_uint32(&queue->addr_h, addr >> 32);
     atomic_store_uint32(&queue->size, size);
+    nvme_queue_lower_irq(nvme, queue);
 }
 
-static void nvme_shutdown(nvme_dev_t* nvme)
+static void nvme_reset(nvme_dev_t* nvme)
 {
+    // NOTE: Haiku guests don't play well with level-triggered NVMe IRQs as of hrev59048
+    atomic_store_uint32_relax(&nvme->irq_mask, 0xFFFFFFFFU);
+    // Wait for IO workers to halt
     while (atomic_load_uint32(&nvme->threads)) {
         sleep_ms(1);
     }
-    for (size_t i = 2; i < STATIC_ARRAY_SIZE(nvme->queues); ++i) {
-        nvme_setup_queue(&nvme->queues[i], 0, 0);
-    }
-    for (size_t i = 0; i <= NVME_ADMIN_CQ; ++i) {
-        nvme->queues[i].head = 0;
-        nvme->queues[i].tail = 0;
+    // Reset queues
+    for (size_t i = 0; i < STATIC_ARRAY_SIZE(nvme->queues); ++i) {
+        uint64_t addr = 0;
+        uint32_t size = 0;
+        if (i == NVME_ADMIN_SQ || i == NVME_ADMIN_CQ) {
+            // Keep addr/size intact for Admin queues
+            addr = nvme_queue_addr(&nvme->queues[i]);
+            size = atomic_load_uint32_relax(&nvme->queues[i].size);
+        }
+        nvme_queue_setup(nvme, &nvme->queues[i], addr, size);
     }
 }
 
 static void nvme_remove(rvvm_mmio_dev_t* dev)
 {
     nvme_dev_t* nvme = dev->data;
-    nvme_shutdown(nvme);
+    nvme_reset(nvme);
     rvvm_blk_close(nvme->blk);
     free(nvme);
 }
@@ -262,12 +291,7 @@ static void nvme_complete_cmd(nvme_dev_t* nvme, nvme_cmd_t* cmd, uint32_t status
         // Command Identifier, Phase Bit, Status Field
         atomic_store_uint32_le(ptr + 12, cmd->cmd_id | (status << 17) | phase);
     }
-
-    uint32_t irq_vec  = queue->irq >> 16;
-    uint32_t irq_mask = (1U << (irq_vec & 0x1F));
-    if (!(atomic_load_uint32_relax(&nvme->irq_mask) & irq_mask)) {
-        pci_send_irq(nvme->pci_func, irq_vec);
-    }
+    nvme_queue_raise_irq(nvme, queue);
 }
 
 static inline void nvme_complete_cmd_cs(nvme_dev_t* nvme, nvme_cmd_t* cmd, uint32_t status, uint32_t cs)
@@ -441,7 +465,8 @@ static void nvme_create_io_sq(nvme_dev_t* nvme, nvme_cmd_t* cmd)
     rvvm_addr_t sq_addr = cmd->prp.prp1;
     uint32_t    sq_id   = read_uint16_le(cmd->ptr + 40);
     uint32_t    sq_size = read_uint16_le(cmd->ptr + 42);
-    uint32_t    cq_id   = read_uint16_le(cmd->ptr + 46);
+    uint32_t    cq_flag = read_uint32_le(cmd->ptr + 44);
+    uint32_t    cq_id   = cq_flag >> 16;
     if (!sq_id || sq_id > NVME_MAX_QUEUES) {
         // Queue ID invalid
         nvme_complete_cmd_cs(nvme, cmd, NVME_SC_BAD_FIELD, NVME_CS_ID_INVALID);
@@ -451,9 +476,12 @@ static void nvme_create_io_sq(nvme_dev_t* nvme, nvme_cmd_t* cmd)
     } else if (!sq_size) {
         // Queue size invalid
         nvme_complete_cmd_cs(nvme, cmd, NVME_SC_BAD_FIELD, NVME_CS_SIZE_INVALID);
+    } else if (!(cq_flag & NVME_CQ_FLAGS_PC)) {
+        // Non-contiguous queue
+        nvme_complete_cmd(nvme, cmd, NVME_SC_BAD_FIELD);
     } else {
         nvme_queue_t* queue = &nvme->queues[(sq_id << 1)];
-        nvme_setup_queue(queue, sq_addr, sq_size);
+        nvme_queue_setup(nvme, queue, sq_addr, sq_size);
         atomic_store_uint32_relax(&queue->cq_id, cq_id);
         nvme_complete_cmd(nvme, cmd, NVME_SC_SUCCESS);
     }
@@ -464,17 +492,20 @@ static void nvme_create_io_cq(nvme_dev_t* nvme, nvme_cmd_t* cmd)
     rvvm_addr_t cq_addr = cmd->prp.prp1;
     uint32_t    cq_id   = read_uint16_le(cmd->ptr + 40);
     uint32_t    cq_size = read_uint16_le(cmd->ptr + 42);
-    uint32_t    cq_irq  = read_uint32_le(cmd->ptr + 44);
+    uint32_t    cq_flag = read_uint32_le(cmd->ptr + 44);
     if (!cq_id || cq_id > NVME_MAX_QUEUES) {
         // Queue ID invalid
         nvme_complete_cmd_cs(nvme, cmd, NVME_SC_BAD_FIELD, NVME_CS_ID_INVALID);
     } else if (!cq_size) {
         // Queue size invalid
         nvme_complete_cmd_cs(nvme, cmd, NVME_SC_BAD_FIELD, NVME_CS_SIZE_INVALID);
+    } else if (!(cq_flag & NVME_CQ_FLAGS_PC)) {
+        // Non-contiguous queue
+        nvme_complete_cmd(nvme, cmd, NVME_SC_BAD_FIELD);
     } else {
         nvme_queue_t* queue = &nvme->queues[(cq_id << 1) + 1];
-        nvme_setup_queue(queue, cq_addr, cq_size);
-        atomic_store_uint32_relax(&queue->irq, cq_irq);
+        nvme_queue_setup(nvme, queue, cq_addr, cq_size);
+        atomic_store_uint32_relax(&queue->irq, cq_flag);
         nvme_complete_cmd(nvme, cmd, NVME_SC_SUCCESS);
     }
 }
@@ -486,7 +517,7 @@ static void nvme_delete_io_queue(nvme_dev_t* nvme, nvme_cmd_t* cmd, bool is_cq)
         // Queue ID invalid
         nvme_complete_cmd_cs(nvme, cmd, NVME_SC_BAD_FIELD, NVME_CS_ID_INVALID);
     } else {
-        nvme_setup_queue(&nvme->queues[(q_id << 1) + is_cq], 0, 0);
+        nvme_queue_setup(nvme, &nvme->queues[(q_id << 1) + is_cq], 0, 0);
         nvme_complete_cmd(nvme, cmd, NVME_SC_SUCCESS);
     }
 }
@@ -665,6 +696,9 @@ static void nvme_doorbell(nvme_dev_t* nvme, size_t queue_id, uint16_t val)
         if (queue_id & 1) {
             // Update completion queue head
             atomic_store_uint32_relax(&queue->head, val);
+            if (atomic_load_uint32_relax(&queue->tail) == val) {
+                nvme_queue_lower_irq(nvme, queue);
+            }
         } else {
             // Update submission queue tail
             atomic_store_uint32_relax(&queue->tail, val);
@@ -757,7 +791,7 @@ static bool nvme_pci_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint
             atomic_store_uint32_relax(&nvme->conf, val);
             if ((val & NVME_CC_SHN) || !(val & NVME_CC_EN)) {
                 // Shutdown the controller
-                nvme_shutdown(nvme);
+                nvme_reset(nvme);
             }
             break;
         case NVME_REG_AQA:
@@ -784,6 +818,9 @@ static bool nvme_pci_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint
 pci_dev_t* nvme_init_blk(pci_bus_t* pci_bus, rvvm_blk_dev_t* blk)
 {
     nvme_dev_t* nvme = safe_new_obj(nvme_dev_t);
+
+    // Enable IEN on Admin Completion Queue
+    nvme->queues[NVME_ADMIN_CQ].irq = NVME_CQ_FLAGS_IEN;
 
     nvme->blk = blk;
     rvvm_randomserial(nvme->serial, sizeof(nvme->serial));
