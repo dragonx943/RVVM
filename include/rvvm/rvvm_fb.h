@@ -146,7 +146,7 @@ static inline rvvm_rgb_t rvvm_fb_format(const rvvm_fb_t* fb)
 /**
  * Get framebuffer bytes per pixel
  */
-static inline rvvm_rgb_t rvvm_fb_rgb_bytes(const rvvm_fb_t* fb)
+static inline size_t rvvm_fb_rgb_bytes(const rvvm_fb_t* fb)
 {
     return rvvm_rgb_bytes(rvvm_fb_format(fb));
 }
@@ -154,7 +154,7 @@ static inline rvvm_rgb_t rvvm_fb_rgb_bytes(const rvvm_fb_t* fb)
 /**
  * Get framebuffer bits per pixel
  */
-static inline rvvm_rgb_t rvvm_fb_rgb_bpp(const rvvm_fb_t* fb)
+static inline uint32_t rvvm_fb_rgb_bpp(const rvvm_fb_t* fb)
 {
     return rvvm_rgb_bpp(rvvm_fb_format(fb));
 }
@@ -164,12 +164,8 @@ static inline rvvm_rgb_t rvvm_fb_rgb_bpp(const rvvm_fb_t* fb)
  */
 static inline size_t rvvm_fb_stride(const rvvm_fb_t* fb)
 {
-    if (fb && fb->stride) {
-        return fb->stride;
-    } else if (fb) {
-        return fb->width * rvvm_rgb_bytes(fb->format);
-    }
-    return 0;
+    size_t stride = rvvm_fb_width(fb) * rvvm_fb_rgb_bytes(fb);
+    return (fb && fb->stride > stride) ? fb->stride : stride;
 }
 
 /**
