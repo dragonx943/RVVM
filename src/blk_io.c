@@ -40,6 +40,9 @@ PUSH_OPTIMIZATION_SIZE
 #ifndef O_NOATIME
 #define O_NOATIME 0
 #endif
+#ifndef O_NONBLOCK
+#define O_NONBLOCK 0
+#endif
 #ifndef O_CREAT
 #define O_CREAT 0
 #endif
@@ -204,7 +207,7 @@ rvfile_t* rvopen(const char* filepath, uint32_t filemode)
 #endif
 
 #if defined(POSIX_FILE_IMPL)
-    int open_flags = O_CLOEXEC | O_NOATIME;
+    int open_flags = O_CLOEXEC | O_NOATIME | O_NONBLOCK;
     if (filemode & RVFILE_WRITE) {
         if (filemode & RVFILE_READ) {
             open_flags |= O_RDWR;
@@ -243,7 +246,8 @@ rvfile_t* rvopen(const char* filepath, uint32_t filemode)
     }
 
     uint64_t size = lseek(fd, 0, SEEK_END);
-    if (size >= ((((uint64_t)1) << 63) - 1)) {
+    int32_t  flag = fcntl(fd, F_GETFL);
+    if (size >= ((((uint64_t)1) << 63) - 1) || flag == -1 || fcntl(fd, F_SETFL, flag & ~O_NONBLOCK)) {
         // Failed to get file size (Is a directory/pipe/etc)
         rvvm_error("Failed to open \"%s\": File is not seekable", filepath);
         close(fd);
