@@ -454,19 +454,13 @@ static void pci_free_dev_internal(pci_dev_t* dev, bool remove_mmio)
 // Assign MMIO address for a BAR
 static rvvm_addr_t pci_assign_mmio_addr(pci_bus_t* bus, size_t bar_size)
 {
-    rvvm_addr_t addr = bus->mem_addr;
     rvvm_addr_t size = bit_next_pow2(EVAL_MAX(bar_size, 0x1000));
-    if (size > bus->mem_len) {
-        rvvm_error("PCI BAR doesn't fit into PCI memory space");
+    if (size >= 0x10000000U) {
+        // Assign to prefetchable MMIO64 range
+        return rvvm_mmio_zone_auto(bus->machine, 0x4000000000ULL, size);
+    } else {
+        return rvvm_mmio_zone_auto(bus->machine, 0x40000000U, size);
     }
-    while (true) {
-        rvvm_addr_t tmp = rvvm_mmio_zone_auto(bus->machine, addr, size);
-        if (tmp == addr) {
-            break;
-        }
-        addr = tmp + ((size - tmp) & (size - 1));
-    }
-    return addr;
 }
 
 // Attach a preconfigured BAR to the PCI host
@@ -628,6 +622,10 @@ static bool pci_bus_read(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint8
                         if (pci_bar_is_64bit(func, bar_id)) {
                             // This BAR supports 64-bit addressing
                             val |= PCI_BAR_64_BIT;
+                        }
+                        if (bar->size >= 0x10000000U) {
+                            // This is a prefetchable BAR (GPU VRAM, etc)
+                            val |= PCI_BAR_PREFETCH;
                         }
                     }
                 }
@@ -888,7 +886,7 @@ PUBLIC pci_bus_t* pci_bus_init(rvvm_machine_t* machine,                   //
             .class_code = 0x0604,
             .irq_pin    = PCI_IRQ_PIN_INTA,
         };
-        for (pci_bus_addr_t bus_addr = 1; bus_addr < PCI_DEV_FUNCS; ++bus_addr) {
+        for (pci_bus_addr_t bus_addr = 1; bus_addr < 4; ++bus_addr) {
             pci_attach_func_at(bus, &root_port_desc, bus_addr);
         }
     }
@@ -919,11 +917,17 @@ PUBLIC pci_bus_t* pci_bus_init(rvvm_machine_t* machine,                   //
 
 #define FDT_ADDR(addr) (((uint64_t)(addr)) >> 32), ((uint32_t)(addr))
 
-    // Range header: ((cacheable) << 30 | (space) << 24 | (bus) << 16 | (dev) << 11 | (fun) << 8 | (reg))
+    // clang-format off
     uint32_t ranges[] = {
-        0x1000000, FDT_ADDR(0),        FDT_ADDR(io_addr),  FDT_ADDR(io_len),
-        0x2000000, FDT_ADDR(mem_addr), FDT_ADDR(mem_addr), FDT_ADDR(mem_len),
+        // IO Range 0x03000000...0x0300FFFF -> 0x00000000
+        0x01000000U, FDT_ADDR(0x00000000U),     FDT_ADDR(0x03000000U),     FDT_ADDR(0x00010000U),
+        // Non-prefetchable MMIO32 Range 0x40000000...0x7FFFFFFF -> 0x40000000
+        0x02000000U, FDT_ADDR(0x40000000U),     FDT_ADDR(0x40000000U),     FDT_ADDR(0x40000000U),
+        // Prefetchable MMIO64 Range 0x4000000000...0x7FFFFFFFFF -> 0x4000000000
+        0x43000000U, FDT_ADDR(0x4000000000ULL), FDT_ADDR(0x4000000000ULL), FDT_ADDR(0x4000000000ULL),
     };
+    // clang-format on
+
     fdt_node_add_prop_cells(pci_fdt, "ranges", ranges, STATIC_ARRAY_SIZE(ranges));
 
     // Crossing-style IRQ routing for IRQ balancing
