@@ -290,8 +290,10 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define _FILE_OFFSET_BITS 64
 
 /*
- * Expose only a minimal WinAPI subset from <windows.h>
+ * Expose strict minimal WinAPI subset from <windows.h>
  */
+#undef STRICT
+#define STRICT 1
 #undef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN 1
 
