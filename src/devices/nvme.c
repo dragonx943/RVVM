@@ -242,8 +242,6 @@ static void nvme_queue_setup(nvme_dev_t* nvme, nvme_queue_t* queue, rvvm_addr_t 
 
 static void nvme_reset(nvme_dev_t* nvme)
 {
-    // NOTE: Haiku guests don't play well with level-triggered NVMe IRQs as of hrev59048
-    atomic_store_uint32_relax(&nvme->irq_mask, 0xFFFFFFFFU);
     // Wait for IO workers to halt
     while (atomic_load_uint32(&nvme->threads)) {
         sleep_ms(1);
