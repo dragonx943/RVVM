@@ -67,9 +67,10 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  * - Determinism is desired, yet various libm implementation may have non-bit-exact results
  * Workaround: Handle fenv in asembly, prefer native instructions
  *
- * WASM, mips/mips64, m68k, hexagon, Windows CE (ARM32) platforms lack FENV completely:
- * - Basically what the title says. None of those have a working <fenv.h> implementation.
- * - There is no way to implement fesetround() anyways, at least as far as I'm aware
+ * Many platforms lack FPU environment handling (Exceptions / Rounding):
+ * - WASM (Emscripten)
+ * - MIPS, DEC Alpha, HPPA, M68K, SH4, Hexagon
+ * - Windows CE (ARM32), or any other soft-float ARM target
  * Workaround: Thread-local exception flags, which are raised manually based on various checks
  *
  * NOTE: RISC-V THead CPUs also lack FPU exceptions, but I'm hesitant to enable such workaround
@@ -81,8 +82,11 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  * list of compilers/platforms a "Known Nice Platform" (C) and apply workarounds otherwise.
  */
 
-#if defined(__wasm__) || defined(__mips__) || defined(__mips) || defined(__mips64__) || defined(__mips64) /**/         \
-    || defined(__m68k__) || defined(__hexagon__) || (defined(_WIN32) && defined(_M_ARM)) || !CHECK_INCLUDE(fenv.h, 1)
+#if defined(__wasm__) || defined(__SOFTFP__)                                             /**/                          \
+    || defined(__m68k__) || defined(__sh__) || defined(__hppa__) || defined(__hexagon__) /**/                          \
+    || defined(__alpha__) || defined(__alpha) || defined(_M_ALPHA)                       /**/                          \
+    || defined(__mips__) || defined(__mips) || defined(__mips64__) || defined(__mips64)  /**/                          \
+    || (defined(_WIN32) && defined(_M_ARM)) || !CHECK_INCLUDE(fenv.h, 1)
 // Enable FENV emulation
 #undef USE_SOFT_FPU_FENV
 #define USE_SOFT_FPU_FENV 1
