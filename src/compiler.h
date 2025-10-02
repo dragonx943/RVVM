@@ -173,6 +173,12 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define HOST_FAST_MISALIGN 1
 #endif
 
+// Disable per-function optimizations on SuperH due to compiler bugs
+#if defined(__sh__)
+#undef USE_NO_FUNC_OPT
+#define USE_NO_FUNC_OPT 1
+#endif
+
 /*
  * Macro helpers
  */
@@ -311,14 +317,13 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #endif
 
 // Optimize cold function for size
-// NOTE: Clang blows up executable size when using __cold__ for some reason
 #undef func_opt_cold
-#if !defined(USE_NO_FUNC_OPT) && GCC_CHECK_VER(4, 5)
+#if GCC_CHECK_VER(4, 5)
 #define func_opt_cold func_opt_size __attribute__((__cold__, __noclone__))
-#elif !defined(USE_NO_FUNC_OPT) && GNU_ATTRIBUTE(__cold__)
+#elif GNU_ATTRIBUTE(__cold__)
 #define func_opt_cold func_opt_size __attribute__((__cold__))
 #else
-#define func_opt_cold func_opt_size
+#define func_opt_cold GNU_DUMMY_ATTRIBUTE
 #endif
 
 /*
