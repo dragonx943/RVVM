@@ -159,9 +159,6 @@ typedef struct {
     // Window decorations
     struct zxdg_toplevel_decoration_v1* xdg_decoration;
 
-    // Tearing control handle
-    struct wp_tearing_control_v1* tear_control;
-
     // Pointer grab handle
     struct zwp_locked_pointer_v1* ptr_lock;
 
@@ -191,7 +188,6 @@ static struct zxdg_decoration_manager_v1*                xdg_decor_mgr      = NU
 static struct zwp_relative_pointer_manager_v1*           wl_relative_mgr    = NULL;
 static struct zwp_pointer_constraints_v1*                wl_ptr_constraints = NULL;
 static struct zwp_keyboard_shortcuts_inhibit_manager_v1* wl_kbd_inhibit_mgr = NULL;
-static struct wp_tearing_control_manager_v1*             wl_tearing_mgr     = NULL;
 
 // Wayland seats
 static vector_t(wl_seat_data_t*) wl_seats = ZERO_INIT;
@@ -758,8 +754,6 @@ static void wl_registry_on_global(void* data, struct wl_registry* registry, //
             wl_ptr_constraints = wl_registry_bind(registry, name, &zwp_pointer_constraints_v1_interface, version);
         } else if (rvvm_strcmp(interface, zwp_relative_pointer_manager_v1_interface.name)) {
             wl_relative_mgr = wl_registry_bind(registry, name, &zwp_relative_pointer_manager_v1_interface, version);
-        } else if (rvvm_strcmp(interface, wp_tearing_control_manager_v1_interface.name)) {
-            wl_tearing_mgr = wl_registry_bind(registry, name, &wp_tearing_control_manager_v1_interface, version);
         }
     }
 }
@@ -981,10 +975,6 @@ static void wayland_global_free(void)
         zwp_keyboard_shortcuts_inhibit_manager_v1_destroy(wl_kbd_inhibit_mgr);
         wl_kbd_inhibit_mgr = NULL;
     }
-    if (wl_tearing_mgr) {
-        wp_tearing_control_manager_v1_destroy(wl_tearing_mgr);
-        wl_tearing_mgr = NULL;
-    }
 
     // Disconnect from Wayland display
     // NOTE: MUST come last in deinitialization order
@@ -1025,9 +1015,6 @@ static void wayland_window_free(gui_window_t* win)
         // Clean up Wayland objects
         if (wl->xdg_decoration) {
             zxdg_toplevel_decoration_v1_destroy(wl->xdg_decoration);
-        }
-        if (wl->tear_control) {
-            wp_tearing_control_v1_destroy(wl->tear_control);
         }
         if (wl->xdg_toplevel) {
             xdg_toplevel_destroy(wl->xdg_toplevel);
@@ -1276,14 +1263,6 @@ bool wayland_window_init(gui_window_t* win)
         // Probably running on Gnome or something, report an info message and fallback to X11
         rvvm_info("Your Wayland compositor doesn't support XDG decorations, ew");
         return false;
-    }
-
-    // Hint that tearing is OK if the compositor so wishes
-    if (wl_tearing_mgr) {
-        wl->tear_control = wp_tearing_control_manager_v1_get_tearing_control( //
-            wl_tearing_mgr, wl->surface);
-        wp_tearing_control_v1_set_presentation_hint( //
-            wl->tear_control, WP_TEARING_CONTROL_V1_PRESENTATION_HINT_ASYNC);
     }
 
     // Register XDG surface listener to handle configure events
