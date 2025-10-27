@@ -165,8 +165,8 @@ static void rvvm_init_fdt(rvvm_machine_t* machine)
 static void rvvm_prepare_fdt(rvvm_machine_t* machine)
 {
     if (rvvm_get_opt(machine, RVVM_OPT_HW_IMITATE)) {
-        fdt_node_add_prop_str(machine->fdt, "model", "PlasmaArc Five");
-        fdt_node_add_prop_str(machine->fdt, "compatible", "lekkit,arc7xx");
+        fdt_node_add_prop_str(machine->fdt, "model", "Amelia Semico Vertin Mk.I");
+        fdt_node_add_prop_str(machine->fdt, "compatible", "amelia,board-generic");
 
         vector_foreach (machine->harts, i) {
             struct fdt_node* cpus = fdt_node_find(machine->fdt, "cpus");
