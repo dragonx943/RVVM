@@ -35,6 +35,9 @@ typedef struct {
     uint32_t raised[PLIC_SRC_REGS];
     uint32_t** enable;    // [CTX][SRC_REG]
     uint32_t*  threshold; // [CTX]
+
+    // Workaround level-triggered interrupt storm in buggy guests
+    bool workaround_intx_storm;
 } plic_ctx_t;
 
 static inline uint32_t plic_ctx_prio(uint32_t ctx)
@@ -225,7 +228,9 @@ static void plic_complete_irq(plic_ctx_t* plic, uint32_t ctx, uint32_t irq)
     if (raised) {
         // Rearm raised interrupt as pending after completion
         atomic_or_uint32(&plic->pending[irq >> 5], raised);
-        plic_notify_ctx_irq(plic, ctx, irq);
+        if (!plic->workaround_intx_storm) {
+            plic_notify_ctx_irq(plic, ctx, irq);
+        }
     }
 }
 
@@ -338,9 +343,18 @@ static void plic_reset(rvvm_mmio_dev_t* dev)
     memset(plic->threshold, 0, plic_ctx_count(plic) << 2);
 }
 
+static void plic_update(rvvm_mmio_dev_t* dev)
+{
+    plic_ctx_t* plic = dev->data;
+    if (plic->workaround_intx_storm) {
+        plic_full_update(plic);
+    }
+}
+
 static rvvm_mmio_type_t plic_dev_type = {
     .name = "riscv_plic",
     .remove = plic_remove,
+    .update = plic_update,
     .reset = plic_reset,
 };
 
@@ -411,6 +425,8 @@ PUBLIC rvvm_intc_t* riscv_plic_init(rvvm_machine_t* machine, rvvm_addr_t addr)
     for (size_t ctx = 0; ctx < plic_ctx_count(plic); ++ctx){
         plic->enable[ctx] = safe_new_arr(uint32_t, PLIC_SRC_REGS);
     }
+
+    plic->workaround_intx_storm = rvvm_has_arg("workaround_intx_storm");
 
     rvvm_intc_t plic_intc_desc = {
         .data = plic,
