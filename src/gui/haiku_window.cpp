@@ -194,6 +194,9 @@ private:
     // Current scanout bitmap handle
     ObjectDeleter<BBitmap> m_bitmap;
 
+    // Scanout position
+    BPoint m_pos;
+
     // Last scanout context
     rvvm_fb_t m_fb;
 
@@ -206,7 +209,13 @@ public:
 
     BBitmap* CreateBitmapFromScanout(const rvvm_fb_t* fb);
 
-    BBitmap* PrepareScanoutBitmap(void);
+    void SetScanoutBitmap(const rvvm_fb_t* fb);
+
+    BBitmap* GetScanoutBitmap(void);
+
+    void SetScanoutPosition(BPoint pos);
+
+    BPoint GetScanoutPosition(void);
 
     HaikuGUIView* GetView(void) const
     {
@@ -244,10 +253,10 @@ void HaikuGUIView::AttachedToWindow(void)
 void HaikuGUIView::Draw(BRect dirty)
 {
     HaikuGUIWindow* hwin   = (HaikuGUIWindow*)gui_backend_get_data(m_win);
-    BBitmap*        bitmap = hwin->PrepareScanoutBitmap();
+    BBitmap*        bitmap = hwin->GetScanoutBitmap();
     UNUSED(dirty);
     if (bitmap) {
-        DrawBitmap(bitmap);
+        DrawBitmap(bitmap, hwin->GetScanoutPosition());
     }
 }
 
@@ -348,18 +357,31 @@ BBitmap* HaikuGUIWindow::CreateBitmapFromScanout(const rvvm_fb_t* fb)
     return NULL;
 }
 
-BBitmap* HaikuGUIWindow::PrepareScanoutBitmap(void)
+void HaikuGUIWindow::SetScanoutBitmap(const rvvm_fb_t* fb)
 {
-    const rvvm_fb_t* fb = gui_backend_get_scanout(m_win);
     // Recreate bitmap if needed
     if (!rvvm_fb_same_scanout(fb, &m_fb)) {
         BBitmap* new_bitmap = CreateBitmapFromScanout(fb);
         if (new_bitmap) {
             m_bitmap.SetTo(new_bitmap);
+            m_fb = *fb;
         }
     }
-    m_fb = *fb;
+}
+
+BBitmap* HaikuGUIWindow::GetScanoutBitmap(void)
+{
     return m_bitmap.Get();
+}
+
+void HaikuGUIWindow::SetScanoutPosition(BPoint pos)
+{
+    m_pos = pos;
+}
+
+BPoint HaikuGUIWindow::GetScanoutPosition(void)
+{
+    return m_pos;
 }
 
 // Override BApplication::Run() to run a background BLooper thread instead of blocking
@@ -400,13 +422,15 @@ static void haiku_window_free(gui_window_t* win)
     gui_backend_set_data(win, NULL);
 }
 
-static void haiku_window_draw(gui_window_t* win)
+static void haiku_window_draw(gui_window_t* win, const rvvm_fb_t* fb, uint32_t x, uint32_t y)
 {
     HaikuGUIWindow* hwin = (HaikuGUIWindow*)gui_backend_get_data(win);
     HaikuGUIView*   view = hwin->GetView();
     // NOTE: Is this doing a synchronous flip or just notifies app thread?
     // GUI user expects sync draw for future ack (interrupt) on flip
     view->LockLooper();
+    hwin->SetScanoutBitmap(fb);
+    hwin->SetScanoutPosition(BPoint(x, y));
     view->Invalidate();
     view->UnlockLooper();
 }
@@ -452,9 +476,8 @@ bool haiku_window_init(gui_window_t* win)
         return false;
     }
 
-    const rvvm_fb_t* fb   = gui_backend_get_scanout(win);
-    HaikuGUIWindow*  hwin = new HaikuGUIWindow( //
-        BRect(0, 0, rvvm_fb_width(fb) - 1, rvvm_fb_height(fb) - 1), "", win, vram_area, vram_addr);
+    HaikuGUIWindow* hwin = new HaikuGUIWindow( //
+        BRect(0, 0, gui_window_width(win) - 1, gui_window_height(win) - 1), "", win, vram_area, vram_addr);
     hwin->CenterOnScreen();
     hwin->Show();
 
