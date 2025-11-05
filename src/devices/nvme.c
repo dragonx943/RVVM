@@ -334,19 +334,21 @@ static size_t nvme_process_prp_chunk(nvme_dev_t* nvme, nvme_cmd_t* cmd)
         // Process PRP2 entries until we reach end of transfer
         if (prp->prp2_dma == NULL) {
             prp->prp2_dma = pci_get_dma_ptr(nvme->pci_func, prp->prp2, NVME_PAGE_SIZE);
+            if (!prp->prp2_dma) {
+                // PRP list DMA error
+                nvme_complete_cmd(nvme, cmd, NVME_SC_DATA_ERR);
+                return 0;
+            }
         }
-        if (prp->prp2_dma) {
+        if (prp->prp2_off >= NVME_PRP2_END) {
+            // Fetch next PRP list in the chain
+            prp->prp2     = read_uint64_le_m(prp->prp2_dma + NVME_PRP2_END);
+            prp->prp2_off = 0;
+            prp->prp2_dma = NULL;
+        } else {
+            // Process next PRP list entry
             prp->prp1      = read_uint64_le_m(prp->prp2_dma + prp->prp2_off);
             prp->prp2_off += 8;
-            if (prp->prp2_off >= NVME_PRP2_END) {
-                prp->prp2     = read_uint64_le_m(prp->prp2_dma + NVME_PRP2_END);
-                prp->prp2_off = 0;
-                prp->prp2_dma = pci_get_dma_ptr(nvme->pci_func, prp->prp2, NVME_PAGE_SIZE);
-            }
-        } else {
-            // DMA error
-            nvme_complete_cmd(nvme, cmd, NVME_SC_DATA_ERR);
-            return 0;
         }
 
         // Non-continuous page, split the chunk
