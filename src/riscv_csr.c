@@ -19,11 +19,11 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 // Get RVVM commit in a mimpid hex form
 static uint32_t rvvm_mimpid(void)
 {
-    const char* version_string = RVVM_VERSION;
-    const char* dash = rvvm_strfind(version_string, "-");
+    const char* ver  = RVVM_VERSION;
+    const char* dash = rvvm_strfind(ver, "-");
     if (dash) {
         uint32_t commit_hex = str_to_uint_base(dash + 1, NULL, 16) << 4;
-        if (rvvm_strfind(version_string, "dirty")) {
+        if (rvvm_strfind(ver, "dirty")) {
             commit_hex |= 0xD;
         }
         return commit_hex;
@@ -56,7 +56,8 @@ static inline bool riscv_is_csr_write(rvvm_uxlen_t* dest, uint8_t op)
     return (*dest != 0) || (op == CSR_SWAP);
 }
 
-static inline bool riscv_csr_helper_masked(rvvm_hart_t* vm, rvvm_uxlen_t* csr, rvvm_uxlen_t* dest, rvvm_uxlen_t mask, uint8_t op)
+static inline bool riscv_csr_helper_masked(rvvm_hart_t* vm, rvvm_uxlen_t* csr, //
+                                           rvvm_uxlen_t* dest, rvvm_uxlen_t mask, uint8_t op)
 {
     rvvm_uxlen_t tmp = *csr;
     if (!vm->rv64) {
@@ -142,17 +143,17 @@ static inline bool riscv_csr_zero_h(rvvm_hart_t* vm, rvvm_uxlen_t* dest)
     return false;
 }
 
-static inline bool riscv_csr_time(rvvm_hart_t* vm, rvvm_uxlen_t* dest)
+static inline bool riscv_csr_counter(rvvm_hart_t* vm, rvvm_uxlen_t* dest, uint32_t counter)
 {
-    if (riscv_csr_timer_enabled(vm)) {
+    if (riscv_csr_counter_enabled(vm, counter)) {
         return riscv_csr_const(dest, rvtimer_get(&vm->machine->timer));
     }
     return false;
 }
 
-static inline bool riscv_csr_timeh(rvvm_hart_t* vm, rvvm_uxlen_t* dest)
+static inline bool riscv_csr_counter_h(rvvm_hart_t* vm, rvvm_uxlen_t* dest, uint32_t counter)
 {
-    if (!vm->rv64 && riscv_csr_timer_enabled(vm)) {
+    if (!vm->rv64 && riscv_csr_counter_enabled(vm, counter)) {
         return riscv_csr_const(dest, rvtimer_get(&vm->machine->timer) >> 32);
     }
     return false;
@@ -206,22 +207,26 @@ static inline rvvm_uxlen_t riscv_csr_sd_bit(rvvm_hart_t* vm)
 static inline bool riscv_csr_status_xl_valid(uint8_t xl)
 {
 #ifdef USE_RV32
-    if (xl == CSR_STATUS_XL_RV32) return true;
+    if (xl == CSR_STATUS_XL_RV32) {
+        return true;
+    }
 #endif
-    if (xl == CSR_STATUS_XL_RV64) return true;
+    if (xl == CSR_STATUS_XL_RV64) {
+        return true;
+    }
     return false;
 }
 
 static bool riscv_csr_status(rvvm_hart_t* vm, rvvm_uxlen_t* dest, uint64_t mask, uint8_t op)
 {
-    rvvm_uxlen_t status = vm->csr.status;
+    rvvm_uxlen_t status     = vm->csr.status;
     rvvm_uxlen_t old_status = status;
 
     // Fixup XS and SD fields in status before reading
     uint8_t fs = bit_cut(status, 13, 2);
     uint8_t vs = bit_cut(status, 9, 2);
     uint8_t xs = EVAL_MAX(fs, vs);
-    status = bit_replace(status, 15, 2, xs);
+    status     = bit_replace(status, 15, 2, xs);
 
     riscv_csr_helper_masked(vm, &status, dest, mask, op);
 
@@ -284,7 +289,8 @@ static inline bool riscv_csr_topi(rvvm_hart_t* vm, rvvm_uxlen_t* dest, rvvm_uxle
 {
     if (vm->aia) {
         uint32_t pending = (riscv_interrupts_pending(vm) & mask);
-        uint32_t irq = pending ? (bit_clz32(pending) ^ 31) : 0;
+        uint32_t irq     = pending ? (bit_clz32(pending) ^ 31) : 0;
+        // Report IRQ as both pending and highest prio
         *dest = (!!irq) | (irq << 16);
         UNUSED(op);
         return true;
@@ -295,8 +301,9 @@ static inline bool riscv_csr_topi(rvvm_hart_t* vm, rvvm_uxlen_t* dest, rvvm_uxle
 static inline bool riscv_csr_topei(rvvm_hart_t* vm, uint8_t priv_mode, rvvm_uxlen_t* dest, uint8_t op)
 {
     if (vm->aia) {
-        bool smode = priv_mode == RISCV_PRIV_SUPERVISOR;
-        uint32_t irq = riscv_get_aia_irq(vm, smode, riscv_is_csr_write(dest, op));
+        bool     smode = priv_mode == RISCV_PRIV_SUPERVISOR;
+        uint32_t irq   = riscv_get_aia_irq(vm, smode, riscv_is_csr_write(dest, op));
+        // Report IRQ as both pending and highest prio
         *dest = irq | (irq << 16);
         return true;
     }
@@ -346,7 +353,8 @@ static bool riscv_csr_satp(rvvm_hart_t* vm, rvvm_uxlen_t* dest, uint8_t op)
         rvvm_uxlen_t satp = (((uint64_t)vm->mmu_mode) << 60) | (vm->root_page_table >> RISCV_PAGE_SHIFT);
         riscv_csr_helper(vm, &satp, dest, op);
         new_mmu_mode = bit_cut(satp, 60, 4);
-        if (new_mmu_mode != CSR_SATP_MODE_BARE && (new_mmu_mode < CSR_SATP_MODE_SV39 || new_mmu_mode > CSR_SATP_MODE_SV57)) {
+        if (new_mmu_mode != CSR_SATP_MODE_BARE
+            && (new_mmu_mode < CSR_SATP_MODE_SV39 || new_mmu_mode > CSR_SATP_MODE_SV57)) {
             // If satp is written with unsupported MODE, the entire write has no effect
             return true;
         }
@@ -358,7 +366,7 @@ static bool riscv_csr_satp(rvvm_hart_t* vm, rvvm_uxlen_t* dest, uint8_t op)
     } else {
         rvvm_uxlen_t satp = (((rvvm_uxlen_t)vm->mmu_mode) << 31) | (vm->root_page_table >> RISCV_PAGE_SHIFT);
         riscv_csr_helper(vm, &satp, dest, op);
-        new_mmu_mode = bit_cut(satp, 31, 1);
+        new_mmu_mode        = bit_cut(satp, 31, 1);
         vm->root_page_table = (satp & bit_mask(22)) << RISCV_PAGE_SHIFT;
     }
 
@@ -381,8 +389,8 @@ static inline void riscv_update_fflags(rvvm_hart_t* vm)
 static void riscv_update_fcsr(rvvm_hart_t* vm, uint32_t old_fcsr, uint32_t new_fcsr)
 {
     if (unlikely(new_fcsr != old_fcsr)) {
-        uint32_t old_frm = bit_cut(old_fcsr, 5, 3);
-        uint32_t new_frm = bit_cut(new_fcsr, 5, 3);
+        uint32_t old_frm    = bit_cut(old_fcsr, 5, 3);
+        uint32_t new_frm    = bit_cut(new_fcsr, 5, 3);
         uint32_t old_fflags = bit_cut(old_fcsr, 0, 5);
         uint32_t new_fflags = bit_cut(new_fcsr, 0, 5);
         if (unlikely(new_frm != old_frm)) {
@@ -425,7 +433,7 @@ static bool riscv_csr_frm(rvvm_hart_t* vm, rvvm_uxlen_t* dest, uint8_t op)
 {
     if (likely(riscv_fpu_is_enabled(vm))) {
         rvvm_uxlen_t fcsr = vm->csr.fcsr;
-        rvvm_uxlen_t frm = fcsr >> 5;
+        rvvm_uxlen_t frm  = fcsr >> 5;
         riscv_csr_helper_masked(vm, &frm, dest, CSR_FRM_MASK, op);
         fcsr = bit_replace(fcsr, 5, 3, frm);
         riscv_set_fcsr(vm, fcsr);
@@ -480,7 +488,8 @@ static bool riscv_csr_aia_helper(rvvm_hart_t* vm, bool smode, uint32_t* val, rvv
     return true;
 }
 
-static bool riscv_csr_aia_pair_helper(rvvm_hart_t* vm, bool smode, uint32_t reg, uint32_t* arr, rvvm_uxlen_t* dest, uint8_t op)
+static bool riscv_csr_aia_pair_helper(rvvm_hart_t* vm, bool smode, uint32_t reg, uint32_t* arr, rvvm_uxlen_t* dest,
+                                      uint8_t op)
 {
     if (vm->rv64 && (reg & 1)) {
         // Only even eip/eie are accessible in 64 bit mode
@@ -551,17 +560,13 @@ static forceinline bool riscv_csr_op_internal(rvvm_hart_t* vm, uint32_t csr_id, 
 
         // User Counters / Timers
         case CSR_CYCLE:
-            return riscv_csr_zero(dest);
-        case CSR_CYCLEH:
-            return riscv_csr_zero_h(vm, dest);
         case CSR_TIME:
-            return riscv_csr_time(vm, dest);
-        case CSR_TIMEH:
-            return riscv_csr_timeh(vm, dest);
         case CSR_INSTRET:
-            return riscv_csr_zero(dest);
+            return riscv_csr_counter(vm, dest, csr_id - CSR_CYCLE);
+        case CSR_CYCLEH:
+        case CSR_TIMEH:
         case CSR_INSTRETH:
-            return riscv_csr_zero_h(vm, dest);
+            return riscv_csr_counter_h(vm, dest, csr_id - CSR_CYCLEH);
 
         // Supervisor Trap Setup
         case CSR_SSTATUS:
@@ -676,12 +681,12 @@ static forceinline bool riscv_csr_op_internal(rvvm_hart_t* vm, uint32_t csr_id, 
         case CSR_MSECCFGH:
             return riscv_csr_helper_h(vm, &vm->csr.mseccfg, dest, CSR_MSECCFG_MASK, op);
 
-        // Machine Memory Protection
+        // TODO: Machine Memory Protection
         case 0x3A0: // pmpcfg0
         case 0x3A1: // pmpcfg1
         case 0x3A2: // pmpcfg2
         case 0x3A3: // pmpcfg3
-            return riscv_csr_zero(dest); // TODO: PMP
+            return riscv_csr_zero(dest);
         case 0x3B0: // pmpaddr0
         case 0x3B1: // pmpaddr1
         case 0x3B2: // pmpaddr2
@@ -698,7 +703,7 @@ static forceinline bool riscv_csr_op_internal(rvvm_hart_t* vm, uint32_t csr_id, 
         case 0x3BD: // pmpaddr13
         case 0x3BE: // pmpaddr14
         case 0x3BF: // pmpaddr15
-            return riscv_csr_zero(dest); // TODO: PMP
+            return riscv_csr_zero(dest);
 
         // Machine Counters/Timers
         case CSR_MCYCLE:
@@ -775,7 +780,6 @@ static forceinline bool riscv_csr_op_internal(rvvm_hart_t* vm, uint32_t csr_id, 
             return riscv_csr_helper(vm, &vm->csr.iselect[RISCV_PRIV_MACHINE], dest, op);
         case CSR_MIREG:
             return riscv_csr_indirect(vm, RISCV_PRIV_MACHINE, vm->csr.iselect[RISCV_PRIV_MACHINE], dest, op);
-
     }
 
     return false;
@@ -785,7 +789,9 @@ bool riscv_csr_op(rvvm_hart_t* vm, uint32_t csr_id, rvvm_uxlen_t* dest, uint8_t 
 {
     if (riscv_csr_readonly(csr_id)) {
         // This is a readonly CSR, only set/clear zero bits is allowed
-        if (unlikely(op == CSR_SWAP || *dest != 0)) return false;
+        if (unlikely(op == CSR_SWAP || *dest != 0)) {
+            return false;
+        }
     }
 
     if (unlikely(riscv_csr_privilege(csr_id) > vm->priv_mode)) {
@@ -810,7 +816,7 @@ void riscv_csr_init(rvvm_hart_t* vm)
     if (vm->rv64) {
 #ifdef USE_RV64
         vm->csr.status = 0xA00000000;
-        vm->csr.isa = CSR_MISA_RV64;
+        vm->csr.isa    = CSR_MISA_RV64;
 #else
         rvvm_warn("Requested RV64 in RV32-only build");
 #endif
