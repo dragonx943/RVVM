@@ -168,6 +168,7 @@ static void seccomp_setup_syscall_filter(bool all_threads) {
      * - Access to filesystem is prohibited
      * - Executing other programs is prohibited
      * - RWX mmap() / mprotect() is prohibited with EINVAL
+     * - IO_URING usage is prohibited
      * - Any unhandled syscall returns ENOSYS
      *
      * Most syscalls are covered under #ifdef:
@@ -849,15 +850,6 @@ static void seccomp_setup_syscall_filter(bool all_threads) {
 #endif
 #ifdef __NR_sched_rr_get_interval_time64
         BPF_SECCOMP_ALLOW_SYSCALL(__NR_sched_rr_get_interval_time64)
-#endif
-#ifdef __NR_io_uring_setup
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_io_uring_setup)
-#endif
-#ifdef __NR_io_uring_enter
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_io_uring_enter)
-#endif
-#ifdef __NR_io_uring_register
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_io_uring_register)
 #endif
 #ifdef __NR_clone3
         BPF_SECCOMP_ALLOW_SYSCALL(__NR_clone3)
