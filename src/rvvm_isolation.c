@@ -236,21 +236,6 @@ static void seccomp_setup_syscall_filter(bool all_threads) {
 #endif
 
         // Common allowed syscalls (Sorted as in uapi/asm-generic/unistd.h)
-#ifdef __NR_io_setup
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_io_setup)
-#endif
-#ifdef __NR_io_destroy
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_io_destroy)
-#endif
-#ifdef __NR_io_submit
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_io_submit)
-#endif
-#ifdef __NR_io_cancel
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_io_cancel)
-#endif
-#ifdef __NR_io_getevents
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_io_getevents)
-#endif
 #ifdef __NR_eventfd
         BPF_SECCOMP_ALLOW_SYSCALL(__NR_eventfd)
 #endif
@@ -404,9 +389,6 @@ static void seccomp_setup_syscall_filter(bool all_threads) {
 #ifdef __NR_set_tid_address
         BPF_SECCOMP_ALLOW_SYSCALL(__NR_set_tid_address)
 #endif
-#ifdef __NR_unshare
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_unshare)
-#endif
 #ifdef __NR_set_robust_list
         BPF_SECCOMP_ALLOW_SYSCALL(__NR_set_robust_list)
 #endif
@@ -445,9 +427,6 @@ static void seccomp_setup_syscall_filter(bool all_threads) {
 #endif
 #ifdef __NR_pause
         BPF_SECCOMP_ALLOW_SYSCALL(__NR_pause)
-#endif
-#ifdef __NR_ptrace
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_ptrace)
 #endif
 #ifdef __NR_sched_setparam
         BPF_SECCOMP_ALLOW_SYSCALL(__NR_sched_setparam)
@@ -599,48 +578,6 @@ static void seccomp_setup_syscall_filter(bool all_threads) {
 #ifdef __NR_sysinfo
         BPF_SECCOMP_ALLOW_SYSCALL(__NR_sysinfo)
 #endif
-#ifdef __NR_mq_open
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_mq_open)
-#endif
-#ifdef __NR_mq_unlink
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_mq_unlink)
-#endif
-#ifdef __NR_mq_timedsend
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_mq_timedsend)
-#endif
-#ifdef __NR_mq_timedreceive
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_mq_timedsend)
-#endif
-#ifdef __NR_mq_notify
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_mq_notify)
-#endif
-#ifdef __NR_mq_getsetattr
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_mq_getsetattr)
-#endif
-#ifdef __NR_mq_msgget
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_mq_msgget)
-#endif
-#ifdef __NR_mq_msgctl
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_mq_msgctl)
-#endif
-#ifdef __NR_mq_msgrcv
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_mq_msgrcv)
-#endif
-#ifdef __NR_mq_msgsnd
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_mq_msgsnd)
-#endif
-#ifdef __NR_semget
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_semget)
-#endif
-#ifdef __NR_semctl
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_semctl)
-#endif
-#ifdef __NR_semtimedop
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_semtimedop)
-#endif
-#ifdef __NR_semop
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_semop)
-#endif
 #ifdef __NR_shmget
         BPF_SECCOMP_ALLOW_SYSCALL(__NR_shmget)
 #endif
@@ -716,8 +653,13 @@ static void seccomp_setup_syscall_filter(bool all_threads) {
         BPF_SECCOMP_ALLOW_SYSCALL(__NR_mremap)
 #endif
 #ifdef __NR_clone
-        // clone() may be used for fork(), but isolation is inherited anyways
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_clone)
+        // Only allow subset of clone() flags required for pthread_create()
+        BPF_JUMP(BPF_JMP + BPF_JEQ + BPF_K, __NR_clone, 0, 5),
+        BPF_STMT(BPF_LD + BPF_W + BPF_ABS, offsetof(struct seccomp_data, args[0])),
+        BPF_STMT(BPF_ALU + BPF_AND + BPF_K, 0x7E026000U),
+        BPF_JUMP(BPF_JMP + BPF_JEQ + BPF_K, 0, 1, 0),
+        BPF_SECCOMP_ERRNO(EINVAL)
+        BPF_STMT(BPF_RET + BPF_K, SECCOMP_RET_ALLOW),
 #endif
 #ifdef __NR_fadvise
         BPF_SECCOMP_ALLOW_SYSCALL(__NR_fadvise)
@@ -791,9 +733,6 @@ static void seccomp_setup_syscall_filter(bool all_threads) {
 #ifdef __NR_memfd_create
         BPF_SECCOMP_ALLOW_SYSCALL(__NR_memfd_create)
 #endif
-#ifdef __NR_userfaultd
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_userfaultd)
-#endif
 #ifdef __NR_membarrier
         BPF_SECCOMP_ALLOW_SYSCALL(__NR_membarrier)
 #endif
@@ -836,23 +775,11 @@ static void seccomp_setup_syscall_filter(bool all_threads) {
 #ifdef __NR_recvmmsg_time64
         BPF_SECCOMP_ALLOW_SYSCALL(__NR_recvmmsg_time64)
 #endif
-#ifdef __NR_mq_timedsend_time64
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_mq_timedsend_time64)
-#endif
-#ifdef __NR_mq_timedreceive_time64
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_mq_timedsend_time64)
-#endif
-#ifdef __NR_semtimedop_time64
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_semtimedop_time64)
-#endif
 #ifdef __NR_rt_sigtimedwait_time64
         BPF_SECCOMP_ALLOW_SYSCALL(__NR_rt_sigtimedwait_time64)
 #endif
 #ifdef __NR_sched_rr_get_interval_time64
         BPF_SECCOMP_ALLOW_SYSCALL(__NR_sched_rr_get_interval_time64)
-#endif
-#ifdef __NR_clone3
-        BPF_SECCOMP_ALLOW_SYSCALL(__NR_clone3)
 #endif
 #ifdef __NR_close_range
         BPF_SECCOMP_ALLOW_SYSCALL(__NR_close_range)
