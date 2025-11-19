@@ -43,8 +43,6 @@ typedef struct rvvm_char_dev rvvm_char_dev_t;
 
 /**
  * Character device callbacks
- *
- * May be set up by both Serial controller / Character device sides
  */
 typedef struct {
     void   (*free)(rvvm_char_dev_t* chardev);
@@ -53,9 +51,9 @@ typedef struct {
 } rvvm_char_cb_t;
 
 /**
- * Create a new character device context, return it's handle
+ * Create a new character device pair (Akin to a pipe)
  */
-RVVM_PUBLIC rvvm_char_dev_t* rvvm_char_init(void);
+RVVM_PUBLIC bool rvvm_char_pair_init(rvvm_char_dev_t** pair);
 
 /**
  * Increment character device reference count
@@ -101,44 +99,6 @@ RVVM_PUBLIC size_t rvvm_char_read(rvvm_char_dev_t* chardev, void* buffer, size_t
  * Write serial data outbound from character device
  */
 RVVM_PUBLIC size_t rvvm_char_write(rvvm_char_dev_t* chardev, const void* buffer, size_t size);
-
-/** @}*/
-
-/**
- * @defgroup rvvm_serial_ctl_api Serial Controller API
- * @addtogroup rvvm_serial_ctl_api
- * @{
- */
-
-/**
- * Register serial controller callbacks
- */
-RVVM_PUBLIC void rvvm_serial_register_cb(rvvm_char_dev_t* serial, const rvvm_char_cb_t* cb);
-
-/**
- * Set private serial controller data
- */
-RVVM_PUBLIC void rvvm_serial_set_data(rvvm_char_dev_t* serial, void* data);
-
-/**
- * Get private serial controller data
- */
-RVVM_PUBLIC void* rvvm_serial_get_data(rvvm_char_dev_t* serial);
-
-/**
- * Poll serial data availability on serial controller side
- */
-RVVM_PUBLIC uint32_t rvvm_serial_poll(rvvm_char_dev_t* serial);
-
-/**
- * Read serial data inbound to serial controller
- */
-RVVM_PUBLIC size_t rvvm_serial_read(rvvm_char_dev_t* serial, void* buffer, size_t size);
-
-/**
- * Write serial data outbound from serial controller
- */
-RVVM_PUBLIC size_t rvvm_serial_write(rvvm_char_dev_t* serial, const void* buffer, size_t size);
 
 /** @}*/
 
