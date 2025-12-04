@@ -16,6 +16,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 /*
  * NOTE: Floating-point is actually subtly (or seriously) broken on many compilers and platforms
  *
+ * For anyone who wants to understand this stuff in detail, the f16/f32/f64 FP types were named like
+ * that for a reason. Look them up in ICD-10, you'll probably get like all of them by the end of it.
+ *
  * Signaling NaNs are silently converted to quit NaNs on 8087 FPU (Legacy x86 FPU before SSE2):
  * - The conversion happens upon storing a 8087 register into memory, together with other transformations
  * - This is possibly the most convoluted issue to fix, and a major reason this library exists at all
@@ -250,6 +253,33 @@ slow_path void fpu_soft_fenv_check_mul64(fpu_f64_t sum, fpu_f64_t a, fpu_f64_t b
 /*
  * Floating-point bitcasts
  */
+
+static forceinline uint16_t fpu_bit_f16_to_u16(fpu_f16_t f)
+{
+#if defined(USE_SOFT_FPU_WRAP) && defined(USE_SOFT_FPU_ENCAP)
+    return f.scalar;
+#elif defined(USE_SOFT_FPU_WRAP)
+    return f;
+#else
+    uint16_t u;
+    memcpy(&u, &f, sizeof(f));
+    return u;
+#endif
+}
+
+static forceinline fpu_f16_t fpu_bit_u16_to_f16(uint16_t u)
+{
+#if defined(USE_SOFT_FPU_WRAP) && defined(USE_SOFT_FPU_ENCAP)
+    fpu_f16_t ret = {.scalar = u};
+    return ret;
+#elif defined(USE_SOFT_FPU_WRAP)
+    return u;
+#else
+    fpu_f16_t f;
+    memcpy(&f, &u, sizeof(f));
+    return f;
+#endif
+}
 
 static forceinline uint32_t fpu_bit_f32_to_u32(fpu_f32_t f)
 {
@@ -905,6 +935,44 @@ static forceinline fpu_f64_t fpu_fma64(fpu_f64_t a, fpu_f64_t b, fpu_f64_t c)
     fpu_f64_t ret = fpu_add64(sum, err);
     return ret;
 #endif
+}
+
+// NOTE: Must be called with positive input
+static inline fpu_f32_t fpu_sqrt32_soft_internal(fpu_f32_t f)
+{
+    // Evil floating point bit level hacking
+    // Approximates sqrtf() to 8 significant bits
+    fpu_f32_t x = fpu_bit_u32_to_f32(0x1FBD1DF5U + (fpu_bit_f32_to_u32(f) >> 1));
+    // Newton algorithm iteration: Almost 17 significant bits
+    x = fpu_wrap_f32((fpu_raw_f32(f) / fpu_raw_f32(x) + fpu_raw_f32(x)) * 0.5f);
+    // Newton algorithm iteration: Almost 35 significant bits
+    x = fpu_wrap_f32((fpu_raw_f32(f) / fpu_raw_f32(x) + fpu_raw_f32(x)) * 0.5f);
+#if !defined(USE_SOFT_FPU_FENV)
+    // Clear NX flag set by previous Newton iterations
+    fpu_clear_exceptions(FPU_LIB_FLAG_NX);
+#endif
+    // This either produces an exact result, or within 1 ulp and sets NX flag
+    x = fpu_wrap_f32((fpu_raw_f32(f) / fpu_raw_f32(x) + fpu_raw_f32(x)) * 0.5f);
+    return x;
+}
+
+// NOTE: Must be called with positive input
+static inline fpu_f64_t fpu_sqrt64_soft_internal(fpu_f64_t f)
+{
+    fpu_f64_t x = fpu_bit_u64_to_f64(0x1FF7A3BEA91D9B1BULL + (fpu_bit_f64_to_u64(f) >> 1));
+    // Newton algorithm iterations
+    x = fpu_wrap_f64((fpu_raw_f64(f) / fpu_raw_f64(x) + fpu_raw_f64(x)) * 0.5);
+    x = fpu_wrap_f64((fpu_raw_f64(f) / fpu_raw_f64(x) + fpu_raw_f64(x)) * 0.5);
+    x = fpu_wrap_f64((fpu_raw_f64(f) / fpu_raw_f64(x) + fpu_raw_f64(x)) * 0.5);
+#if !defined(USE_SOFT_FPU_FENV)
+    fpu_clear_exceptions(FPU_LIB_FLAG_NX);
+#endif
+    x = fpu_wrap_f64((fpu_raw_f64(f) / fpu_raw_f64(x) + fpu_raw_f64(x)) * 0.5);
+    if (!fpu_is_bit_equal64(f, fpu_wrap_f64(fpu_raw_f64(x) * fpu_raw_f64(x)))) {
+        // Fixup lowest mantissa bit
+        x = fpu_bit_u64_to_f64(fpu_bit_f64_to_u64(x) | 1);
+    }
+    return x;
 }
 
 static forceinline fpu_f32_t fpu_sqrt32(fpu_f32_t f)
