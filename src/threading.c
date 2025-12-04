@@ -468,6 +468,8 @@ static bool thread_futex_wait_native(void* ptr, uint32_t val, uint64_t timeout_n
         timeout_us = EVAL_MAX(timeout_us, 1);
     }
     return ulock_wait && ulock_wait(ULOCK_CMP_WAIT, ptr, val, timeout_us) >= 0;
+#elif defined(__wasm__) && GNU_BUILTIN(__builtin_wasm_memory_atomic_wait32)
+    return !__builtin_wasm_memory_atomic_wait32(ptr, val, timeout_ns);
 #else
     UNUSED(ptr);
     UNUSED(val);
@@ -486,6 +488,8 @@ static bool thread_futex_wake_native(void* ptr, uint32_t num)
     return futex(ptr, FUTEX_WAKE, num, NULL, NULL) >= 0;
 #elif defined(APPLE_FUTEX_IMPL)
     return ulock_wake && ulock_wake((num > 1) ? ULOCK_WAKE_ALL : ULOCK_WAKE_ONE, ptr, 0) >= 0;
+#elif defined(__wasm__) && GNU_BUILTIN(__builtin_wasm_memory_atomic_wait32)
+    return __builtin_wasm_memory_atomic_notify(ptr, num) >= 0;
 #else
     UNUSED(ptr);
     UNUSED(num);
