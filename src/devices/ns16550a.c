@@ -239,6 +239,7 @@ PUBLIC rvvm_mmio_dev_t* ns16550a_init(rvvm_machine_t* machine, chardev_t* charde
     fdt_node_add_prop_u32(uart_fdt, "fifo-size", 16);
     fdt_node_add_prop_str(uart_fdt, "status", "okay");
     rvvm_fdt_describe_irq(uart_fdt, intc, irq);
+    fdt_node_add_prop(uart_fdt, "wakeup-source", NULL, 0);
     fdt_node_add_child(rvvm_get_fdt_soc(machine), uart_fdt);
 #endif
     return mmio;
