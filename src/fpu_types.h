@@ -50,12 +50,18 @@ typedef double actual_double_t;
  * Scalar floating-point storage typedefs
  */
 
+typedef uint16_t fpu_scalar_f16_t;
+
 #if defined(USE_SOFT_FPU_WRAP)
+
 typedef uint32_t fpu_scalar_f32_t;
 typedef uint64_t fpu_scalar_f64_t;
+
 #else
+
 typedef actual_float_t  fpu_scalar_f32_t;
 typedef actual_double_t fpu_scalar_f64_t;
+
 #endif
 
 /*
@@ -63,6 +69,11 @@ typedef actual_double_t fpu_scalar_f64_t;
  */
 
 #if defined(USE_SOFT_FPU_ENCAP)
+
+typedef struct {
+    fpu_scalar_f16_t scalar;
+} fpu_f16_t;
+
 typedef struct {
     fpu_scalar_f32_t scalar;
 } fpu_f32_t;
@@ -70,9 +81,13 @@ typedef struct {
 typedef struct {
     fpu_scalar_f64_t scalar;
 } fpu_f64_t;
+
 #else
+
+typedef fpu_scalar_f16_t fpu_f16_t;
 typedef fpu_scalar_f32_t fpu_f32_t;
 typedef fpu_scalar_f64_t fpu_f64_t;
+
 #endif
 
 BUILD_ASSERT(sizeof(fpu_f32_t) == sizeof(actual_float_t));
