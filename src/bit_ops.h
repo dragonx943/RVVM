@@ -422,12 +422,12 @@ static inline uint64_t mulh_uint64(int64_t a, int64_t b)
 #elif defined(HOST_64BIT) && defined(_MSC_VER)
     return __mulh(a, b);
 #else
-    int64_t lo_lo = (a & 0xFFFFFFFF) * (b & 0xFFFFFFFF);
-    int64_t hi_lo = (a >> 32) * (b & 0xFFFFFFFF);
-    int64_t lo_hi = (a & 0xFFFFFFFF) * (b >> 32);
-    int64_t hi_hi = (a >> 32) * (b >> 32);
-    int64_t cross = (lo_lo >> 32) + (hi_lo & 0xFFFFFFFF) + lo_hi;
-    return (hi_lo >> 32) + (cross >> 32) + hi_hi;
+    uint64_t lo_lo = (a & 0xFFFFFFFF) * (b & 0xFFFFFFFF);
+    uint64_t hi_lo = (a >> 32) * (b & 0xFFFFFFFF);
+    uint64_t lo_hi = (a & 0xFFFFFFFF) * (b >> 32);
+    uint64_t hi_hi = (a >> 32) * (b >> 32);
+    uint64_t cross = (uint64_t)((int64_t)lo_lo >> 32) + (hi_lo & 0xFFFFFFFF) + lo_hi;
+    return (uint64_t)((int64_t)hi_lo >> 32) + (cross >> 32) + hi_hi;
 #endif
 }
 
@@ -454,12 +454,12 @@ static inline uint64_t mulhsu_uint64(int64_t a, uint64_t b)
 #if defined(INT128_SUPPORT) || (defined(HOST_64BIT) && defined(_MSC_VER))
     return mulhu_uint64(a, b) - (a >= 0 ? 0 : b);
 #else
-    int64_t  lo_lo = (a & 0xFFFFFFFF) * (b & 0xFFFFFFFF);
-    int64_t  hi_lo = (a >> 32) * (b & 0xFFFFFFFF);
-    int64_t  lo_hi = (a & 0xFFFFFFFF) * (b >> 32);
-    int64_t  hi_hi = (a >> 32) * (b >> 32);
-    uint64_t cross = (lo_lo >> 32) + (hi_lo & 0xFFFFFFFF) + lo_hi;
-    return (hi_lo >> 32) + (cross >> 32) + hi_hi;
+    uint64_t lo_lo = (a & 0xFFFFFFFF) * (b & 0xFFFFFFFF);
+    uint64_t hi_lo = (a >> 32) * (b & 0xFFFFFFFF);
+    uint64_t lo_hi = (a & 0xFFFFFFFF) * (b >> 32);
+    uint64_t hi_hi = (a >> 32) * (b >> 32);
+    uint64_t cross = (uint64_t)((int64_t)lo_lo >> 32) + (hi_lo & 0xFFFFFFFF) + lo_hi;
+    return (uint64_t)((int64_t)hi_lo >> 32) + (cross >> 32) + hi_hi;
 #endif
 }
 
