@@ -878,7 +878,7 @@ static bool workqueue_try_perform(work_queue_t* wq)
         int32_t      diff     = (int32_t)seq - (int32_t)(tail + 1);
         if (diff == 0) {
             // This is a filled task slot
-            if (atomic_cas_uint32_ex(&wq->tail, tail, tail + 1, true, ATOMIC_RELAXED, ATOMIC_RELAXED)) {
+            if (atomic_cas_uint32_try(&wq->tail, tail, tail + 1, true, ATOMIC_RELAXED)) {
                 // We claimed the slot
                 task_item_t task = wq->tasks[tail & WORKQUEUE_MASK];
 
@@ -914,7 +914,7 @@ static bool workqueue_submit(work_queue_t* wq, thread_func_t func, void** arg, u
         int32_t      diff     = (int32_t)seq - (int32_t)head;
         if (diff == 0) {
             // This is an empty task slot
-            if (atomic_cas_uint32_ex(&wq->head, head, head + 1, true, ATOMIC_RELAXED, ATOMIC_RELAXED)) {
+            if (atomic_cas_uint32_try(&wq->head, head, head + 1, true, ATOMIC_RELAXED)) {
                 // We claimed the slot, fill it with data
                 task_ptr->func = func;
                 for (size_t i = 0; i < arg_count; ++i) {
