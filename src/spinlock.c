@@ -73,21 +73,20 @@ static inline bool spin_try_claim_lock(spinlock_t* lock, const char* location, b
     if (writer) {
         uint32_t exp = SPINLOCK_QUIESCENT;
         uint32_t val = SPINLOCK_HAS_WRITER | waiters;
-        if (likely(atomic_cas_uint32_ex(&lock->flag, exp, val, false, ATOMIC_ACQUIRE, ATOMIC_RELAXED))) {
+        if (likely(atomic_cas_uint32_try(&lock->flag, exp, val, false, ATOMIC_ACQUIRE))) {
             SPINLOCK_MARK_LOCATION(lock, location);
             return true;
         }
         return false;
     } else {
-        uint32_t prev;
+        uint32_t prev = atomic_load_uint32_relax(&lock->flag);
         uint32_t new;
         do {
-            prev = atomic_load_uint32_ex(&lock->flag, ATOMIC_RELAXED);
             if (unlikely(!spin_lock_possibly_available(prev, false))) {
                 return false;
             }
             new = (prev + 2) | waiters;
-        } while (!atomic_cas_uint32_ex(&lock->flag, prev, new, true, ATOMIC_ACQUIRE, ATOMIC_RELAXED));
+        } while (!atomic_cas_uint32_ex(&lock->flag, &prev, new, true, ATOMIC_ACQUIRE, ATOMIC_RELAXED));
         return true;
     }
 }

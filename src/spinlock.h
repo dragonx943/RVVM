@@ -80,7 +80,7 @@ slow_path void spin_read_lock_wake(spinlock_t* lock, uint32_t prev);
 
 static forceinline bool spin_try_lock_internal(spinlock_t* lock, const char* location)
 {
-    if (likely(atomic_cas_uint32_ex(&lock->flag, 0x0, 0x1, false, ATOMIC_ACQUIRE, ATOMIC_RELAXED))) {
+    if (likely(atomic_cas_uint32_try(&lock->flag, 0x0, 0x1, false, ATOMIC_ACQUIRE))) {
         SPINLOCK_MARK_LOCATION(lock, location);
         return true;
     }
@@ -89,8 +89,8 @@ static forceinline bool spin_try_lock_internal(spinlock_t* lock, const char* loc
 
 static forceinline void spin_lock_internal(spinlock_t* lock, const char* location, uint8_t flags)
 {
-    // Use weaker CAS in fast path
-    if (likely(atomic_cas_uint32_ex(&lock->flag, 0x0, 0x1, true, ATOMIC_ACQUIRE, ATOMIC_RELAXED))) {
+    // Use weak CAS in fast path
+    if (likely(atomic_cas_uint32_try(&lock->flag, 0x0, 0x1, true, ATOMIC_ACQUIRE))) {
         SPINLOCK_MARK_LOCATION(lock, location);
     } else {
         spin_lock_wait(lock, location, flags);
@@ -127,14 +127,13 @@ static forceinline void spin_unlock(spinlock_t* lock)
 // Try to claim the reader lock
 static forceinline bool spin_try_read_lock(spinlock_t* lock)
 {
-    uint32_t prev;
+    uint32_t prev = atomic_load_uint32_relax(&lock->flag);
     do {
-        prev = atomic_load_uint32_relax(&lock->flag);
         if (unlikely(prev & 0x80000001U)) {
             // Writer owns the lock, writer waiters are present or too much readers (sic!)
             return false;
         }
-    } while (!atomic_cas_uint32_ex(&lock->flag, prev, prev + 0x2, true, ATOMIC_ACQUIRE, ATOMIC_RELAXED));
+    } while (!atomic_cas_uint32_ex(&lock->flag, &prev, prev + 0x2, true, ATOMIC_ACQUIRE, ATOMIC_RELAXED));
     return true;
 }
 
