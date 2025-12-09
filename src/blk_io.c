@@ -166,14 +166,13 @@ struct blk_io_rvfile {
 
 static inline void rvfile_grow_internal(rvfile_t* file, uint64_t length)
 {
-    uint64_t file_size = 0;
+    uint64_t file_size = atomic_load_uint64(&file->size);
     do {
-        file_size = atomic_load_uint64(&file->size);
         if (file_size >= length) {
             // File is already big enough
             break;
         }
-    } while (!atomic_cas_uint64(&file->size, file_size, length));
+    } while (!atomic_cas_uint64_loop(&file->size, &file_size, length));
 }
 
 rvfile_t* rvopen(const char* filepath, uint32_t filemode)
