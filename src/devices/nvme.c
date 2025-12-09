@@ -195,16 +195,15 @@ typedef struct {
 // Helper for head/tail manipulation on dequeue/enqueue
 static inline uint32_t nvme_queue_next(uint32_t* head_or_tail, uint32_t queue_size)
 {
-    uint32_t entry = 0;
+    uint32_t entry = atomic_load_uint32(head_or_tail);
     uint32_t next  = 0;
     do {
-        entry = atomic_load_uint32_relax(head_or_tail);
         if (entry >= queue_size) {
             next = 0;
         } else {
             next = entry + 1;
         }
-    } while (!atomic_cas_uint32_ex(head_or_tail, entry, next, true, ATOMIC_RELAXED, ATOMIC_RELAXED));
+    } while (!atomic_cas_uint32_loop(head_or_tail, &entry, next));
     return entry;
 }
 
