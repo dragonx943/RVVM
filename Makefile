@@ -848,8 +848,10 @@ endif
 
 # Set compiler-specific optimization options
 # Enable -O2 unless USE_DEBUG_FULL is set, which enables -O0
-# Default to -march=i586 for 32-bit x86
 # Enable -flto=auto on GCC 5.0+, -flto on Clang 5.0+
+#
+# i386:  Target i586 (Pentium I) by default
+# ARM64: Disable outline atomics to prevent intrinsic call site intrusion
 #
 # Non-ELF targets (Windows, AmigaOS):
 # Enable -flto-incremental on GCC 15.0+
@@ -860,6 +862,8 @@ endif
 override OPTIMIZE_OPTS := $(strip $(OPTIMIZE_OPTS) \
 $(if $(filter i386,$(ARCH)), \
   $(if $(call gnuc_min_ver,3.0),$(if $(filter -march% -msse% -mfpmath%,$(CFLAGS)),,-march=i586))) \
+$(if $(filter arm64,$(ARCH)), \
+  $(if $(call gnuc_min_ver,9.0)$(call clang_min_ver,13.0),-mno-outline-atomics)) \
 $(if $(LTO_SUPPORTED), \
   $(if $(call gcc_min_ver,5.0),-flto=auto) \
   $(if $(call clang_min_ver,5.0),-flto)) \
