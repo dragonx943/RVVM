@@ -10,6 +10,77 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef LEKKIT_ATOMICS_H
 #define LEKKIT_ATOMICS_H
 
+/*
+ * C11 atomics cheat sheet (LekKit, 2025):
+ *
+ * Atomic operations are classified as following:
+ * - Load:  An indivisible read from variable in memory
+ * - Store: An indivisible write from variable in memory.
+ * - RMW:   An indivisible read-modify-write on variable in memory.
+ *          This includes operations like cas, swap, add, xor.
+ *
+ * An atomic load will never observe a half-written (torn) value.
+ * An atomic store will never intervene with an in-progress atomic read-modify-write.
+ * Read-modify-write operations are usually fairly more expensive than loads or stores.
+ *
+ * Both atomic and non-atomic memory accesses to different objects are subject to global reordering
+ * for other observers, despite appearing completely sequential from the viewpoint of the current thread.
+ * Accessing the same atomic variable is guaranteed to happen in a correct order regardless.
+ *
+ * To ensure correct order of operations on complex data structures, memory ordering is used.
+ * Stronger memory ordering provides more guarantees, but is more expensive.
+ *
+ * The following types of reordering are done by compilers and CPUs:
+ * - LoadLoad:   Loads are reordered after loads
+ * - LoadStore:  Loads are reordered after stores
+ * - StoreStore: Stores are reordered after stores
+ * - StoreLoad:  Stores are reordered after loads, happens even on x86
+ *
+ * The following memory ordering may be applied on fences/atomics:
+ * - RELAXED ordering implies no global ordering of the operation on it's own.
+ *   Relaxed operations on the same atomic variable are always ordered correctly.
+ *
+ * - ACQUIRE ordering prevents LoadLoad and LoadStore reordering.
+ *   An acquire fence orders preceeding loads before subsequent loads and stores.
+ *   An acquire load, together with preceeding loads, completes before subsequent loads and stores.
+ *
+ * - RELEASE ordering prevents StoreStore and LoadStore reordering.
+ *   A release fence orders preceeding loads and stores before subsequent stores.
+ *   A release store, together with subsequent stores, completes after previous loads and stores.
+ *
+ * - ACQ_REL ordering prevents LoadLoad, LoadStore and StoreStore reordering.
+ *   An acq_rel fence orders preceeding loads before subsequent loads and stores.
+ *   An acq_rel fence orders preceeding loads and stores before subsequent stores.
+ *   An acq_rel rmw atomic completes after previous loads and stores, and before subsequent loads and stores.
+ *   This in turn implies that, specifically for read-modify-write atomics, acq_rel == seq_cst.
+ *
+ * - SEQ_CST ordering prevents any reordering, including StoreLoad, providing full sequential consistency.
+ *   A seq_cst fence orders preceeding loads and stores before subsequent loads and stores.
+ *   This usually implies a store buffer drain on actual hardware implementations, which is expensive.
+ *   Sequential consistency is usually only necessary for RCU or similar non-locking primitives.
+ *
+ * - CONSUME ordering is a special one in regard to atomic pointer loads.
+ *   A consume load of a pointer is ordered before accesses to data via that pointer.
+ *   This is usually already provided by RELAXED ordering, except on DEC Alpha machines...
+ *
+ * I do _NOT_ recommend to put seq_cst on atomics directly, as the standard _only_
+ * guarantees sequential consistency in regard with other seq_cst atomic operations.
+ * The implementations therefore are taking shortcuts, and instead of a (intuitive)
+ * store buffer drain fence after SEQ_CST store, are doing something else, which doesn't
+ * interact with non-seq_cst operations in a straightforward way, not to mention inefficiency.
+ *
+ * A seq_cst fence should be used in case of specific algorithm requiring a StoreLoad barrier.
+ *
+ * For this reason, this library sensibly defaults to the following:
+ * - ACQUIRE semantics on loads, which is for free on x86 and not very expensive otherwise
+ * - RELEASE semantics on stores, which is for free on x86 and not very expensive otherwise
+ * - ACQ_REL semantics on read-modify-write operations, which are heavyweight either way
+ *
+ * CAS (Compare and Swap) operation is semantically a load upon failure, and it's
+ * failure memory ordering will usually be relaxed, unless the original fetched value
+ * is used in a way that should be globally ordered. This is rarely the case.
+ */
+
 // We only need a minimal WinAPI subset
 #undef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN 1
@@ -165,38 +236,6 @@ static forceinline void atomic_compiler_barrier(void)
 #endif
 }
 
-/*
- * There are four types of memory reordering, done by compilers and CPUs:
- * - LoadLoad:   Loads are reordered after loads
- * - LoadStore:  Loads are reordered after stores
- * - StoreStore: Stores are reordered after stores
- * - StoreLoad:  Stores are reordered after loads, happens even on x86
- *
- * C11 memory ordering cheat sheet (LekKit, 2024):
- * - ACQUIRE fence prevents LoadLoad.
- *   An acquire load completes before any subsequent loads.
- *
- * - RELEASE fence prevents LoadStore and StoreStore.
- *   A release store completes after any previous loads and stores.
- *
- * - ACQ_REL fence prevents LoadLoad, LoadStore and StoreStore.
- *   An acq_rel RMW atomic completes after any previous loads and stores, and
- *   before any subsequent loads.
- *
- * - SEQ_CST fence prevents any reordering, including StoreLoad.
- *   This provides full sequential consistency, which is usually unnecessary,
- *   unless implementing RCU or similar non-locking primitives.
- *
- * Successful CAS operations act as an RMW operation, whereas failed CAS acts
- * as a load of the original value. The failure ordering thus only may be
- * relaxed/acquire, and should be relaxed if the original value isn't used.
- *
- * It should be noted that memory reordering has nothing to do with coherency,
- * and does not affect loads/stores to the same memory location.
- * Relaxed operations on a single atomic variable are going to be ordered
- * correctly regardless, as opposed to complex shared data structures.
- */
-
 static forceinline void atomic_fence_ex(int memorder)
 {
     UNUSED(memorder);
@@ -308,7 +347,7 @@ static forceinline bool atomic_cas_uint32_ex(void* addr, uint32_t* exp, uint32_t
 // Useful for RMW CAS loops
 static forceinline bool atomic_cas_uint32_loop(void* addr, uint32_t* exp, uint32_t val)
 {
-    return atomic_cas_uint32_ex(addr, exp, val, true, ATOMIC_RELEASE, ATOMIC_ACQUIRE);
+    return atomic_cas_uint32_ex(addr, exp, val, true, ATOMIC_ACQ_REL, ATOMIC_RELAXED);
 }
 
 // Useful for performing A->B transition on known values
@@ -332,7 +371,7 @@ static forceinline uint32_t atomic_swap_uint32_ex(void* addr, uint32_t val, int 
 #elif defined(WIN32_ATOMICS_IMPL)
     return InterlockedExchange((LONG*)addr, val);
 #else
-    uint32_t tmp = atomic_load_uint32(addr);
+    uint32_t tmp = atomic_load_uint32_relax(addr);
     while (!atomic_cas_uint32_loop(addr, &tmp, val)) {
     }
     return tmp;
@@ -377,7 +416,7 @@ static forceinline uint32_t atomic_add_uint32_ex(void* addr, uint32_t val, int m
 #elif defined(SYNC_ATOMICS_IMPL)
     return __sync_fetch_and_add((uint32_t*)addr, val);
 #else
-    uint32_t tmp = atomic_load_uint32(addr);
+    uint32_t tmp = atomic_load_uint32_relax(addr);
     while (!atomic_cas_uint32_loop(addr, &tmp, tmp + val)) {
     }
     return tmp;
@@ -401,7 +440,7 @@ static forceinline uint32_t atomic_sub_uint32_ex(void* addr, uint32_t val, int m
 #elif defined(SYNC_ATOMICS_IMPL)
     return __sync_fetch_and_sub((uint32_t*)addr, val);
 #else
-    uint32_t tmp = atomic_load_uint32(addr);
+    uint32_t tmp = atomic_load_uint32_relax(addr);
     while (!atomic_cas_uint32_loop(addr, &tmp, tmp - val)) {
     }
     return tmp;
@@ -425,7 +464,7 @@ static forceinline uint32_t atomic_and_uint32_ex(void* addr, uint32_t val, int m
 #elif defined(SYNC_ATOMICS_IMPL)
     return __sync_fetch_and_and((uint32_t*)addr, val);
 #else
-    uint32_t tmp = atomic_load_uint32(addr);
+    uint32_t tmp = atomic_load_uint32_relax(addr);
     while (!atomic_cas_uint32_loop(addr, &tmp, tmp & val)) {
     }
     return tmp;
@@ -449,7 +488,7 @@ static forceinline uint32_t atomic_xor_uint32_ex(void* addr, uint32_t val, int m
 #elif defined(SYNC_ATOMICS_IMPL)
     return __sync_fetch_and_xor((uint32_t*)addr, val);
 #else
-    uint32_t tmp = atomic_load_uint32(addr);
+    uint32_t tmp = atomic_load_uint32_relax(addr);
     while (!atomic_cas_uint32_loop(addr, &tmp, tmp ^ val)) {
     }
     return tmp;
@@ -473,7 +512,7 @@ static forceinline uint32_t atomic_or_uint32_ex(void* addr, uint32_t val, int me
 #elif defined(SYNC_ATOMICS_IMPL)
     return __sync_fetch_and_or((uint32_t*)addr, val);
 #else
-    uint32_t tmp = atomic_load_uint32(addr);
+    uint32_t tmp = atomic_load_uint32_relax(addr);
     while (!atomic_cas_uint32_loop(addr, &tmp, tmp | val)) {
     }
     return tmp;
@@ -570,7 +609,7 @@ static forceinline bool atomic_cas_uint64_ex(void* addr, uint64_t* exp, uint64_t
 // Useful for RMW CAS loops
 static forceinline bool atomic_cas_uint64_loop(void* addr, uint64_t* exp, uint64_t val)
 {
-    return atomic_cas_uint64_ex(addr, exp, val, true, ATOMIC_RELEASE, ATOMIC_ACQUIRE);
+    return atomic_cas_uint64_ex(addr, exp, val, true, ATOMIC_ACQ_REL, ATOMIC_RELAXED);
 }
 
 // Useful for performing A->B transition on known values
@@ -594,7 +633,7 @@ static forceinline uint64_t atomic_swap_uint64_ex(void* addr, uint64_t val, int 
 #elif defined(WIN32_ATOMICS_IMPL)
     return InterlockedExchange64((LONG64*)addr, val);
 #else
-    uint64_t tmp = atomic_load_uint64(addr);
+    uint64_t tmp = atomic_load_uint64_relax(addr);
     while (!atomic_cas_uint64_loop(addr, &tmp, val)) {
     }
     return tmp;
@@ -639,7 +678,7 @@ static forceinline uint64_t atomic_add_uint64_ex(void* addr, uint64_t val, int m
 #elif defined(SYNC_ATOMICS_IMPL)
     return __sync_fetch_and_add((uint64_t*)addr, val);
 #else
-    uint64_t tmp = atomic_load_uint64(addr);
+    uint64_t tmp = atomic_load_uint64_relax(addr);
     while (!atomic_cas_uint64_loop(addr, &tmp, tmp + val)) {
     }
     return tmp;
@@ -663,7 +702,7 @@ static forceinline uint64_t atomic_sub_uint64_ex(void* addr, uint64_t val, int m
 #elif defined(SYNC_ATOMICS_IMPL)
     return __sync_fetch_and_sub((uint64_t*)addr, val);
 #else
-    uint64_t tmp = atomic_load_uint64(addr);
+    uint64_t tmp = atomic_load_uint64_relax(addr);
     while (!atomic_cas_uint64_loop(addr, &tmp, tmp - val)) {
     }
     return tmp;
@@ -687,7 +726,7 @@ static forceinline uint64_t atomic_and_uint64_ex(void* addr, uint64_t val, int m
 #elif defined(SYNC_ATOMICS_IMPL)
     return __sync_fetch_and_and((uint64_t*)addr, val);
 #else
-    uint64_t tmp = atomic_load_uint64(addr);
+    uint64_t tmp = atomic_load_uint64_relax(addr);
     while (!atomic_cas_uint64_loop(addr, &tmp, tmp & val)) {
     }
     return tmp;
@@ -711,7 +750,7 @@ static forceinline uint64_t atomic_xor_uint64_ex(void* addr, uint64_t val, int m
 #elif defined(SYNC_ATOMICS_IMPL)
     return __sync_fetch_and_xor((uint64_t*)addr, val);
 #else
-    uint64_t tmp = atomic_load_uint64(addr);
+    uint64_t tmp = atomic_load_uint64_relax(addr);
     while (!atomic_cas_uint64_loop(addr, &tmp, tmp ^ val)) {
     }
     return tmp;
@@ -735,7 +774,7 @@ static forceinline uint64_t atomic_or_uint64_ex(void* addr, uint64_t val, int me
 #elif defined(SYNC_ATOMICS_IMPL)
     return __sync_fetch_and_or((uint64_t*)addr, val);
 #else
-    uint64_t tmp = atomic_load_uint64(addr);
+    uint64_t tmp = atomic_load_uint64_relax(addr);
     while (!atomic_cas_uint64_loop(addr, &tmp, tmp | val)) {
     }
     return tmp;
