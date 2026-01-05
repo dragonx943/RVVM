@@ -11,7 +11,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define LEKKIT_ATOMICS_H
 
 /*
- * Cheat sheet on C11 atomics and commmon CPU memory models (LekKit, 2025):
+ * Cheat sheet on C11 atomics and common CPU memory models (LekKit, 2025):
  *
  * Atomic operations are classified as following:
  * - Load:  An indivisible read from variable in memory
@@ -23,25 +23,24 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  * An atomic store will never disturb an in-progress atomic read-modify-write.
  * Read-modify-write operations are usually way more expensive than loads or stores.
  *
- * Both atomic and non-atomic memory accesses to different objects are subject to global reordering
- * for other observers, despite appearing completely sequential from local execution viewpoint.
- *
- * Access to the same atomic variable is guaranteed to participate in a global order, however,
- * without any other synchronisation mechanism it is possible to observe stale stores.
+ * Memory accesses to different objects are subject to global reordering for other observers,
+ * despite appearing completely sequential from local execution viewpoint.
+ * Relaxed atomic access to the same variable is guaranteed to participate in a single modification order,
+ * but without any other synchronisation mechanism it is possible to observe not the most recent value.
  *
  * The following types of reordering are done by compilers and CPUs:
  * - LoadLoad:   Later loads  may be retired before earlier loads
  * - LoadStore:  Later stores may be retired before earlier loads
  * - StoreStore: Later stores may be retired before earlier stores
  * - StoreLoad:  Later loads  may be retired before earlier stores
- * The StoreLoad reordering happens even under strong memory model, e.g. x86 TSO.
+ * The StoreLoad reordering is allowed even under strong memory model, e.g. x86 TSO.
  *
  * The different models on how an issued store to memory will become visible to observers:
- * - Multi-copy atomic:     Store becomes locally visible before _simultaneously_ becoming visible to all
- *                          other observers. This a common memory model for _most_ hardware implementations.
+ * - Multi-copy atomic:     Store becomes locally visible, then _simultaneously_ becomes visible to all
+ *                          other observers. This a common memory model for many hardware implementations.
  *
  * - Non-multi-copy-atomic: Store becomes visible to different observers at arbitrary points in time.
- *                          This happens on POWER CPUs, and is possible under C11 memory model.
+ *                          This happens on pre-POWER9 CPUs, and is possible under C11 memory model.
  *
  * To ensure correct order of operations on complex data structures, memory ordering is used.
  * Stronger memory ordering provides more guarantees, but is more expensive.
@@ -51,41 +50,43 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  *   Yet, relaxed operations on the same atomic variable are always ordered correctly.
  *
  * - ACQUIRE ordering prevents LoadLoad and LoadStore reordering.
- *   An acquire fence orders subsequent loads and stores after preceeding loads.
+ *   An acquire fence orders preceding loads before subsequent loads and stores.
  *   An acquire load completes before subsequent loads and stores.
  *
  * - RELEASE ordering prevents StoreStore and LoadStore reordering.
- *   A release fence orders subsequent stores after preceeding loads and stores.
+ *   A release fence orders subsequent stores after preceding loads and stores.
  *   A release store completes after previous loads and stores.
  *
  * - ACQ_REL ordering prevents LoadLoad, LoadStore and StoreStore reordering.
- *   An acq_rel fence orders subsequent loads and stores after preceeding loads.
- *   An acq_rel fence orders subsequent stores after preceeding loads and stores.
- *   An acq_rel rmw atomic completes after previous loads and stores and before subsequent
- *   loads and stores, but there is no ordering in-between their load/store sides.
+ *   An acq_rel fence orders subsequent loads and stores after preceding loads.
+ *   An acq_rel fence orders subsequent stores after preceding loads and stores.
+ *   An acq_rel RMW atomic acts as if release ordering applies to operations that
+ *   precede it, and acquire ordering applies to operations that follow it.
+ *   On non-multi-copy-atomic implementations, other threads may only observe the final store.
  *
  * - CONSUME ordering is a special one in regard to atomic pointer loads and data dependencies.
- *   A consume load of a pointer is ordered before accesses to data via that pointer, which requires a hardware
- *   barrier on DEC Alpha, but is problematic for contemporary compilers. Prefer to explicitly use RCU instead.
+ *   A consume load of a pointer is ordered before accesses to data via that pointer.
+ *   This matters on DEC Alpha, but contemporary compilers implement it inefficiently.
+ *   Prefer to explicitly use RCU instead.
  *
- * - SEQ_CST ordering prevents any reordering, including StoreLoad, providing full sequential consistency.
+ * - SEQ_CST ordering prevents any reordering, providing full sequential consistency.
  *   All seq_cst atomics/fences are interleaved in a global, sequentially consistent order with each other.
  *   This usually implies a store buffer drain or equivalent global ordering HW mechanism, which is expensive.
- *   Sequential consistency is usually seldom needed, for example for RCU reader side w/o remote barriers.
+ *   Sequential consistency is usually seldom needed, but is desirable for some very specific algorithms.
  *
  * Under assumption of non-multi-copy-atomic model, only observing a release store
  * via an acquire load will establish any order for it with subsequent operations.
  * This is why the C11 standard semantically words acquire/release as "pairs-with" ordering.
- * Naturally, seq_сst ordering provides multi-copy atomicity regardless.
+ * Naturally, seq_cst ordering provides multi-copy atomicity regardless.
  *
  * This library sensibly defaults to the following:
  * - ACQUIRE semantics on loads,  which is "for free" on x86 and not very expensive otherwise
  * - RELEASE semantics on stores, which is "for free" on x86 and not very expensive otherwise
  * - ACQ_REL semantics on read-modify-write operations, which are heavyweight either way
  *
- * CAS (Compare and Swap) operation is semantically a load upon failure, and it's
- * failure memory ordering will usually be relaxed, unless the original fetched value
- * is used in a way that should be globally ordered. This is rarely the case.
+ * CAS (Compare and Swap) operation is semantically a load upon failure, and its failure
+ * memory ordering should usually be relaxed, unless the original fetched value is used
+ * in a way that should be globally ordered. This is rarely the case.
  */
 
 // We only need a minimal WinAPI subset
