@@ -412,15 +412,14 @@ static void nvme_identify(nvme_dev_t* nvme, nvme_cmd_t* cmd)
             break;
         }
         case NVME_IDENT_CTRL: {
-            // PCI Vendor ID
-            write_uint16_le(ptr, 0x1F31);
-            write_uint16_le(ptr + 2, 0x1F31);
             // Serial Number
             memcpy(ptr + 4, nvme->serial, sizeof(nvme->serial));
             // Model Number
             rvvm_strlcpy((char*)ptr + 24, "NVMe Storage", 40);
             // Firmware Revision
             rvvm_strlcpy((char*)ptr + 64, "R1905", 8);
+            // Maximum Data Transfer Size
+            ptr[77] = 9;
             // Version
             write_uint32_le(ptr + 80, NVME_VS_VERSION);
             // Controller Type: I/O Controller
