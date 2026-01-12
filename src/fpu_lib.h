@@ -85,16 +85,6 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  * list of compilers/platforms a "Known Nice Platform" (C) and apply workarounds otherwise.
  */
 
-#if defined(__wasm__) || defined(__SOFTFP__)                                             /**/                          \
-    || defined(__m68k__) || defined(__sh__) || defined(__hppa__) || defined(__hexagon__) /**/                          \
-    || defined(__alpha__) || defined(__alpha) || defined(_M_ALPHA)                       /**/                          \
-    || defined(__mips__) || defined(__mips) || defined(__mips64__) || defined(__mips64)  /**/                          \
-    || (defined(_WIN32) && defined(_M_ARM)) || !CHECK_INCLUDE(fenv.h, 1)
-// Enable FENV emulation
-#undef USE_SOFT_FPU_FENV
-#define USE_SOFT_FPU_FENV 1
-#endif
-
 #if CLANG_CHECK_VER(12, 0)
 // Fix various floating-point misoptimizations. Why the fuck is Clang not IEEE 754 compliant by default???
 #if !defined(__INTEL_LLVM_COMPILER) /**/                                                                               \
@@ -106,6 +96,28 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #pragma STDC FENV_ACCESS ON
 #elif defined(COMPILER_IS_MSVC)
 #pragma fenv_access(on)
+#endif
+
+/*
+ * Hide <math.h> definitions from generic code if possible - it should not be used
+ */
+#if GNU_BUILTIN(__builtin_sqrt) && GNU_BUILTIN(__builtin_sqrtf)
+#define fpu_sqrt_internal(d)  __builtin_sqrt(d)
+#define fpu_sqrtf_internal(f) __builtin_sqrtf(f)
+#else
+#include <math.h>
+#define fpu_sqrt_internal(d)  sqrt(d)
+#define fpu_sqrtf_internal(f) sqrtf(f)
+#endif
+
+#if defined(__wasm__) || defined(__SOFTFP__)                                             /**/                          \
+    || defined(__m68k__) || defined(__sh__) || defined(__hppa__) || defined(__hexagon__) /**/                          \
+    || defined(__alpha__) || defined(__alpha) || defined(_M_ALPHA)                       /**/                          \
+    || defined(__mips__) || defined(__mips) || defined(__mips64__) || defined(__mips64)  /**/                          \
+    || (defined(_WIN32) && defined(_M_ARM)) || !CHECK_INCLUDE(fenv.h, 1)
+// Enable FENV emulation
+#undef USE_SOFT_FPU_FENV
+#define USE_SOFT_FPU_FENV 1
 #endif
 
 // GCC 8.1+, Clang 12.0+, SlimCC respect IEEE 754
@@ -174,18 +186,6 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #endif
 
 /*
- * Hide <math.h> definitions from generic code if possible - it should not be used
- */
-#if GNU_BUILTIN(__builtin_sqrt) && GNU_BUILTIN(__builtin_sqrtf)
-#define fpu_sqrt_internal(d)  __builtin_sqrt(d)
-#define fpu_sqrtf_internal(f) __builtin_sqrtf(f)
-#else
-#include <math.h>
-#define fpu_sqrt_internal(d)  sqrt(d)
-#define fpu_sqrtf_internal(f) sqrtf(f)
-#endif
-
-/*
  * FPU Environment handling
  *
  * NOTE: Those definitions match RISC-V bitfields :D
@@ -250,43 +250,69 @@ slow_path void fpu_soft_fenv_check_mul32(fpu_f32_t mul, fpu_f32_t a, fpu_f32_t b
 slow_path void fpu_soft_fenv_check_mul64(fpu_f64_t sum, fpu_f64_t a, fpu_f64_t b, bool is_div);
 #endif
 
+#if defined(USE_SOFT_FPU_SQRT)
+// NOTE: Must be called with positive input
+fpu_f32_t fpu_sqrt32_soft_internal(fpu_f32_t f);
+fpu_f64_t fpu_sqrt64_soft_internal(fpu_f64_t d);
+#endif
+
 /*
  * Floating-point bitcasts
  */
 
+#define FPU_LIB_FP32_SIGNEDFP_MASK 0x80000000U
+#define FPU_LIB_FP32_NOSIGNED_MASK 0x7FFFFFFFU
+#define FPU_LIB_FP32_EXPONENT_MASK 0x7F800000U
+#define FPU_LIB_FP32_MANTISSA_MASK 0x007FFFFFU
+#define FPU_LIB_FP32_QUIETNAN_MASK 0x00400000U
+
+#define FPU_LIB_FP32_POSITIVE_INF  0x7F800000U
+#define FPU_LIB_FP32_NEGATIVE_INF  0xFF800000U
+
+#define FPU_LIB_FP64_SIGNEDFP_MASK 0x8000000000000000ULL
+#define FPU_LIB_FP64_NOSIGNED_MASK 0x7FFFFFFFFFFFFFFFULL
+#define FPU_LIB_FP64_EXPONENT_MASK 0x7FF0000000000000ULL
+#define FPU_LIB_FP64_MANTISSA_MASK 0x000FFFFFFFFFFFFFULL
+#define FPU_LIB_FP64_QUIETNAN_MASK 0x0008000000000000ULL
+
+#define FPU_LIB_FP64_POSITIVE_INF  0x7FF0000000000000ULL
+#define FPU_LIB_FP64_NEGATIVE_INF  0xFFF0000000000000ULL
+
+// Override to assert a different canonical NaN in current translation unit
+#ifndef FPU_LIB_FP32_CANONICAL_NAN
+#define FPU_LIB_FP32_CANONICAL_NAN 0x7FC00000U
+#endif
+#ifndef FPU_LIB_FP64_CANONICAL_NAN
+#define FPU_LIB_FP64_CANONICAL_NAN 0x7FF8000000000000ULL
+#endif
+
 static forceinline uint16_t fpu_bit_f16_to_u16(fpu_f16_t f)
 {
-#if defined(USE_SOFT_FPU_WRAP) && defined(USE_SOFT_FPU_ENCAP)
+#if defined(USE_SOFT_FPU_ENCAP)
     return f.scalar;
-#elif defined(USE_SOFT_FPU_WRAP)
-    return f;
 #else
-    uint16_t u;
-    memcpy(&u, &f, sizeof(f));
-    return u;
+    return f;
 #endif
 }
 
 static forceinline fpu_f16_t fpu_bit_u16_to_f16(uint16_t u)
 {
-#if defined(USE_SOFT_FPU_WRAP) && defined(USE_SOFT_FPU_ENCAP)
-    fpu_f16_t ret = {.scalar = u};
-    return ret;
-#elif defined(USE_SOFT_FPU_WRAP)
-    return u;
-#else
-    fpu_f16_t f;
-    memcpy(&f, &u, sizeof(f));
+#if defined(USE_SOFT_FPU_ENCAP)
+    fpu_f16_t f = {.scalar = u};
     return f;
+#else
+    return u;
 #endif
 }
 
 static forceinline uint32_t fpu_bit_f32_to_u32(fpu_f32_t f)
 {
 #if defined(USE_SOFT_FPU_WRAP) && defined(USE_SOFT_FPU_ENCAP)
-    return f.scalar;
+    volatile uint32_t u = f.scalar;
+    return u;
 #elif defined(USE_SOFT_FPU_WRAP)
-    return f;
+    volatile uint32_t u = f;
+    return u;
 #else
     uint32_t u;
     memcpy(&u, &f, sizeof(f));
@@ -297,8 +323,8 @@ static forceinline uint32_t fpu_bit_f32_to_u32(fpu_f32_t f)
 static forceinline fpu_f32_t fpu_bit_u32_to_f32(uint32_t u)
 {
 #if defined(USE_SOFT_FPU_WRAP) && defined(USE_SOFT_FPU_ENCAP)
-    fpu_f32_t ret = {.scalar = u};
-    return ret;
+    fpu_f32_t f = {.scalar = u};
+    return f;
 #elif defined(USE_SOFT_FPU_WRAP)
     return u;
 #else
@@ -311,9 +337,11 @@ static forceinline fpu_f32_t fpu_bit_u32_to_f32(uint32_t u)
 static forceinline uint64_t fpu_bit_f64_to_u64(fpu_f64_t d)
 {
 #if defined(USE_SOFT_FPU_WRAP) && defined(USE_SOFT_FPU_ENCAP)
-    return d.scalar;
+    volatile uint64_t u = d.scalar;
+    return u;
 #elif defined(USE_SOFT_FPU_WRAP)
-    return d;
+    volatile uint64_t u = d;
+    return u;
 #else
     uint64_t u;
     memcpy(&u, &d, sizeof(d));
@@ -324,8 +352,8 @@ static forceinline uint64_t fpu_bit_f64_to_u64(fpu_f64_t d)
 static forceinline fpu_f64_t fpu_bit_u64_to_f64(uint64_t u)
 {
 #if defined(USE_SOFT_FPU_WRAP) && defined(USE_SOFT_FPU_ENCAP)
-    fpu_f64_t ret = {.scalar = u};
-    return ret;
+    fpu_f64_t d = {.scalar = u};
+    return d;
 #elif defined(USE_SOFT_FPU_WRAP)
     return u;
 #else
@@ -333,6 +361,11 @@ static forceinline fpu_f64_t fpu_bit_u64_to_f64(uint64_t u)
     memcpy(&d, &u, sizeof(d));
     return d;
 #endif
+}
+
+static forceinline bool fpu_is_bit_equal16(fpu_f16_t a, fpu_f16_t b)
+{
+    return fpu_bit_f16_to_u16(a) == fpu_bit_f16_to_u16(b);
 }
 
 static forceinline bool fpu_is_bit_equal32(fpu_f32_t a, fpu_f32_t b)
@@ -406,26 +439,6 @@ static forceinline fpu_f64_t fpu_wrap_f64(actual_double_t d)
 /*
  * Fast software floating-point helpers
  */
-
-#define FPU_LIB_FP32_SIGNEDFP_MASK 0x80000000U
-#define FPU_LIB_FP32_NOSIGNED_MASK 0x7FFFFFFFU
-#define FPU_LIB_FP32_EXPONENT_MASK 0x7F800000U
-#define FPU_LIB_FP32_MANTISSA_MASK 0x007FFFFFU
-#define FPU_LIB_FP32_QUIETNAN_MASK 0x00400000U
-
-#define FPU_LIB_FP32_CANONICAL_NAN 0x7FC00000U
-#define FPU_LIB_FP32_POSITIVE_INF  0x7F800000U
-#define FPU_LIB_FP32_NEGATIVE_INF  0xFF800000U
-
-#define FPU_LIB_FP64_SIGNEDFP_MASK 0x8000000000000000ULL
-#define FPU_LIB_FP64_NOSIGNED_MASK 0x7FFFFFFFFFFFFFFFULL
-#define FPU_LIB_FP64_EXPONENT_MASK 0x7FF0000000000000ULL
-#define FPU_LIB_FP64_MANTISSA_MASK 0x000FFFFFFFFFFFFFULL
-#define FPU_LIB_FP64_QUIETNAN_MASK 0x0008000000000000ULL
-
-#define FPU_LIB_FP64_CANONICAL_NAN 0x7FF8000000000000ULL
-#define FPU_LIB_FP64_POSITIVE_INF  0x7FF0000000000000ULL
-#define FPU_LIB_FP64_NEGATIVE_INF  0xFFF0000000000000ULL
 
 // Checks for finite non-NaN, non-Inf input, never sets exceptions
 static forceinline bool fpu_is_finite32(fpu_f32_t f)
@@ -603,7 +616,7 @@ static inline fpu_f64_t fpu_odd_round64(fpu_f64_t val, fpu_f64_t err)
 }
 
 /*
- * NaN-boxing, explicit endian load/store intrinsics
+ * Floating-point NaN-boxing
  */
 
 static forceinline fpu_f64_t fpu_nanbox_f32(fpu_f32_t f)
@@ -624,6 +637,10 @@ static forceinline fpu_f32_t fpu_nan_unbox_f32(fpu_f64_t d)
     }
     return fpu_bit_u32_to_f32(FPU_LIB_FP32_CANONICAL_NAN);
 }
+
+/*
+ * Floating-point load/store intrinsics
+ */
 
 TSAN_SUPPRESS static forceinline fpu_f32_t fpu_load_f32_le(const void* addr)
 {
@@ -662,7 +679,7 @@ TSAN_SUPPRESS static forceinline void fpu_store_f64_le(void* addr, fpu_f64_t d)
 }
 
 /*
- * NaN checking
+ * Floating-point NaN checking
  */
 
 // Those functions raise FE_INVALID on sNaN, and that is commonly needed
@@ -937,70 +954,48 @@ static forceinline fpu_f64_t fpu_fma64(fpu_f64_t a, fpu_f64_t b, fpu_f64_t c)
 #endif
 }
 
-// NOTE: Must be called with positive input
-static inline fpu_f32_t fpu_sqrt32_soft_internal(fpu_f32_t f)
-{
-    // Evil floating point bit level hacking
-    // Approximates sqrtf() to 8 significant bits
-    fpu_f32_t x = fpu_bit_u32_to_f32(0x1FBD1DF5U + (fpu_bit_f32_to_u32(f) >> 1));
-    // Newton algorithm iteration: Almost 17 significant bits
-    x = fpu_wrap_f32((fpu_raw_f32(f) / fpu_raw_f32(x) + fpu_raw_f32(x)) * 0.5f);
-    // Newton algorithm iteration: Almost 35 significant bits
-    x = fpu_wrap_f32((fpu_raw_f32(f) / fpu_raw_f32(x) + fpu_raw_f32(x)) * 0.5f);
-#if !defined(USE_SOFT_FPU_FENV)
-    // Clear NX flag set by previous Newton iterations
-    fpu_clear_exceptions(FPU_LIB_FLAG_NX);
-#endif
-    // This either produces an exact result, or within 1 ulp and sets NX flag
-    x = fpu_wrap_f32((fpu_raw_f32(f) / fpu_raw_f32(x) + fpu_raw_f32(x)) * 0.5f);
-    return x;
-}
-
-// NOTE: Must be called with positive input
-static inline fpu_f64_t fpu_sqrt64_soft_internal(fpu_f64_t f)
-{
-    fpu_f64_t x = fpu_bit_u64_to_f64(0x1FF7A3BEA91D9B1BULL + (fpu_bit_f64_to_u64(f) >> 1));
-    // Newton algorithm iterations
-    x = fpu_wrap_f64((fpu_raw_f64(f) / fpu_raw_f64(x) + fpu_raw_f64(x)) * 0.5);
-    x = fpu_wrap_f64((fpu_raw_f64(f) / fpu_raw_f64(x) + fpu_raw_f64(x)) * 0.5);
-    x = fpu_wrap_f64((fpu_raw_f64(f) / fpu_raw_f64(x) + fpu_raw_f64(x)) * 0.5);
-#if !defined(USE_SOFT_FPU_FENV)
-    fpu_clear_exceptions(FPU_LIB_FLAG_NX);
-#endif
-    x = fpu_wrap_f64((fpu_raw_f64(f) / fpu_raw_f64(x) + fpu_raw_f64(x)) * 0.5);
-    if (!fpu_is_bit_equal64(f, fpu_wrap_f64(fpu_raw_f64(x) * fpu_raw_f64(x)))) {
-        // Fixup lowest mantissa bit
-        x = fpu_bit_u64_to_f64(fpu_bit_f64_to_u64(x) | 1);
-    }
-    return x;
-}
-
 static forceinline fpu_f32_t fpu_sqrt32(fpu_f32_t f)
 {
     if (likely(fpu_is_positive32(f))) {
+#if defined(USE_SOFT_FPU_SQRT)
+        fpu_f32_t ret = fpu_sqrt32_soft_internal(f);
+#else
         fpu_f32_t ret = fpu_wrap_f32(fpu_sqrtf_internal(fpu_raw_f32(f)));
+#endif
 #if defined(USE_SOFT_FPU_FENV)
         fpu_soft_fenv_check_mul32(f, ret, ret, false);
 #endif
         return ret;
     }
-    // Raise invalid flag, return a canonical NaN representation
-    fpu_raise_invalid();
-    return fpu_bit_u32_to_f32(FPU_LIB_FP32_CANONICAL_NAN);
+    if (fpu_is_negative32(f)) {
+        // Raise invalid flag, return canonical NaN
+        fpu_raise_invalid();
+        return fpu_bit_u32_to_f32(FPU_LIB_FP32_CANONICAL_NAN);
+    }
+    // Perform NaN propagation
+    return f;
 }
 
 static forceinline fpu_f64_t fpu_sqrt64(fpu_f64_t d)
 {
     if (likely(fpu_is_positive64(d))) {
+#if defined(USE_SOFT_FPU_SQRT)
+        fpu_f64_t ret = fpu_sqrt64_soft_internal(d);
+#else
         fpu_f64_t ret = fpu_wrap_f64(fpu_sqrt_internal(fpu_raw_f64(d)));
+#endif
 #if defined(USE_SOFT_FPU_FENV)
         fpu_soft_fenv_check_mul64(d, ret, ret, false);
 #endif
         return ret;
     }
-    // Raise invalid flag, return a canonical NaN representation
-    fpu_raise_invalid();
-    return fpu_bit_u64_to_f64(FPU_LIB_FP64_CANONICAL_NAN);
+    if (fpu_is_negative64(d)) {
+        // Raise invalid flag, return canonical NaN
+        fpu_raise_invalid();
+        return fpu_bit_u64_to_f64(FPU_LIB_FP64_CANONICAL_NAN);
+    }
+    // Perform NaN propagation
+    return d;
 }
 
 /*

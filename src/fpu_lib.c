@@ -520,6 +520,58 @@ slow_path fpu_f64_t fpu_round_f64_internal(fpu_f64_t d, uint32_t mode)
     return d;
 }
 
+#if defined(USE_SOFT_FPU_SQRT)
+
+fpu_f32_t fpu_sqrt32_soft_internal(fpu_f32_t f)
+{
+    // Evil floating point bit level hacking
+    // Approximates sqrtf() to 8 significant bits
+    fpu_f32_t x = fpu_bit_u32_to_f32(0x1FBD1DF5U + (fpu_bit_f32_to_u32(f) >> 1));
+#if !defined(USE_SOFT_FPU_FENV)
+    uint32_t e = fpu_get_exceptions();
+#endif
+    // Newton algorithm iteration: Almost 17 significant bits
+    x = fpu_wrap_f32((fpu_raw_f32(f) / fpu_raw_f32(x) + fpu_raw_f32(x)) * 0.5f);
+    // Newton algorithm iteration: Almost 35 significant bits
+    x = fpu_wrap_f32((fpu_raw_f32(f) / fpu_raw_f32(x) + fpu_raw_f32(x)) * 0.5f);
+#if !defined(USE_SOFT_FPU_FENV)
+    // Revert NX flag set by previous Newton iterations
+    if (!(e & FPU_LIB_FLAG_NX)) {
+        fpu_set_exceptions(e);
+    }
+#endif
+    // This either produces an exact result, or within 1 ulp and sets NX flag
+    x = fpu_wrap_f32((fpu_raw_f32(f) / fpu_raw_f32(x) + fpu_raw_f32(x)) * 0.5f);
+    return x;
+}
+
+fpu_f64_t fpu_sqrt64_soft_internal(fpu_f64_t d)
+{
+    fpu_f64_t x = fpu_bit_u64_to_f64(0x1FF7A3BEA91D9B1BULL + (fpu_bit_f64_to_u64(d) >> 1));
+#if !defined(USE_SOFT_FPU_FENV)
+    uint32_t e = fpu_get_exceptions();
+#endif
+    // Newton algorithm iterations
+    x = fpu_wrap_f64((fpu_raw_f64(d) / fpu_raw_f64(x) + fpu_raw_f64(x)) * 0.5);
+    x = fpu_wrap_f64((fpu_raw_f64(d) / fpu_raw_f64(x) + fpu_raw_f64(x)) * 0.5);
+    x = fpu_wrap_f64((fpu_raw_f64(d) / fpu_raw_f64(x) + fpu_raw_f64(x)) * 0.5);
+#if !defined(USE_SOFT_FPU_FENV)
+    // Revert NX flag set by previous Newton iterations
+    if (!(e & FPU_LIB_FLAG_NX)) {
+        fpu_set_exceptions(e);
+    }
+#endif
+    x = fpu_wrap_f64((fpu_raw_f64(d) / fpu_raw_f64(x) + fpu_raw_f64(x)) * 0.5);
+    if (!fpu_is_bit_equal64(d, fpu_wrap_f64(fpu_raw_f64(x) * fpu_raw_f64(x)))) {
+        // Fixup lowest mantissa bit
+        // I am not 100% sure why this is needed - please enlighten me someone
+        x = fpu_bit_u64_to_f64(fpu_bit_f64_to_u64(x) | 1);
+    }
+    return x;
+}
+
+#endif
+
 #if defined(USE_SOFT_FPU_FENV)
 
 slow_path void fpu_soft_fenv_check_add32(fpu_f32_t sum, fpu_f32_t a, fpu_f32_t b)
