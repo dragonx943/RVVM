@@ -838,9 +838,9 @@ static forceinline bool atomic_cas_pointer_ex(void* addr, void** exp, void* val,
         return atomic_compare_exchange_strong_explicit((void* _Atomic*)addr, exp, val, succ, fail);
     }
 #elif defined(HOST_64BIT)
-    return atomic_cas_uint64_ex(addr, (void*)exp, (size_t)val, weak, succ, fail);
+    return atomic_cas_uint64_ex(addr, (uint64_t*)exp, (size_t)val, weak, succ, fail);
 #elif defined(HOST_32BIT)
-    return atomic_cas_uint32_ex(addr, (void*)exp, (size_t)val, weak, succ, fail);
+    return atomic_cas_uint32_ex(addr, (uint32_t*)exp, (size_t)val, weak, succ, fail);
 #else
 #error Unknown CPU bitness and no C11/GNU atomics!
 #endif
