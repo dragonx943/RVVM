@@ -11,49 +11,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 PUSH_OPTIMIZATION_SIZE
 
-#if !defined(USE_SOFT_FPU_FENV)
-
-#include <fenv.h>
-
-// Check presence of FE_ALL_EXCEPT and at least one exception bit flag
-#if defined(FE_ALL_EXCEPT)                                                                                             \
-    && (defined(FE_INEXACT) || defined(FE_UNDERFLOW) /**/                                                              \
-        || defined(FE_OVERFLOW) || defined(FE_DIVBYZERO) || defined(FE_INVALID))
-#define FENV_EXCEPTIONS_IMPL 1
-#endif
-
-// Check presence and at least one rounding mode other than FE_TONEAREST
-#if defined(FE_DOWNWARD) || defined(FE_UPWARD) || defined(FE_TOWARDZERO)
-#define FENV_ROUNDING_IMPL 1
-#endif
-
-#if !defined(USE_FPU_WORKAROUNDS) && defined(GNU_EXTS) && defined(__i386__) /**/                                       \
-    && !defined(__SSE__) && !defined(__SSE_MATH__) && !defined(__FXSR__)
-// Prevent SIGILL on old x86 without SSE
-#define FENV_8087_IMPL 1
-#elif !defined(USE_FPU_WORKAROUNDS) && defined(GNU_EXTS) && defined(__x86_64__) /**/                                   \
-    && defined(__SSE2__) && defined(__SSE2_MATH__)
-// Speed up FENV handling on x86_64 with SSE2
-#define FENV_SSE2_IMPL 1
-#endif
-
-#endif
-
-#if defined(THREAD_LOCAL)
-
-static THREAD_LOCAL uint32_t fpu_exceptions = 0;
-static THREAD_LOCAL uint32_t fpu_round_mode = FPU_LIB_ROUND_NE;
-
-#define FENV_TLS_IMPL 1
-
-#elif !defined(FENV_EXCEPTIONS_IMPL) && !defined(FENV_8087_IMPL) && !defined(FENV_SSE2_IMPL)
-
-// Non thread-safe fpu environment emulation, will work fine for single-core guests
-static uint32_t fpu_exceptions = 0;
-static uint32_t fpu_round_mode = 0;
-
-#define FENV_TLS_IMPL 1
-
+#ifndef THREAD_LOCAL
+#define THREAD_LOCAL
 #endif
 
 #if defined(FENV_8087_IMPL) || defined(FENV_SSE2_IMPL)
@@ -156,13 +115,18 @@ static inline uint32_t fpu_exceptions_to_fenv(uint32_t exceptions)
         ret |= FE_DIVBYZERO;
     }
 #endif
-#if defined(FE_DIVBYZERO)
+#if defined(FE_INVALID)
     if (exceptions & FPU_LIB_FLAG_NV) {
         ret |= FE_INVALID;
     }
 #endif
     return ret;
 }
+
+#else
+
+static THREAD_LOCAL uint32_t fpu_exceptions = 0;
+static THREAD_LOCAL uint32_t fpu_round_mode = FPU_LIB_ROUND_NE;
 
 #endif
 
@@ -171,7 +135,7 @@ static uint32_t fpu_pump_exceptions_internal(uint32_t set_exceptions, uint32_t c
 #if defined(FENV_SSE2_IMPL)
     uint32_t sw = 0, nsw = 0;
     __asm__ __volatile__("stmxcsr %0" : "=m"(*&sw) : : "memory");
-    // Disable DAZ/FTZ, mask all exceptions just to be on the safe size
+    // Mask all exceptions, disable DAZ/FTZ
     nsw = (sw & ~0x8040U) | 0x1F80U;
     if (set_exceptions) {
         nsw |= fpu_exceptions_to_x86_sw(set_exceptions);
@@ -184,20 +148,22 @@ static uint32_t fpu_pump_exceptions_internal(uint32_t set_exceptions, uint32_t c
     }
     return fpu_x86_sw_to_exceptions(sw);
 #elif defined(FENV_8087_IMPL)
-    uint16_t fenv_8087[32] = ZERO_INIT, sw = 0, nsw = 0;
+    uint16_t sw = 0;
     if (set_exceptions || clr_exceptions) {
-        __asm__ __volatile__("fnstenv %0" : "=m"(*&fenv_8087) : : "memory");
-        sw  = fenv_8087[2];
-        nsw = sw;
+        uint16_t fenv[32] = ZERO_INIT;
+        __asm__ __volatile__("fnstenv %0" : "=m"(*&fenv) : : "memory");
+        sw = fenv[2];
         if (set_exceptions) {
-            nsw |= fpu_exceptions_to_x86_sw(set_exceptions);
+            fenv[2] |= fpu_exceptions_to_x86_sw(set_exceptions);
         }
         if (clr_exceptions) {
-            nsw &= ~fpu_exceptions_to_x86_sw(clr_exceptions);
+            fenv[2] &= ~fpu_exceptions_to_x86_sw(clr_exceptions);
         }
-        if (unlikely(nsw != sw)) {
-            fenv_8087[2] = nsw;
-            __asm__ __volatile__("fldenv %0" : : "m"(*&fenv_8087) : "memory");
+        if (unlikely(fenv[2] != sw)) {
+            // Mask all exceptions, set mantissa precision to 53 bits
+            fenv[0] &= 0xFCFFU;
+            fenv[0] |= 0x013FU;
+            __asm__ __volatile__("fldenv %0" : : "m"(*&fenv) : "memory");
         }
     } else {
         // Simply read status word
@@ -216,9 +182,10 @@ static uint32_t fpu_pump_exceptions_internal(uint32_t set_exceptions, uint32_t c
     }
     return ret;
 #else
-    UNUSED(set_exceptions);
-    UNUSED(clr_exceptions);
-    return 0;
+    uint32_t ret    = fpu_exceptions;
+    fpu_exceptions |= set_exceptions & FPU_LIB_FLAGS_ALL;
+    fpu_exceptions &= ~clr_exceptions;
+    return ret;
 #endif
 }
 
@@ -227,7 +194,7 @@ static uint32_t fpu_pump_rounding_mode_internal(uint32_t mode)
 #if defined(FENV_SSE2_IMPL)
     uint32_t cw = 0, ncw = 0;
     __asm__ __volatile__("stmxcsr %0" : "=m"(*&cw) : : "memory");
-    // Disable DAZ/FTZ, mask all exceptions just to be on the safe size
+    // Mask all exceptions, disable DAZ/FTZ
     ncw = (cw & ~0x8040U) | 0x1F80U;
     if (mode <= FPU_LIB_ROUND_MM) {
         ncw &= ~0x6000U;
@@ -259,7 +226,8 @@ static uint32_t fpu_pump_rounding_mode_internal(uint32_t mode)
     uint16_t cw = 0, ncw = 0;
     __asm__ __volatile__("fnstcw %0" : "=m"(*&cw) : : "memory");
     if (mode <= FPU_LIB_ROUND_MM) {
-        ncw = cw & ~0x0C00U;
+        // Mask all exceptions, set mantissa precision to 53 bits
+        ncw = (cw & 0xF0FFU) | 0x013FU;
         switch (mode) {
             case FPU_LIB_ROUND_DN:
                 ncw |= 0x0400U;
@@ -329,75 +297,42 @@ static uint32_t fpu_pump_rounding_mode_internal(uint32_t mode)
     }
     return ret;
 #else
-    UNUSED(mode);
-    return FPU_LIB_ROUND_NE;
+    uint32_t ret = fpu_round_mode;
+    if (mode <= FPU_LIB_ROUND_MM) {
+        fpu_round_mode = mode;
+    }
+    return ret;
 #endif
 }
 
 uint32_t fpu_get_exceptions(void)
 {
-#if defined(FENV_TLS_IMPL)
-    fpu_exceptions |= fpu_pump_exceptions_internal(0, FPU_LIB_FLAGS_ALL);
-    return fpu_exceptions;
-#else
     return fpu_pump_exceptions_internal(0, 0);
-#endif
 }
 
 void fpu_set_exceptions(uint32_t new_exceptions)
 {
-    new_exceptions &= FPU_LIB_FLAGS_ALL;
-#if defined(FENV_TLS_IMPL)
-    fpu_pump_exceptions_internal(0, FPU_LIB_FLAGS_ALL);
-    fpu_exceptions = new_exceptions;
-#else
     fpu_pump_exceptions_internal(new_exceptions, ~new_exceptions);
-#endif
 }
 
 void fpu_raise_exceptions(uint32_t set_exceptions)
 {
-    set_exceptions &= FPU_LIB_FLAGS_ALL;
-#if defined(FENV_TLS_IMPL)
-    fpu_exceptions |= set_exceptions;
-#else
     fpu_pump_exceptions_internal(set_exceptions, 0);
-#endif
 }
 
 void fpu_clear_exceptions(uint32_t clr_exceptions)
 {
-    clr_exceptions &= FPU_LIB_FLAGS_ALL;
-#if defined(FENV_TLS_IMPL)
-    fpu_exceptions |= fpu_pump_exceptions_internal(0, FPU_LIB_FLAGS_ALL);
-    fpu_exceptions &= ~clr_exceptions;
-#else
     fpu_pump_exceptions_internal(0, clr_exceptions);
-#endif
 }
 
 uint32_t fpu_get_rounding_mode(void)
 {
-#if defined(FENV_TLS_IMPL)
-    return fpu_round_mode;
-#else
     return fpu_pump_rounding_mode_internal(-1);
-#endif
 }
 
 void fpu_set_rounding_mode(uint32_t mode)
 {
-    if (mode > FPU_LIB_ROUND_MM) {
-        mode = FPU_LIB_ROUND_NE;
-    }
-#if defined(FENV_TLS_IMPL)
-    if (fpu_round_mode != mode) {
-        fpu_round_mode = mode;
-        fpu_pump_rounding_mode_internal(mode);
-    }
-#else
     fpu_pump_rounding_mode_internal(mode);
-#endif
 }
 
 slow_path void fpu_raise_invalid(void)

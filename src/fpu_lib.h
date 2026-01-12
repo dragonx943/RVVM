@@ -110,14 +110,31 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define fpu_sqrtf_internal(f) sqrtf(f)
 #endif
 
-#if defined(__wasm__) || defined(__SOFTFP__)                                             /**/                          \
+// Check FPU environment support, enable emulation if needed
+#if !defined(USE_FPU_WORKAROUNDS) && defined(GNU_EXTS) && defined(__i386__) /**/                                       \
+    && !defined(__SSE__) && !defined(__SSE_MATH__) && !defined(__FXSR__)
+#define FENV_8087_IMPL 1
+#elif !defined(USE_FPU_WORKAROUNDS) && defined(GNU_EXTS) && defined(__x86_64__) /**/                                   \
+    && defined(__SSE2__) && defined(__SSE2_MATH__)
+#define FENV_SSE2_IMPL 1
+#elif defined(__wasm__) || defined(__SOFTFP__)                                           /**/                          \
     || defined(__m68k__) || defined(__sh__) || defined(__hppa__) || defined(__hexagon__) /**/                          \
     || defined(__alpha__) || defined(__alpha) || defined(_M_ALPHA)                       /**/                          \
     || defined(__mips__) || defined(__mips) || defined(__mips64__) || defined(__mips64)  /**/                          \
     || (defined(_WIN32) && defined(_M_ARM)) || !CHECK_INCLUDE(fenv.h, 1)
-// Enable FENV emulation
 #undef USE_SOFT_FPU_FENV
 #define USE_SOFT_FPU_FENV 1
+#else
+#include <fenv.h>
+#if defined(FE_ALL_EXCEPT) && defined(FE_INEXACT) && defined(FE_INVALID)
+#define FENV_EXCEPTIONS_IMPL 1
+#else
+#undef USE_SOFT_FPU_FENV
+#define USE_SOFT_FPU_FENV 1
+#endif
+#if defined(FE_DOWNWARD) || defined(FE_UPWARD) || defined(FE_TOWARDZERO)
+#define FENV_ROUNDING_IMPL 1
+#endif
 #endif
 
 // GCC 8.1+, Clang 12.0+, SlimCC respect IEEE 754
