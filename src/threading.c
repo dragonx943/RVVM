@@ -537,7 +537,7 @@ static bool thread_futex_wait_emu(void* ptr, uint32_t val, uint64_t ns)
     spin_lock_busy_loop(&queue->lock);
     if (atomic_load_uint32(ptr) == val) {
         vector_push_back(queue->waiters, self);
-        spin_unlock(&queue->lock);
+        spin_unlock_busy_loop(&queue->lock);
 
         ret = condvar_wait_ns(self.cond, ns);
         spin_lock_busy_loop(&queue->lock);
@@ -548,7 +548,7 @@ static bool thread_futex_wait_emu(void* ptr, uint32_t val, uint64_t ns)
             }
         }
     }
-    spin_unlock(&queue->lock);
+    spin_unlock_busy_loop(&queue->lock);
 
     condvar_free(self.cond);
     return ret;
@@ -563,7 +563,7 @@ static void thread_futex_wake_emu(void* ptr, uint32_t num)
             num--;
         }
     }
-    spin_unlock(&queue->lock);
+    spin_unlock_busy_loop(&queue->lock);
 }
 
 static slow_path bool thread_futex_init_once(void)
