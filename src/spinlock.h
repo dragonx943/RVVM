@@ -98,17 +98,14 @@ static forceinline void spin_lock_internal(spinlock_t* lock, const char* locatio
 }
 
 // Try to claim the writer lock
-#define spin_try_lock(lock)       spin_try_lock_internal(lock, SPINLOCK_DEBUG_LOCATION)
+#define spin_try_lock(lock)  spin_try_lock_internal(lock, SPINLOCK_DEBUG_LOCATION)
 
 // Perform writer locking on small, bounded critical section
 // Reports a deadlock upon waiting for too long
-#define spin_lock(lock)           spin_lock_internal(lock, SPINLOCK_DEBUG_LOCATION, 0)
+#define spin_lock(lock)      spin_lock_internal(lock, SPINLOCK_DEBUG_LOCATION, 0)
 
 // Perform writer locking around heavy operation, wait indefinitely
-#define spin_lock_slow(lock)      spin_lock_internal(lock, SPINLOCK_DEBUG_LOCATION, SPINLOCK_WAIT_FOREVER)
-
-// Perform low-level busy loop locking, for special places where sleeping is not allowed
-#define spin_lock_busy_loop(lock) spin_lock_internal(lock, SPINLOCK_DEBUG_LOCATION, SPINLOCK_WAIT_BUSY_LOOP)
+#define spin_lock_slow(lock) spin_lock_internal(lock, SPINLOCK_DEBUG_LOCATION, SPINLOCK_WAIT_FOREVER)
 
 // Release the writer lock
 static forceinline void spin_unlock(spinlock_t* lock)
@@ -119,6 +116,14 @@ static forceinline void spin_unlock(spinlock_t* lock)
         spin_lock_wake(lock, prev);
     }
 }
+
+/*
+ * Low-level busy loop locking, for special places where sleeping is not allowed
+ */
+
+#define spin_lock_busy_loop(lock)   spin_lock_internal(lock, SPINLOCK_DEBUG_LOCATION, SPINLOCK_WAIT_BUSY_LOOP)
+
+#define spin_unlock_busy_loop(lock) atomic_store_uint32(&(lock)->flag, 0x0);
 
 /*
  * Reader locking
