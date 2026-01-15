@@ -329,7 +329,7 @@ static void nvme_queue_raise_irq(nvme_dev_t* nvme, nvme_queue_t* queue)
 
 static void nvme_queue_lower_irq(nvme_dev_t* nvme, nvme_queue_t* queue)
 {
-    uint32_t irq_vec = atomic_load_uint32_relax(&queue->data);
+    uint32_t irq_vec = atomic_load_uint32_relax(&queue->data) >> 16;
     pci_lower_irq(nvme->pci_func, irq_vec);
 }
 
