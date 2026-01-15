@@ -311,9 +311,11 @@ static bool pci_func_lower_msix_irq(pci_func_t* func, uint32_t msi_id)
 {
     if (atomic_load_uint32_relax(&func->msix_control) & PCI_MSIX_ENABLED) {
         // MSI-X enabled
-        uint32_t reg = msi_id >> 5;
-        if (atomic_load_uint32_relax(&func->msix[PCI_MSIX_TBL_SIZE + reg]) & bit_set32(msi_id)) {
-            atomic_and_uint32(&func->msix[PCI_MSIX_TBL_SIZE + reg], ~bit_set32(msi_id));
+        if (likely(msi_id < PCI_MSIX_MAX_IRQS)) {
+            uint32_t reg = PCI_MSIX_TBL_SIZE + (msi_id >> 5);
+            if (atomic_load_uint32_relax(&func->msix[reg]) & bit_set32(msi_id)) {
+                atomic_and_uint32(&func->msix[reg], ~bit_set32(msi_id));
+            }
         }
         return true;
     }
@@ -1145,7 +1147,7 @@ PUBLIC void pci_remove_device(pci_dev_t* dev)
 
 PUBLIC pci_func_t* pci_get_device_func(pci_dev_t* dev, size_t func_id)
 {
-    if (dev) {
+    if (dev && func_id < PCI_DEV_FUNCS) {
         return dev->func[func_id];
     }
     return NULL;
