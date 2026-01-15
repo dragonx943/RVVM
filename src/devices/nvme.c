@@ -305,17 +305,15 @@ static inline bool nvme_queue_dequeue(nvme_queue_t* queue, uint32_t* entry)
 }
 
 // Returns true if queue was empty
-static inline bool nvme_queue_enqueue(nvme_queue_t* queue, uint32_t* entry)
+static inline uint32_t nvme_queue_enqueue(nvme_queue_t* queue)
 {
     uint32_t size = atomic_load_uint32_relax(&queue->size);
-    uint32_t head = atomic_load_uint32_relax(&queue->head);
     uint32_t tail = atomic_load_uint32_relax(&queue->tail);
     uint32_t next = 0;
     do {
         next = (tail < size) ? tail + 1 : 0;
     } while (!atomic_cas_uint32_loop(&queue->tail, &tail, next));
-    *entry = tail;
-    return head == tail;
+    return tail;
 }
 
 static void nvme_queue_raise_irq(nvme_dev_t* nvme, nvme_queue_t* queue)
@@ -392,8 +390,7 @@ static void nvme_complete_cmd_cs(nvme_dev_t* nvme, nvme_cmd_t* cmd, uint32_t sta
 {
     nvme_queue_t* queue = nvme_get_cq(nvme, cmd->cq_id);
     if (likely(queue)) {
-        uint32_t    tail = 0;
-        bool        irq  = nvme_queue_enqueue(queue, &tail);
+        uint32_t    tail = nvme_queue_enqueue(queue);
         rvvm_addr_t addr = nvme_queue_addr(queue) + (tail << NVME_CQE_SIZE_SHIFT);
         uint8_t*    cqe  = pci_get_dma_ptr(nvme->pci_func, addr, NVME_CQE_SIZE);
         if (likely(cqe)) {
@@ -403,8 +400,6 @@ static void nvme_complete_cmd_cs(nvme_dev_t* nvme, nvme_cmd_t* cmd, uint32_t sta
             write_uint32_le(cqe + NVME_CQE_CS, cs);
             write_uint32_le(cqe + NVME_CQE_SQHD_SQID, cmd->sqhd_sqid);
             atomic_store_uint32_le(cqe + NVME_CQE_CID_PB_SF, cid_ps);
-        }
-        if (irq) {
             nvme_queue_raise_irq(nvme, queue);
         }
     }
