@@ -166,13 +166,23 @@ PUSH_OPTIMIZATION_SIZE
 #define NVME_FEAT_ARBITRATION    0x01 // Arbitration
 #define NVME_FEAT_POWER_MGMT     0x02 // Power Management
 #define NVME_FEAT_TEMP_THRESH    0x04 // Temperature Threshold
-#define NVME_FEAT_ERROR_RECOV    0x05 // Error Recovery
+#define NVME_FEAT_ERROR_RECOVER  0x05 // Error Recovery
 #define NVME_FEAT_VOLATILE_WC    0x06 // Volatile Write Cache
 #define NVME_FEAT_NUM_QUEUES     0x07 // Number of Queues
-#define NVME_FEAT_IRQ_COALESC    0x08 // Interrupt Coalescing
+#define NVME_FEAT_IRQ_COALESCE   0x08 // Interrupt Coalescing
 #define NVME_FEAT_IRQ_VECTOR     0x09 // Interrupt Vector Configuration
 #define NVME_FEAT_WR_ATOMIC      0x0A // Write Atomicity Normal
 #define NVME_FEAT_ASYNC_EVENT    0x0B // Asynchronous Event Configuration
+#define NVME_FEAT_KPALIVE_TIMER  0x0F // Keep Alive Timer
+#define NVME_FEAT_HC_THERM_MGMT  0x10 // Host-Controlled Thrermal Management
+#define NVME_FEAT_NONOP_PWR_CFG  0x11 // Non-Operational Power State Config
+#define NVME_FEAT_RDRECOVER_LVL  0x12 // Read Recovery Level Config
+#define NVME_FEAT_PRED_LAT_CFG   0x13 // Predictable Latency Mode Config
+#define NVME_FEAT_PRED_LAT_WIN   0x14 // Predictable Latenct Mode Window
+#define NVME_FEAT_LBA_STAT_INF   0x15 // LBA Status Information Attributes
+#define NVME_FEAT_HOST_BEHAVIOR  0x16 // Host Behavior Support
+#define NVME_FEAT_SANITIZE_CFG   0x17 // Sanitize Config
+#define NVME_FEAT_EGRP_EVT_CFG   0x18 // Endurance Group Event Configuration
 
 /*
  * NVMe IO Command Set
@@ -186,7 +196,6 @@ PUSH_OPTIMIZATION_SIZE
 /*
  * NVMe Implementation constants
  */
-
 #define NVME_PAGE_SHIFT          0x0C // Page Size Shift (4kb pages)
 #define NVME_LBA_SHIFT           0x09 // LBA Block Size Shift (512b logical blocks)
 #define NVME_IO_QUEUES           0x10 // Max IO Queues (16)
@@ -195,8 +204,6 @@ PUSH_OPTIMIZATION_SIZE
 #define NVME_PAGE_MASK           (NVME_PAGE_SIZE - 1ULL)
 #define NVME_LBA_SIZE            (1ULL << NVME_LBA_SHIFT)
 #define NVME_LBA_MASK            (NVME_LBA_SIZE - 1ULL)
-
-#define NVME_FEAT_NQES           ((NVME_IO_QUEUES - 1) | ((NVME_IO_QUEUES - 1) << 16))
 
 typedef struct align_cacheline {
     // Queue address (Low/High)
@@ -235,6 +242,9 @@ typedef struct {
 
     // Masked interrupts bitmask
     uint32_t irq_mask;
+
+    // Temperature Threshold
+    uint32_t temp_thresh;
 
     // Serial number
     char serial[12];
@@ -557,6 +567,7 @@ static void nvme_identify(nvme_dev_t* nvme, nvme_cmd_t* cmd)
             buf[1] = 16; // UUID length
             break;
         default:
+            rvvm_debug("NVMe identify %#04x unimplemented", idt);
             nvme_complete_cmd(nvme, cmd, NVME_SC_BAD_FIELD);
             safe_free(buf);
             return;
@@ -635,22 +646,40 @@ static void nvme_delete_io_queue(nvme_dev_t* nvme, nvme_cmd_t* cmd, bool is_cq)
 
 static void nvme_handle_feature(nvme_dev_t* nvme, nvme_cmd_t* cmd, bool set)
 {
-    uint8_t feature_id = cmd->sqe[NVME_SQE_CDW10];
-    UNUSED(set);
+    uint8_t  feature_id  = cmd->sqe[NVME_SQE_CDW10];
+    uint32_t feature_val = 0;
     switch (feature_id) {
+        case NVME_FEAT_ARBITRATION:
+            feature_val = 0x07;
+            break;
         case NVME_FEAT_NUM_QUEUES:
-            nvme_complete_cmd_cs(nvme, cmd, NVME_SC_SUCCESS, NVME_FEAT_NQES);
-            return;
+            feature_val = (NVME_IO_QUEUES - 1) | ((NVME_IO_QUEUES - 1) << 16);
+            break;
         case NVME_FEAT_TEMP_THRESH:
-        case NVME_FEAT_WR_ATOMIC:
-        case NVME_FEAT_IRQ_COALESC:
+            if (set) {
+                atomic_store_uint32_relax(&nvme->temp_thresh, read_uint32_le(&cmd->sqe[NVME_SQE_CDW11]));
+            } else {
+                feature_val = atomic_load_uint32_relax(&nvme->temp_thresh);
+            }
+            break;
+        case NVME_FEAT_POWER_MGMT:
+        case NVME_FEAT_ERROR_RECOVER:
+        case NVME_FEAT_VOLATILE_WC:
+        case NVME_FEAT_IRQ_COALESCE:
         case NVME_FEAT_IRQ_VECTOR:
-            nvme_complete_cmd_cs(nvme, cmd, NVME_SC_SUCCESS, 0);
-            return;
+        case NVME_FEAT_WR_ATOMIC:
+        case NVME_FEAT_ASYNC_EVENT:
+            // Stubs
+            break;
         default:
-            // TODO: What error should be reported here?
+            rvvm_debug("NVMe feature %#04x unimplemented", feature_id);
             nvme_complete_cmd(nvme, cmd, NVME_SC_BAD_FIELD);
             return;
+    }
+    if (set) {
+        nvme_complete_cmd(nvme, cmd, NVME_SC_SUCCESS);
+    } else {
+        nvme_complete_cmd_cs(nvme, cmd, NVME_SC_SUCCESS, feature_val);
     }
 }
 
@@ -676,11 +705,15 @@ static void nvme_admin_cmd(nvme_dev_t* nvme, nvme_cmd_t* cmd)
             nvme_handle_feature(nvme, cmd, opcode == NVME_ADM_DELETE_IO_CQ);
             return;
         case NVME_ADM_ABORT:
-            // Ignore
+        case NVME_ADM_SELF_TEST:
+            // Stubs
             nvme_complete_cmd(nvme, cmd, NVME_SC_SUCCESS);
             return;
+        case NVME_ADM_ASYNC_EVENT_REQ:
+            // Nothing ever happens
+            return;
         default:
-            rvvm_debug("Unknown NVMe admin cmd %#02x", opcode);
+            rvvm_debug("NVMe admin cmd %#04x unimplemented", opcode);
             nvme_complete_cmd(nvme, cmd, NVME_SC_BAD_OPCODE);
             return;
     }
@@ -738,7 +771,7 @@ static void nvme_io_cmd(nvme_dev_t* nvme, nvme_cmd_t* cmd)
             nvme_complete_cmd(nvme, cmd, NVME_SC_SUCCESS);
             break;
         default:
-            rvvm_debug("Unknown NVMe IO cmd %#02x", opcode);
+            rvvm_debug("NVMe IO cmd %#04x unimplemented", opcode);
             nvme_complete_cmd(nvme, cmd, NVME_SC_BAD_OPCODE);
             break;
     }
