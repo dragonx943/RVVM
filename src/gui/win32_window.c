@@ -196,10 +196,10 @@ static void win32_clip_cursor(win32_window_t* win32, bool clip)
         RECT adj  = ZERO_INIT;
         GetWindowRect(win32->hwnd, &rect);
         AdjustWindowRectEx(&adj, WINDOW_STYLE_FLAGS, false, 0);
-        rect.top    -= adj.top;
-        rect.left   -= adj.left;
-        rect.right  -= adj.right;
-        rect.bottom -= adj.bottom;
+        rect.top    -= (adj.top - 10);
+        rect.left   -= (adj.left - 10);
+        rect.right  -= (adj.right + 10);
+        rect.bottom -= (adj.bottom + 10);
         ClipCursor(&rect);
     } else {
         ClipCursor(NULL);
