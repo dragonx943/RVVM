@@ -101,24 +101,98 @@ PUSH_OPTIMIZATION_SIZE
 #define NVME_CQE_SF_SHIFT        0x11       // Status Shift
 
 /*
- * NVMe Completion Queue Status Codes
+ * NVMe Generic Status Codes - Admin command set
  */
 #define NVME_SC_SUCCESS          0x00 // Successful Completion
 #define NVME_SC_BAD_OPCODE       0x01 // Invalid Command Opcode
 #define NVME_SC_BAD_FIELD        0x02 // Invalid Field in Command
+#define NVME_SC_ID_CONFLICT      0x03 // Command ID Conflict
 #define NVME_SC_DATA_ERR         0x04 // Data Transfer Error
-#define NVME_SC_ABORT            0x07 // Command Abort Requested
+#define NVME_SC_POWER_LOSS       0x05 // Command Aborted due to Power Loss
+#define NVME_SC_INTERNAL_ERR     0x06 // Internal Error
+#define NVME_SC_ABORTED          0x07 // Command Abort Requested
 #define NVME_SC_SQ_DELETED       0x08 // Command Aborted due to SQ Deletion
-#define NVME_SC_FEAT_NSAVE       0x0D // Feature Identifier Not Saveable
-#define NVME_SC_FEAT_NCHG        0x0E // Feature Identifier Not Changeable
-#define NVME_SC_LBA_RANGE        0x80 // LBA Out of Range
+#define NVME_SC_FUSE_FAIL        0x09 // Command Aborted due to Failed Fused Command
+#define NVME_SC_FUSE_MISSING     0x0A // Command Aborted due to Missing Fused Command
+#define NVME_SC_BAD_NAMESPACE    0x0B // Invalid Namespace or Format
+#define NVME_SC_SEQUENCE_ERR     0x0C // Command Sequence Error
+#define NVME_SC_BAD_SGL_DESC     0x0D // Invalid SGL Segment Descriptor
+#define NVME_SC_BAD_SGL_NUM      0x0E // Invalid Number of SGL Descriptors
+#define NVME_SC_BAD_SGL_DATA     0x0F // Invalid Data SGL Length
+#define NVME_SC_BAD_SGL_META     0x10 // Invalid Metadata SGL Length
+#define NVME_SC_BAD_SGL_TYPE     0x11 // Invalid SGL Descriptor Type
+#define NVME_SC_INVALID_CMB_USE  0x12 // Invalid Use of Controller Memory Buffer
+#define NVME_SC_BAD_PRP_OFFSET   0x13 // Invalid PRP Offset
+#define NVME_SC_ATOMIC_UNIT      0x14 // Atomic Write Unit Exceeded
+#define NVME_SC_PERM_DENIED      0x15 // Operation Denied
+#define NVME_SC_BAD_SGL_OFFSET   0x16 // Invalid SGL Offset
+#define NVME_SC_BAD_HOST_ID      0x18 // Host Identifier Inconsistent Format
+#define NVME_SC_KEEP_ALIVE       0x19 // Keep Alive Timer Expired
+#define NVME_SC_BAD_TIMER        0x1A // Keep Alive Timeout Invalid
+#define NVME_SC_PREEMPTED        0x1B // Command Aborted due to Preempt and Abort
+#define NVME_SC_SANITIZE_FAIL    0x1C // Sanitize Failed
+#define NVME_SC_SANITIZE_NOW     0x1D // Sanitize In Progress
+#define NVME_SC_BAD_SGL_GRAN     0x1E // Invalid SGL Data Block Granularity
+#define NVME_SC_QUEUE_IN_CMB     0x1F // Command Not Supported for Queue in CMB
+#define NVME_SC_NAMESPACE_WP     0x20 // Namespace is Write Protected
+#define NVME_SC_INTERRUPTED      0x21 // Command Interrupted
+#define NVME_SC_TRANSPORT_ERR    0x22 // Transient Transport Error
 
 /*
- * NVMe Command Specific Status
+ * NVMe Generic Status Codes - IO command set
  */
-#define NVME_CS_CQ_INVALID       0x00 // Completion Queue Invalid
-#define NVME_CS_ID_INVALID       0x01 // Invalid Queue Identifier
-#define NVME_CS_SIZE_INVALID     0x02 // Invalid Queue Size
+#define NVME_SC_LBA_RANGE        0x80 // LBA Out of Range
+#define NVME_SC_NS_CAPACITY      0x81 // Capacity Exceeded
+#define NVME_SC_NS_NOT_READY     0x82 // Namespace Not Ready
+#define NVME_SC_RSV_CONFLICT     0x83 // Reservation Conflict
+#define NVME_SC_FORMAT_NOW       0x84 // Format In Progress
+
+/*
+ * NVMe Command Specific Status Codes - Admin command set
+ */
+#define NVME_SC_BAD_CQ           0x0100 // Completion Queue Invalid
+#define NVME_SC_BAD_QUEUE_ID     0x0101 // Invalid Queue Identifier
+#define NVME_SC_BAD_QUEUE_SIZE   0x0102 // Invalid Queue Size
+#define NVME_SC_ABORT_LIMIT      0x0103 // Abort Command Limit Exceeded
+#define NVME_SC_AER_LIMIT        0x0105 // Asynchronous Evebt Request Limit Exceeded
+#define NVME_SC_BAD_FW_SLOT      0x0106 // Invalid Firmware Slot
+#define NVME_SC_BAD_FW_IMG       0x0107 // Invalid Firmware Image
+#define NVME_SC_BAD_IRQ_VEC      0x0108 // Invalid Interrupt Vector
+#define NVME_SC_BAD_LOG_PAGE     0x0109 // Invalid Log Page
+#define NVME_SC_BAD_FORMAT       0x010A // Invalid Format
+#define NVME_SC_FW_NEED_RST      0x010B // Firmware Activation Requires Conventional Reset
+#define NVME_SC_BAD_QUEUE_DEL    0x010C // Invalid Queue Deletion
+#define NVME_SC_FEAT_NOT_SAVEBL  0x010D // Feature Identifier Not Saveable
+#define NVME_SC_FEAT_NOT_CHGBL   0x010E // Feature Not Changeable
+#define NVME_SC_FEAT_NOT_NS      0x010F // Feature Not Namespace Specific
+#define NVME_SC_FW_NEED_NRST     0x0110 // Firmware Activation Requires NVM Subsystem Reset
+#define NVME_SC_FW_NEED_CRST     0x0111 // Firmware Activation Requires Controller Level Reset
+#define NVME_SC_FW_NEED_MTO      0x0112 // Firmware Activation Requires Maximum Time Violation
+#define NVME_SC_FW_PROHIBIT      0x0113 // Firmware Activation Prohibited
+#define NVME_SC_OVERLAP_RANGE    0x0114 // Overlapping Range
+#define NVME_SC_NS_NO_CAPACITY   0x0115 // Namespace Insufficient Capacity
+#define NVME_SC_NS_ID_UNAVAIL    0x0116 // Namespace Identifier Unavailable
+#define NVME_SC_NS_ATTACHED      0x0118 // Namespace Already Attached
+#define NVME_SC_NS_PRIVATE       0x0119 // Namespace Is Private
+#define NVME_SC_NS_NATTACHED     0x011A // Namespace Not Attached
+#define NVME_SC_THIN_PROV_SUPP   0x011B // Thin Provisioning Not Supported
+#define NVME_SC_BAD_CTRL_LIST    0x011C // Controller List Invalid
+#define NVME_SC_SELF_TEST        0x011D // Device Self-test In Progress
+#define NVME_SC_BOOT_PART_WP     0x011E // Boot Partition Write Prohibited
+#define NVME_SC_BAD_CTRL_ID      0x011F // Invalid Controller Identifier
+#define NVME_SC_BAD_CTRL_SEC     0x0120 // Invalid Secondary Controller State
+#define NVME_SC_BAD_CTRL_RES     0x0121 // Invalid Number of Controller Resources
+#define NVME_SC_BAD_RES_ID       0x0122 // Invalid Resource Identifier
+#define NVME_SC_SANITIZE_PMR     0x0123 // Sanitize Prohibited While PMR Enabled
+#define NVME_SC_ANA_GROUP_ID     0x0124 // ANA Group Identifier Invalid
+#define NVME_SC_ANA_ATTACH       0x0125 // ANA Attach Failed
+
+/*
+ * NVMe Command Specific Status Codes - IO command set
+ */
+#define NVME_SC_BAD_ATTRS        0x0180 // Conflicting Attributes
+#define NVME_SC_BAD_PROT         0x0181 // Invalid Protection Information
+#define NVME_SC_READONLY         0x0182 // Attempted Write to Read Only Range
 
 /*
  * NVMe Admin Command Set
@@ -133,18 +207,23 @@ PUSH_OPTIMIZATION_SIZE
 #define NVME_ADM_SET_FEATURE     0x09 // Set Features
 #define NVME_ADM_GET_FEATURE     0x0A // Get Features
 #define NVME_ADM_ASYNC_EVENT_REQ 0x0C // Asynchronous Event Request
-#define NVME_ADM_NAMESPACE_MGMT  0x0C // Namespace Management
-#define NVME_ADM_FIRMWARE_COMM   0x10 // Firmware Commit
-#define NVME_ADM_FIRMWARE_DOWN   0x11 // Firmware Image Download
-#define NVME_ADM_SELF_TEST       0x14 // Device Self-Test
-#define NVME_ADM_NAMESPACE_ATCH  0x15 // Namespace Attachment
-#define NVME_ADM_KEEP_ALIVE      0x18 // Keep Alive
-#define NVME_ADM_DIRECTIVE_SEND  0x19 // Directive Send
-#define NVME_ADM_DIRECTIVE_RECV  0x1A // Directive Receive
-#define NVME_ADM_VIRT_MGMT       0x1C // Virtualization Management
-#define NVME_ADM_NVME_MI_SEND    0x1D // NVMe-MI Send
-#define NVME_ADM_NVME_MI_RECV    0x1E // NVMe-MI Receive
-#define NVME_ADM_DBELL_BUFF_CFG  0x7C // Doorbell Buffer Config
+#define NVME_ADM_NAMESPACE_MGMT  0x0D // Namespace Management (Optional)
+#define NVME_ADM_FIRMWARE_COMM   0x10 // Firmware Commit (Optional)
+#define NVME_ADM_FIRMWARE_DOWN   0x11 // Firmware Image Download (Optional)
+#define NVME_ADM_SELF_TEST       0x14 // Device Self-Test (Optional)
+#define NVME_ADM_NAMESPACE_ATCH  0x15 // Namespace Attachment (Optional)
+#define NVME_ADM_KEEP_ALIVE      0x18 // Keep Alive (Optional)
+#define NVME_ADM_DIRECTIVE_SEND  0x19 // Directive Send (Optional)
+#define NVME_ADM_DIRECTIVE_RECV  0x1A // Directive Receive (Optional)
+#define NVME_ADM_VIRT_MGMT       0x1C // Virtualization Management (Optional)
+#define NVME_ADM_NVME_MI_SEND    0x1D // NVMe-MI Send (Optional)
+#define NVME_ADM_NVME_MI_RECV    0x1E // NVMe-MI Receive (Optional)
+#define NVME_ADM_DBELL_BUFF_CFG  0x7C // Doorbell Buffer Config (Optional)
+#define NVME_ADM_FORMAT_NVM      0x80 // Format NVM (Optional)
+#define NVME_ADM_SECURITY_SEND   0x81 // Security Send (Optional)
+#define NVME_ADM_SECURITY_RECV   0x82 // Security Receive (Optional)
+#define NVME_ADM_SANITIZE        0x84 // Sanitize (Optional)
+#define NVME_ADM_GET_LBA_STAT    0x86 // Get LBA Status (Optional)
 
 /*
  * Create IO Completion Queue Dword 11 bits
@@ -153,36 +232,73 @@ PUSH_OPTIMIZATION_SIZE
 #define NVME_CQ_FLAGS_IEN        0x02 // Interrupts Enabled
 
 /*
- * NVMe Identify command fields
+ * NVMe Get Log Page - Log Page Identifiers
  */
-#define NVME_IDENT_NAMESPACE     0x00 // Identify Namespace
-#define NVME_IDENT_CONTROLLER    0x01 // Identify Controller
-#define NVME_IDENT_NMSPC_LIST    0x02 // Identify Namespace List
-#define NVME_IDENT_NMSPC_DESC    0x03 // Identify Namespace Descriptors
+#define NVME_LOG_ERROR           0x01 // Error Information
+#define NVME_LOG_SMART           0x02 // SMART / Health Information
+#define NVME_LOG_FIRMWARE_SLOT   0x03 // Firmware Slot Information
+#define NVME_LOG_CHANGED_NS_LIST 0x04 // Changed Namespace List (Optional)
+#define NVME_LOG_CMD_SUPPORTED   0x05 // Commands Supported and Effects (Optional)
+#define NVME_LOG_SELF_TEST       0x06 // Device Self-Test (Optional)
+#define NVME_LOG_TELEMETRY_HOST  0x07 // Telemetry Host-Initiated (Optional)
+#define NVME_LOG_TELEMETRY_CTRL  0x08 // Telemetry Contoller-Initiated (Optional)
+#define NVME_LOG_EGRP_INFO       0x09 // Endurance Group Information (Optional)
+#define NVME_LOG_PRED_LAT_SET    0x0A // Predictable Latency Per NVM Set (Optional)
+#define NVME_LOG_PRED_LAT_AGGR   0x0B // Predictable Latency Event Aggregate (Optional)
+#define NVME_LOG_ASYMM_NS_ACCESS 0x0C // Asymmetric Namespace Access (Optional)
+#define NVME_LOG_PERSIST_EVENT   0x0D // Persistent Event Log (Optional)
+#define NVME_LOG_LBA_STATUS      0x0E // LBA Status Information (Optional)
+#define NVME_LOG_EGRP_AGGR       0x0F // Endurance Group Event Aggregate (Optional)
+#define NVME_LOG_DISCOVERY       0x70 // Discovery (Optional)
+#define NVME_LOG_RSV_NOTIFY      0x80 // Reservation Notification (Optional)
+#define NVME_LOG_SANITIZE_STAT   0x81 // Sanitize Status (Optional)
 
 /*
- * NVMe Set Feature command fields
+ * NVMe Identify - CNS Identifiers
+ */
+#define NVME_CNS_NAMESPACE       0x00 // Identify Namespace
+#define NVME_CNS_CONTROLLER      0x01 // Identify Controller
+#define NVME_CNS_NSID_LIST       0x02 // Identify Namespace List
+#define NVME_CNS_NSID_DESC       0x03 // Identify Namespace Descriptors
+#define NVME_CNS_NVM_SET_LIST    0x04 // Identify NVM Set List (Optional)
+#define NVME_CNS_ALLOC_NSID      0x10 // Identify Allocated Namespace ID List (Optional)
+#define NVME_CNS_ALLOC_NAMESPACE 0x11 // Identify Allocated Namespace (Optional)
+#define NVME_CNS_CTRL_NSID_LIST  0x12 // Identify Controller List attached to NSID (Optional)
+#define NVME_CNS_CTRL_LIST       0x13 // Identify Controller List in the NVM subsystem (Optional)
+#define NVME_CNS_CTRL_CAPS       0x14 // Identify Primary Controller Capabilities (Optional)
+#define NVME_CNS_CTRL_SECONDARY  0x15 // Identify Secondary Controller List (Optional)
+#define NVME_CNS_NS_GRANULARITY  0x15 // Identify Namespace Granularity List (Optional)
+#define NVME_CNS_UUID_LIST       0x17 // Identify UUID List (Optional)
+
+/*
+ * NVMe Get/Set Feature - Feature Identifiers
  */
 #define NVME_FEAT_ARBITRATION    0x01 // Arbitration
 #define NVME_FEAT_POWER_MGMT     0x02 // Power Management
+#define NVME_FEAT_LBA_RANGE      0x03 // LBA Range Type (Optional)
 #define NVME_FEAT_TEMP_THRESH    0x04 // Temperature Threshold
 #define NVME_FEAT_ERROR_RECOVER  0x05 // Error Recovery
-#define NVME_FEAT_VOLATILE_WC    0x06 // Volatile Write Cache
+#define NVME_FEAT_VOLATILE_WC    0x06 // Volatile Write Cache (Optional)
 #define NVME_FEAT_NUM_QUEUES     0x07 // Number of Queues
 #define NVME_FEAT_IRQ_COALESCE   0x08 // Interrupt Coalescing
 #define NVME_FEAT_IRQ_VECTOR     0x09 // Interrupt Vector Configuration
 #define NVME_FEAT_WR_ATOMIC      0x0A // Write Atomicity Normal
 #define NVME_FEAT_ASYNC_EVENT    0x0B // Asynchronous Event Configuration
-#define NVME_FEAT_KPALIVE_TIMER  0x0F // Keep Alive Timer
-#define NVME_FEAT_HC_THERM_MGMT  0x10 // Host-Controlled Thrermal Management
-#define NVME_FEAT_NONOP_PWR_CFG  0x11 // Non-Operational Power State Config
-#define NVME_FEAT_RDRECOVER_LVL  0x12 // Read Recovery Level Config
-#define NVME_FEAT_PRED_LAT_CFG   0x13 // Predictable Latency Mode Config
-#define NVME_FEAT_PRED_LAT_WIN   0x14 // Predictable Latenct Mode Window
-#define NVME_FEAT_LBA_STAT_INF   0x15 // LBA Status Information Attributes
-#define NVME_FEAT_HOST_BEHAVIOR  0x16 // Host Behavior Support
-#define NVME_FEAT_SANITIZE_CFG   0x17 // Sanitize Config
-#define NVME_FEAT_EGRP_EVT_CFG   0x18 // Endurance Group Event Configuration
+#define NVME_FEAT_AUTO_PWSTATE   0x0C // Autonomous Power State Transition (Optional)
+#define NVME_FEAT_HOST_MEM_BUFF  0x0D // Host Memory Buffer (Optional)
+#define NVME_FEAT_TIMESTAMP      0x0E // Timestamp (Optional)
+#define NVME_FEAT_KPALIVE_TIMER  0x0F // Keep Alive Timer (Optional)
+#define NVME_FEAT_HOST_THERMAL   0x10 // Host-Controlled Thrermal Management (Optional)
+#define NVME_FEAT_NONOP_PWR_CFG  0x11 // Non-Operational Power State Config (Optional)
+#define NVME_FEAT_RDRECOVER_LVL  0x12 // Read Recovery Level Config (Optional)
+#define NVME_FEAT_PRED_LAT_CFG   0x13 // Predictable Latency Mode Config (Optional)
+#define NVME_FEAT_PRED_LAT_WIN   0x14 // Predictable Latency Mode Window (Optional)
+#define NVME_FEAT_LBA_STAT_INF   0x15 // LBA Status Information Attributes (Optional)
+#define NVME_FEAT_HOST_BEHAVIOR  0x16 // Host Behavior Support (Optional)
+#define NVME_FEAT_SANITIZE_CFG   0x17 // Sanitize Config (Optional)
+#define NVME_FEAT_EGRP_EVT_CFG   0x18 // Endurance Group Event Configuration (Optional)
+#define NVME_FEAT_SW_PROGRESS    0x80 // Software Progress Marker (Optional)
+#define NVME_FEAT_HOST_IDENT     0x81 // Host Identifier (Optional)
 
 /*
  * NVMe IO Command Set
@@ -190,8 +306,15 @@ PUSH_OPTIMIZATION_SIZE
 #define NVME_IO_FLUSH            0x00 // Flush buffers
 #define NVME_IO_WRITE            0x01 // Write
 #define NVME_IO_READ             0x02 // Read
-#define NVME_IO_WRITEZ           0x08 // Write Zeroes
-#define NVME_IO_DTSM             0x09 // Dataset Management
+#define NVME_IO_WRITE_UNC        0x04 // Write Uncorrectable (Optional)
+#define NVME_IO_COMPARE          0x05 // Compare (Optional)
+#define NVME_IO_WRITE_ZEROES     0x08 // Write Zeroes (Optional)
+#define NVME_IO_DTSM             0x09 // Dataset Management (Optional)
+#define NVME_IO_VERIFY           0x0C // Verify (Optional)
+#define NVME_IO_RSV_REGISTER     0x0D // Reservation Register (Optional)
+#define NVME_IO_RSV_REPORT       0x0E // Reservation Report (Optional)
+#define NVME_IO_RSV_ACQUIRE      0x11 // Reservation Acquire (Optional)
+#define NVME_IO_RSV_RELEASE      0x15 // Reservation Release (Optional)
 
 /*
  * NVMe Implementation constants
@@ -513,69 +636,24 @@ static void* nvme_get_prp_region(nvme_dev_t* nvme, nvme_cmd_t* cmd, size_t* size
 
 static void nvme_copy_to_prp(nvme_dev_t* nvme, nvme_cmd_t* cmd, const void* data, size_t size)
 {
-    while (size) {
+    while (true) {
         size_t reg_size = 0;
         void*  region   = nvme_get_prp_region(nvme, cmd, &reg_size);
-        if (region) {
-            reg_size = EVAL_MIN(reg_size, size);
-            memcpy(region, data, reg_size);
-            data  = (const void*)(((const uint8_t*)data) + reg_size);
-            size -= reg_size;
-        } else {
+        if (!region) {
             break;
+        }
+        size_t to_copy = EVAL_MIN(reg_size, size);
+        if (to_copy) {
+            memcpy(region, data, to_copy);
+            region    = (void*)(((uint8_t*)region) + to_copy);
+            reg_size -= to_copy;
+            data      = (const void*)(((const uint8_t*)data) + to_copy);
+            size     -= to_copy;
+        }
+        if (reg_size) {
+            memset(region, 0, reg_size);
         }
     }
-}
-
-static void nvme_identify(nvme_dev_t* nvme, nvme_cmd_t* cmd)
-{
-    uint8_t* buf = safe_new_arr(uint8_t, NVME_PAGE_SIZE);
-    uint8_t  idt = cmd->sqe[NVME_SQE_CDW10];
-    switch (idt) {
-        case NVME_IDENT_NAMESPACE: {
-            uint64_t lbas = rvvm_blk_get_size(nvme->blk) >> NVME_LBA_SHIFT;
-            write_uint64_le(buf, lbas);
-            write_uint64_le(buf + 8, lbas);
-            write_uint64_le(buf + 16, lbas);
-            buf[130] = NVME_LBA_SHIFT;
-            break;
-        }
-        case NVME_IDENT_CONTROLLER: {
-            // Controller identification
-            memcpy(buf + 4, nvme->serial, sizeof(nvme->serial)); // Serial Number
-            rvvm_strlcpy((char*)buf + 24, "NVMe Storage", 40);   // Model
-            rvvm_strlcpy((char*)buf + 64, "R2570", 8);           // Firmware Revision
-            write_uint32_le(buf + 80, NVME_VS_VERSION);          // Version
-
-            // Controller features
-            buf[111] = 1;    // Controller Type: I/O Controller
-            buf[512] = 0x66; // Submission Queue Max/Cur Entry Size
-            buf[513] = 0x44; // Completion Queue Max/Cur Entry Size
-            buf[516] = 1;    // Number of Namespaces
-            buf[520] = 0x4;  // Supports Dataset Management (TRIM)
-
-            // NVMe Qualified Name (Includes serial to distinguish targets)
-            size_t nqn_off = rvvm_strlcpy(((char*)buf) + 768, "nqn.2022-04.lekkit:nvme:", 256);
-            memcpy(buf + 768 + nqn_off, nvme->serial, sizeof(nvme->serial));
-            break;
-        }
-        case NVME_IDENT_NMSPC_LIST:
-            write_uint32_le(buf, 0x1); // Namespace #1
-            break;
-        case NVME_IDENT_NMSPC_DESC:
-            buf[0] = 3;  // Namespace uses UUID
-            buf[1] = 16; // UUID length
-            break;
-        default:
-            rvvm_debug("NVMe identify %#04x unimplemented", idt);
-            nvme_complete_cmd(nvme, cmd, NVME_SC_BAD_FIELD);
-            safe_free(buf);
-            return;
-    }
-    nvme_prepare_prp(cmd, NVME_PAGE_SIZE);
-    nvme_copy_to_prp(nvme, cmd, buf, NVME_PAGE_SIZE);
-    nvme_complete_cmd(nvme, cmd, NVME_SC_SUCCESS);
-    safe_free(buf);
 }
 
 static void nvme_create_io_sq(nvme_dev_t* nvme, nvme_cmd_t* cmd)
@@ -592,13 +670,13 @@ static void nvme_create_io_sq(nvme_dev_t* nvme, nvme_cmd_t* cmd)
         nvme_complete_cmd(nvme, cmd, NVME_SC_BAD_FIELD);
     } else if (!sq_size) {
         // Queue size invalid
-        nvme_complete_cmd_cs(nvme, cmd, NVME_SC_BAD_FIELD, NVME_CS_SIZE_INVALID);
+        nvme_complete_cmd(nvme, cmd, NVME_SC_BAD_QUEUE_SIZE);
     } else if (!sq_id || !sq || nvme_queue_size(sq)) {
         // Submission queue ID invalid or already in use
-        nvme_complete_cmd_cs(nvme, cmd, NVME_SC_BAD_FIELD, NVME_CS_ID_INVALID);
+        nvme_complete_cmd(nvme, cmd, NVME_SC_BAD_QUEUE_ID);
     } else if (!cq || !nvme_queue_size(cq)) {
         // Completion queue invalid
-        nvme_complete_cmd_cs(nvme, cmd, NVME_SC_BAD_FIELD, NVME_CS_CQ_INVALID);
+        nvme_complete_cmd(nvme, cmd, NVME_SC_BAD_CQ);
     } else {
         nvme_queue_setup(sq, sq_addr, sq_size, cq_id);
         nvme_complete_cmd(nvme, cmd, NVME_SC_SUCCESS);
@@ -617,10 +695,10 @@ static void nvme_create_io_cq(nvme_dev_t* nvme, nvme_cmd_t* cmd)
         nvme_complete_cmd(nvme, cmd, NVME_SC_BAD_FIELD);
     } else if (!cq_size) {
         // Queue size invalid
-        nvme_complete_cmd_cs(nvme, cmd, NVME_SC_BAD_FIELD, NVME_CS_SIZE_INVALID);
+        nvme_complete_cmd(nvme, cmd, NVME_SC_BAD_QUEUE_SIZE);
     } else if (!cq_id || !cq || nvme_queue_size(cq)) {
         // Completion queue ID invalid or already in use
-        nvme_complete_cmd_cs(nvme, cmd, NVME_SC_BAD_FIELD, NVME_CS_ID_INVALID);
+        nvme_complete_cmd(nvme, cmd, NVME_SC_BAD_QUEUE_ID);
     } else {
         nvme_queue_lower_irq(nvme, cq);
         nvme_queue_setup(cq, cq_addr, cq_size, cq_flag);
@@ -634,7 +712,7 @@ static void nvme_delete_io_queue(nvme_dev_t* nvme, nvme_cmd_t* cmd, bool is_cq)
     nvme_queue_t* queue    = is_cq ? nvme_get_cq(nvme, queue_id) : nvme_get_sq(nvme, queue_id);
     if (!queue_id || !queue) {
         // Queue ID invalid
-        nvme_complete_cmd_cs(nvme, cmd, NVME_SC_BAD_FIELD, NVME_CS_ID_INVALID);
+        nvme_complete_cmd(nvme, cmd, NVME_SC_BAD_QUEUE_ID);
     } else {
         if (is_cq) {
             nvme_queue_lower_irq(nvme, queue);
@@ -642,6 +720,89 @@ static void nvme_delete_io_queue(nvme_dev_t* nvme, nvme_cmd_t* cmd, bool is_cq)
         nvme_queue_setup(queue, 0, 0, 0);
         nvme_complete_cmd(nvme, cmd, NVME_SC_SUCCESS);
     }
+}
+
+static void nvme_get_log_page(nvme_dev_t* nvme, nvme_cmd_t* cmd)
+{
+    uint8_t* buf = safe_new_arr(uint8_t, NVME_PAGE_SIZE);
+    uint8_t  log = cmd->sqe[NVME_SQE_CDW10];
+    switch (log) {
+        case NVME_LOG_ERROR:
+        case NVME_LOG_FIRMWARE_SLOT:
+            break;
+        case NVME_LOG_SMART:
+            write_uint16_le_m(&buf[1], 315); // Temperature (In Kelvins)
+            write_uint8(&buf[3], 94);        // Available Spare Percent
+            write_uint8(&buf[4], 10);        // Available Spare Threshold
+            break;
+        default:
+            rvvm_debug("NVMe log page %#04x unimplemented", log);
+            nvme_complete_cmd(nvme, cmd, NVME_SC_BAD_FIELD);
+            safe_free(buf);
+            return;
+    }
+    nvme_prepare_prp(cmd, read_uint32_le(&cmd->sqe[NVME_SQE_CDW10]) >> 16);
+    nvme_copy_to_prp(nvme, cmd, buf, NVME_PAGE_SIZE);
+    nvme_complete_cmd(nvme, cmd, NVME_SC_SUCCESS);
+    safe_free(buf);
+}
+
+static void nvme_identify(nvme_dev_t* nvme, nvme_cmd_t* cmd)
+{
+    uint8_t* buf = safe_new_arr(uint8_t, NVME_PAGE_SIZE);
+    uint8_t  idt = cmd->sqe[NVME_SQE_CDW10];
+    switch (idt) {
+        case NVME_CNS_NAMESPACE: {
+            // Namespace usage
+            uint64_t lbas = rvvm_blk_get_size(nvme->blk) >> NVME_LBA_SHIFT;
+            write_uint64_le(&buf[0], lbas);
+            write_uint64_le(&buf[8], lbas);
+            write_uint64_le(&buf[16], lbas);
+
+            // Namespace features
+            buf[33]  = 0x09;           // Deallocated blocks read as zero; Supports Deallocate bit in Write Zeroes
+            buf[130] = NVME_LBA_SHIFT; // LBA Format: 512b logical blocks
+            break;
+        }
+        case NVME_CNS_CONTROLLER: {
+            // Controller identification
+            memcpy(&buf[4], nvme->serial, sizeof(nvme->serial)); // Serial Number
+            rvvm_strlcpy((char*)&buf[24], "NVMe Storage", 40);   // Model
+            rvvm_strlcpy((char*)&buf[64], "R2579", 8);           // Firmware Revision
+            write_uint32_le(&buf[80], NVME_VS_VERSION);          // Version
+
+            // Controller features
+            buf[72]  = 0x02; // Recommended Arbitration Burst
+            buf[111] = 0x01; // Controller Type: I/O Controller
+            buf[512] = 0x66; // Submission Queue Max/Cur Entry Size
+            buf[513] = 0x44; // Completion Queue Max/Cur Entry Size
+            buf[516] = 0x01; // Number of Namespaces
+            buf[520] = 0x04; // Supports Dataset Management (TRIM)
+            buf[526] = 0x07; // Atomic Write Unit Normal: 4kb
+            buf[528] = 0x07; // Atomic Write Unit Power Fail: 4kb
+
+            // NVMe Qualified Name (Includes serial to distinguish targets)
+            size_t nqn_off = rvvm_strlcpy((char*)&buf[768], "nqn.2022-04.lekkit:nvme:", 256);
+            memcpy(&buf[768 + nqn_off], nvme->serial, sizeof(nvme->serial));
+            break;
+        }
+        case NVME_CNS_NSID_LIST:
+            write_uint32_le(buf, 0x01); // Namespace #1
+            break;
+        case NVME_CNS_NSID_DESC:
+            buf[0] = 0x03; // Namespace uses UUID
+            buf[1] = 0x10; // UUID length
+            break;
+        default:
+            rvvm_debug("NVMe identify CNS %#04x unimplemented", idt);
+            nvme_complete_cmd(nvme, cmd, NVME_SC_BAD_FIELD);
+            safe_free(buf);
+            return;
+    }
+    nvme_prepare_prp(cmd, NVME_PAGE_SIZE);
+    nvme_copy_to_prp(nvme, cmd, buf, NVME_PAGE_SIZE);
+    nvme_complete_cmd(nvme, cmd, NVME_SC_SUCCESS);
+    safe_free(buf);
 }
 
 static void nvme_handle_feature(nvme_dev_t* nvme, nvme_cmd_t* cmd, bool set)
@@ -687,9 +848,6 @@ static void nvme_admin_cmd(nvme_dev_t* nvme, nvme_cmd_t* cmd)
 {
     uint8_t opcode = cmd->sqe[NVME_SQE_CDW0];
     switch (opcode) {
-        case NVME_ADM_IDENTIFY:
-            nvme_identify(nvme, cmd);
-            return;
         case NVME_ADM_CREATE_IO_SQ:
             nvme_create_io_sq(nvme, cmd);
             return;
@@ -700,14 +858,19 @@ static void nvme_admin_cmd(nvme_dev_t* nvme, nvme_cmd_t* cmd)
         case NVME_ADM_DELETE_IO_CQ:
             nvme_delete_io_queue(nvme, cmd, opcode == NVME_ADM_DELETE_IO_CQ);
             return;
+        case NVME_ADM_GET_LOG_PAGE:
+            nvme_get_log_page(nvme, cmd);
+            return;
+        case NVME_ADM_IDENTIFY:
+            nvme_identify(nvme, cmd);
+            return;
+        case NVME_ADM_ABORT:
+            nvme_complete_cmd_cs(nvme, cmd, NVME_SC_SUCCESS, 1);
+            return;
         case NVME_ADM_SET_FEATURE:
         case NVME_ADM_GET_FEATURE:
             nvme_handle_feature(nvme, cmd, opcode == NVME_ADM_DELETE_IO_CQ);
             return;
-        case NVME_ADM_ABORT:
-        case NVME_ADM_SELF_TEST:
-            // Stubs
-            nvme_complete_cmd(nvme, cmd, NVME_SC_SUCCESS);
             return;
         case NVME_ADM_ASYNC_EVENT_REQ:
             // Nothing ever happens
