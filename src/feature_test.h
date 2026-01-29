@@ -11,9 +11,13 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define _FEATURE_TEST_H
 
 /*
- * Detect most POSIX/Win32 systems we ever wish to support
+ * Detect most operating systems we ever wish to support.
  *
- * - Any POSIX system defines HOST_TARGET_POSIX to expected POSIX version (200809L, etc)
+ * Any POSIX system defines HOST_TARGET_POSIX to expected POSIX version (200809L, etc):
+ * - POSIX 1003.1b-1993 (Issue 4): 199309L (Introduced shared memory, nanosleep, clock_gettime, etc)
+ * - POSIX 1003.1c-1995 (Issue 5): 199506L (Introduced pthreads)
+ * - POSIX 1003.1-2001  (Issue 6): 200112L (Introduced pread/pwrite, CLOCK_MONOTONIC, etc)
+ * - POSIX 1003.1-2008  (Issue 7): 200809L (Introduced openat, posix_spawn, pthread_cond clock attribute, etc)
  *
  * - Any BSD defines HOST_TARGET_BSD
  * - Android defines HOST_TARGET_LINUX
@@ -179,8 +183,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #elif defined(__GNU__) || defined(__gnu_hurd__)
 #define HOST_TARGET_POSIX 200809L
 #define HOST_TARGET_HURD  1
-#elif defined(__sgi)
-#define HOST_TARGET_POSIX 199309L
+#elif defined(__IRIX__) || defined(__sgi)
+#define HOST_TARGET_POSIX 199506L
 #define HOST_TARGET_IRIX  1
 #elif defined(__AIX)
 #define HOST_TARGET_POSIX 200112L
@@ -188,7 +192,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #elif defined(__MSDOS__) || defined(__MSDOS) || defined(__DJGPP__) || defined(__DJGPP)
 #define HOST_TARGET_DOS 1
 #elif defined(__VMS)
-#define HOST_TARGET_POSIX 200112L
+#define HOST_TARGET_POSIX 199506L
 #define HOST_TARGET_VMS   1
 #elif defined(__QNX__)
 #define HOST_TARGET_POSIX 200809L
