@@ -65,13 +65,13 @@ PUSH_OPTIMIZATION_SIZE
 
 // Use Linux futexes (Linux 2.6.22+)
 #include <sys/syscall.h> // For __NR_futex, __NR_futex_time64
-#if !defined(__NR_futex) && defined(__NR_futex_time64)
-#define __NR_futex __NR_futex_time64
+#if !defined(__NR_futex_time64) && defined(__NR_futex)
+#define __NR_futex_time64 __NR_futex
 #endif
 #if defined(__NR_epoll_create) && CHECK_INCLUDE(linux/futex.h, 1)
 #include <linux/futex.h> // For FUTEX_WAIT_PRIVATE, FUTEX_WAKE_PRIVATE
 #endif
-#if defined(__NR_futex) && defined(FUTEX_WAIT_PRIVATE) && defined(FUTEX_WAKE_PRIVATE)
+#if defined(__NR_futex_time64) && defined(FUTEX_WAIT_PRIVATE) && defined(FUTEX_WAKE_PRIVATE)
 #include <errno.h>
 #include <unistd.h> // For syscall()
 #define LINUX_FUTEX_IMPL  1
@@ -824,7 +824,7 @@ static uint32_t thread_futex_native_wait(void* ptr, uint32_t val, uint64_t ns)
 
 #if defined(LINUX_FUTEX_IMPL)
     sleep_low_latency(true);
-    FUTEX_RET(syscall(__NR_futex, ptr, FUTEX_WAIT_PRIVATE, val, tp, NULL, 0), EAGAIN)
+    FUTEX_RET(syscall(__NR_futex_time64, ptr, FUTEX_WAIT_PRIVATE, val, tp, NULL, 0), EAGAIN)
 #elif defined(FREEBSD_FUTEX_IMPL)
     void* ts_size = tp ? ((void*)(size_t)sizeof(ts)) : NULL;
     FUTEX_RET(_umtx_op(ptr, UMTX_OP_WAIT_UINT, val, ts_size, tp), EAGAIN)
@@ -849,7 +849,7 @@ static uint32_t thread_futex_native_wait(void* ptr, uint32_t val, uint64_t ns)
 static bool thread_futex_native_wake(void* ptr, uint32_t num)
 {
 #if defined(LINUX_FUTEX_IMPL)
-    return syscall(__NR_futex, ptr, FUTEX_WAKE_PRIVATE, num, NULL, NULL, 0) >= 0;
+    return syscall(__NR_futex_time64, ptr, FUTEX_WAKE_PRIVATE, num, NULL, NULL, 0) >= 0;
 #elif defined(FREEBSD_FUTEX_IMPL)
     return _umtx_op(ptr, UMTX_OP_WAKE, num, NULL, NULL) >= 0;
 #elif defined(OPENBSD_FUTEX_IMPL)
