@@ -46,7 +46,7 @@ typedef int    net_addrlen_t;
 #endif
 
 #if ((defined(HOST_TARGET_LINUX) && defined(__NR_epoll_create)) || defined(HOST_TARGET_ILLUMOS)) /**/                  \
-    && !defined(USE_SELECT) && CHECK_INCLUDE(sys/epoll.h, 1)
+    && !defined(USE_SELECT) && CHECK_INCLUDE(sys/epoll.h, 1) && GNU_ATTRIBUTE(__packed__)
 
 // Use epoll() for net_poll on Linux & Illumos
 #include <sys/epoll.h> // For struct epoll_event, epoll_create(), epoll_ctl(), epoll_wait(), EPOLL_CTL_ADD...
