@@ -1038,70 +1038,71 @@ static bool x11_window_init_internal(gui_window_t* win)
 
 static void x11_window_free(gui_window_t* win)
 {
-    x11_window_t* x11 = gui_backend_get_data(win);
-    if (x11) {
+    if (gui_backend_get_data(win)) {
         scoped_spin_lock (&x11_lock) {
             if (!x11_catch_error()) {
                 x11_window_free_internal(win);
             }
+            x11_window_t* x11 = gui_backend_get_data(win);
             if (x11->gc) {
                 // Display is dead, just free the GC structure
                 XFree(x11->gc);
             }
             x11_vram_free(win);
+            safe_free(x11);
         }
         x11_global_free();
-        safe_free(x11);
     }
     gui_backend_set_data(win, NULL);
 }
 
 static void x11_window_draw(gui_window_t* win, const rvvm_fb_t* fb, uint32_t x, uint32_t y)
 {
-    spin_lock(&x11_lock);
-    if (!x11_catch_error()) {
-        x11_window_draw_internal(win, fb, x, y);
+    scoped_spin_lock (&x11_lock) {
+        if (!x11_catch_error()) {
+            x11_window_draw_internal(win, fb, x, y);
+        }
     }
-    spin_unlock(&x11_lock);
 }
 
 static void x11_window_set_title(gui_window_t* win, const char* title)
 {
-    x11_window_t* x11 = gui_backend_get_data(win);
-    spin_lock(&x11_lock);
-    if (!x11_catch_error()) {
-        XStoreName(x11_display, x11->window, title);
-        XFlush(x11_display);
+    scoped_spin_lock (&x11_lock) {
+        if (!x11_catch_error()) {
+            x11_window_t* x11 = gui_backend_get_data(win);
+            XStoreName(x11_display, x11->window, title);
+            XFlush(x11_display);
+        }
     }
-    spin_unlock(&x11_lock);
 }
 
 static void x11_window_grab_input(gui_window_t* win, bool grab)
 {
-    spin_lock(&x11_lock);
-    if (!x11_catch_error()) {
-        x11_window_grab_input_internal(win, grab);
+    scoped_spin_lock (&x11_lock) {
+        if (!x11_catch_error()) {
+            x11_window_grab_input_internal(win, grab);
+        }
     }
-    spin_unlock(&x11_lock);
 }
 
 static void x11_window_hide_cursor(gui_window_t* win, bool hide)
 {
-    spin_lock(&x11_lock);
-    if (!x11_catch_error()) {
-        x11_window_hide_cursor_internal(win, hide);
+    scoped_spin_lock (&x11_lock) {
+        if (!x11_catch_error()) {
+            x11_window_hide_cursor_internal(win, hide);
+        }
     }
-    spin_unlock(&x11_lock);
 }
 
 static void x11_window_set_win_size(gui_window_t* win, uint32_t w, uint32_t h)
 {
-    spin_lock(&x11_lock);
-    if (!x11_catch_error()) {
-        XResizeWindow(x11_display, ((x11_window_t*)gui_backend_get_data(win))->window, w, h);
-        XFlush(x11_display);
+    scoped_spin_lock (&x11_lock) {
+        if (!x11_catch_error()) {
+            x11_window_t* x11 = gui_backend_get_data(win);
+            XResizeWindow(x11_display, x11->window, w, h);
+            XFlush(x11_display);
+        }
     }
-    spin_unlock(&x11_lock);
 }
 
 static void x11_window_set_min_size(gui_window_t* win, uint32_t w, uint32_t h)
@@ -1111,44 +1112,44 @@ static void x11_window_set_min_size(gui_window_t* win, uint32_t w, uint32_t h)
         .min_width  = w,
         .min_height = h,
     };
-    x11_window_t* x11 = gui_backend_get_data(win);
-    spin_lock(&x11_lock);
-    if (!x11_catch_error()) {
-        XSetWMNormalHints(x11_display, x11->window, &hints);
-        XFlush(x11_display);
+    scoped_spin_lock (&x11_lock) {
+        if (!x11_catch_error()) {
+            x11_window_t* x11 = gui_backend_get_data(win);
+            XSetWMNormalHints(x11_display, x11->window, &hints);
+            XFlush(x11_display);
+        }
     }
-    spin_unlock(&x11_lock);
 }
 
 static void x11_window_get_position(gui_window_t* win, int32_t* x, int32_t* y)
 {
     x11_window_t* x11 = gui_backend_get_data(win);
-    spin_lock(&x11_lock);
-    *x = x11->pos_x;
-    *y = x11->pos_y;
-    spin_unlock(&x11_lock);
+    scoped_spin_lock (&x11_lock) {
+        *x = x11->pos_x;
+        *y = x11->pos_y;
+    }
 }
 
 static void x11_window_set_position(gui_window_t* win, int32_t x, int32_t y)
 {
-    x11_window_t* x11 = gui_backend_get_data(win);
-    spin_lock(&x11_lock);
-    if (!x11_catch_error()) {
-        XMoveWindow(x11_display, x11->window, x, y);
-        XFlush(x11_display);
+    scoped_spin_lock (&x11_lock) {
+        if (!x11_catch_error()) {
+            x11_window_t* x11 = gui_backend_get_data(win);
+            XMoveWindow(x11_display, x11->window, x, y);
+            XFlush(x11_display);
+        }
     }
-    spin_unlock(&x11_lock);
 }
 
 static void x11_window_get_scr_size(gui_window_t* win, uint32_t* w, uint32_t* h)
 {
     UNUSED(win);
-    spin_lock(&x11_lock);
-    if (!x11_catch_error()) {
-        *w = DisplayWidth(x11_display, DefaultScreen(x11_display));
-        *h = DisplayHeight(x11_display, DefaultScreen(x11_display));
+    scoped_spin_lock (&x11_lock) {
+        if (!x11_catch_error()) {
+            *w = DisplayWidth(x11_display, DefaultScreen(x11_display));
+            *h = DisplayHeight(x11_display, DefaultScreen(x11_display));
+        }
     }
-    spin_unlock(&x11_lock);
 }
 
 static const gui_backend_cb_t x11_window_cb = {
