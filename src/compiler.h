@@ -257,14 +257,14 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // Force-inline this function
 #undef forceinline
-#if !defined(USE_NO_FORCEINLINE) && !defined(__SANITIZE_THREAD__)                                                      \
-    && (GCC_CHECK_VER(3, 3) || GNU_ATTRIBUTE(__always_inline__))
-// ThreadSanitizer doesn't play well with __always_inline__
+#if !defined(USE_NO_FORCEINLINE) && (GCC_CHECK_VER(3, 3) || GNU_ATTRIBUTE(__always_inline__)) /**/                     \
+    && !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__)
+// Sanitizers don't play well with __always_inline__
 #define forceinline inline __attribute__((__always_inline__))
 #elif !defined(USE_NO_FORCEINLINE) && defined(COMPILER_IS_MSVC)
 #define forceinline __forceinline
 #else
-#define forceinline inline GNU_DUMMY_ATTRIBUTE
+#define forceinline inline
 #endif
 
 // Never inline this function
@@ -545,9 +545,17 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define deallocate_with(deallocator) warn_unused_ret
 #endif
 
+// Suppress AddressSanitizer for a function with false positives
+#undef ASAN_SUPPRESS
+#if defined(__SANITIZE_ADDRESS__) && GNU_ATTRIBUTE(__no_sanitize__)
+#define ASAN_SUPPRESS __attribute__((__no_sanitize__("address")))
+#else
+#define ASAN_SUPPRESS GNU_DUMMY_ATTRIBUTE
+#endif
+
 // Suppress ThreadSanitizer for a function with false positives
 #undef TSAN_SUPPRESS
-#if !defined(USE_SANITIZE_FULL) && defined(__SANITIZE_THREAD__) && GNU_ATTRIBUTE(__no_sanitize__)
+#if defined(__SANITIZE_THREAD__) && GNU_ATTRIBUTE(__no_sanitize__)
 #define TSAN_SUPPRESS __attribute__((__no_sanitize__("thread")))
 #else
 #define TSAN_SUPPRESS GNU_DUMMY_ATTRIBUTE
@@ -555,7 +563,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // Suppress MemorySanitizer for a function with false positives
 #undef MSAN_SUPPRESS
-#if !defined(USE_SANITIZE_FULL) && defined(__SANITIZE_MEMORY__) && GNU_ATTRIBUTE(__no_sanitize__)
+#if defined(__SANITIZE_MEMORY__) && GNU_ATTRIBUTE(__no_sanitize__)
 #define MSAN_SUPPRESS __attribute__((__no_sanitize__("memory")))
 #else
 #define MSAN_SUPPRESS GNU_DUMMY_ATTRIBUTE
