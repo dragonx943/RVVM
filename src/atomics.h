@@ -274,6 +274,13 @@ void atomic_thread_fence(int memorder);
 #define ATOMIC_EMU64_IMPL 1
 #endif
 
+#if defined(__riscv) && GCC_CHECK_VER(4, 1) && !GCC_CHECK_VER(14, 1)
+/*
+ * Workaround atomic CAS miscompilation on RISC-V GCC <14.1
+ */
+#define RISCV_CAS_WORKAROUND 1
+#endif
+
 #if defined(ATOMIC_EMU32_IMPL) || defined(ATOMIC_EMU64_IMPL)
 slow_path void atomic_emu_lock(const void* ptr);
 slow_path void atomic_emu_unlock(const void* ptr);
@@ -323,22 +330,15 @@ static forceinline bool atomic_cas_uint32_ex(void* addr, uint32_t* exp, uint32_t
     *exp = orig;
     atomic_emu_unlock(addr);
     return orig == chck;
-#elif defined(__riscv) && GCC_CHECK_VER(7, 0) && !GCC_CHECK_VER(14, 1)
-    /*
-     * Workaround atomic CAS miscompilation on RISC-V GCC <14.1
-     */
-    uint32_t chck = *exp;
-    __atomic_compare_exchange_n((uint32_t*)addr, exp, val, false, succ, fail);
-    return chck == *exp;
-#elif defined(GNU_ATOMICS_IMPL)
+#elif defined(GNU_ATOMICS_IMPL) && !defined(RISCV_CAS_WORKAROUND)
     return __atomic_compare_exchange_n((uint32_t*)addr, exp, val, weak, succ, fail);
-#elif defined(C11_ATOMICS_IMPL)
+#elif defined(C11_ATOMICS_IMPL) && !defined(RISCV_CAS_WORKAROUND)
     if (weak) {
         return atomic_compare_exchange_weak_explicit((_Atomic uint32_t*)addr, exp, val, succ, fail);
     } else {
         return atomic_compare_exchange_strong_explicit((_Atomic uint32_t*)addr, exp, val, succ, fail);
     }
-#elif defined(SYNC_ATOMICS_IMPL)
+#elif defined(SYNC_ATOMICS_IMPL) || defined(RISCV_CAS_WORKAROUND)
     uint32_t chck = *exp;
     uint32_t orig = __sync_val_compare_and_swap((uint32_t*)addr, chck, val);
     *exp          = orig;
@@ -635,6 +635,299 @@ static forceinline uint32_t atomic_or_uint32(void* addr, uint32_t val)
 }
 
 /*
+ * Atomic 64-bit operations
+ */
+
+static forceinline bool atomic_cas_uint64_ex(void* addr, uint64_t* exp, uint64_t val, //
+                                             bool weak, int succ, int fail)
+{
+    UNUSED(weak && succ && fail);
+#if defined(ATOMIC_EMU64_IMPL)
+    uint64_t chck = *exp;
+    atomic_emu_lock(addr);
+    uint64_t orig = *(uint64_t*)addr;
+    if (orig == chck) {
+        *(uint64_t*)addr = val;
+    }
+    *exp = orig;
+    atomic_emu_unlock(addr);
+    return orig == chck;
+#elif defined(GNU_ATOMICS_IMPL) && !defined(RISCV_CAS_WORKAROUND)
+    return __atomic_compare_exchange_n((uint64_t*)addr, exp, val, weak, succ, fail);
+#elif defined(C11_ATOMICS_IMPL) && !defined(RISCV_CAS_WORKAROUND)
+    if (weak) {
+        return atomic_compare_exchange_weak_explicit((_Atomic uint64_t*)addr, exp, val, succ, fail);
+    } else {
+        return atomic_compare_exchange_strong_explicit((_Atomic uint64_t*)addr, exp, val, succ, fail);
+    }
+#elif defined(SYNC_ATOMICS_IMPL) || defined(RISCV_CAS_WORKAROUND)
+    uint64_t chck = *exp;
+    uint64_t orig = __sync_val_compare_and_swap((uint64_t*)addr, chck, val);
+    *exp          = orig;
+    return orig == chck;
+#elif defined(WIN32_ATOMICS_IMPL)
+    uint64_t chck = *exp;
+    uint64_t orig = InterlockedCompareExchange64((LONG64*)addr, val, chck);
+    *exp          = orig;
+    return orig == chck;
+#elif defined(LIBATOMIC_IMPL)
+    return __atomic_compare_exchange_8((uint64_t*)addr, exp, val, weak, succ, fail);
+#endif
+}
+
+static forceinline bool atomic_cas_uint64_loop(void* addr, uint64_t* exp, uint64_t val)
+{
+    return atomic_cas_uint64_ex(addr, exp, val, true, ATOMIC_ACQ_REL, ATOMIC_RELAXED);
+}
+
+static forceinline bool atomic_cas_uint64_try(void* addr, uint64_t exp, uint64_t val, bool weak, int memorder)
+{
+    return atomic_cas_uint64_ex(addr, &exp, val, weak, memorder, ATOMIC_RELAXED);
+}
+
+static forceinline bool atomic_cas_uint64(void* addr, uint64_t exp, uint64_t val)
+{
+    return atomic_cas_uint64_try(addr, exp, val, false, ATOMIC_ACQ_REL);
+}
+
+static forceinline uint64_t atomic_load_uint64_ex(const void* addr, int memorder)
+{
+    UNUSED(memorder);
+#if !defined(ATOMIC_EMU64_IMPL) && defined(GNU_ATOMICS_IMPL)
+    return __atomic_load_n(NONCONST_CAST(uint64_t*, addr), memorder);
+#elif !defined(ATOMIC_EMU64_IMPL) && defined(C11_ATOMICS_IMPL)
+    return atomic_load_explicit(NONCONST_CAST(_Atomic uint64_t*, addr), memorder);
+#else
+    if (likely(atomic_ordering_is_natural(memorder) && sizeof(void*) >= sizeof(uint64_t))) {
+        return *(const volatile uint64_t*)addr;
+    }
+#if defined(LIBATOMIC_IMPL)
+    return __atomic_load_8(NONCONST_CAST(uint64_t*, addr), memorder);
+#else
+    uint64_t tmp = 0;
+    atomic_cas_uint64_ex(NONCONST_CAST(void*, addr), &tmp, tmp, true, memorder, memorder);
+    return tmp;
+#endif
+#endif
+}
+
+static forceinline uint64_t atomic_load_uint64_relax(const void* addr)
+{
+    return atomic_load_uint64_ex(addr, ATOMIC_RELAXED);
+}
+
+static forceinline uint64_t atomic_load_uint64(const void* addr)
+{
+    return atomic_load_uint64_ex(addr, ATOMIC_ACQUIRE);
+}
+
+static forceinline uint64_t atomic_swap_uint64_ex(void* addr, uint64_t val, int memorder)
+{
+    UNUSED(memorder);
+#if defined(ATOMIC_EMU64_IMPL)
+    atomic_emu_lock(addr);
+    uint64_t ret     = *(uint64_t*)addr;
+    *(uint64_t*)addr = val;
+    atomic_emu_unlock(addr);
+    return ret;
+#elif defined(GNU_ATOMICS_IMPL)
+    return __atomic_exchange_n((uint64_t*)addr, val, memorder);
+#elif defined(C11_ATOMICS_IMPL)
+    return atomic_exchange_explicit((_Atomic uint64_t*)addr, val, memorder);
+#elif defined(WIN32_ATOMICS_IMPL)
+    return InterlockedExchange64((LONG64*)addr, val);
+#elif defined(LIBATOMIC_IMPL)
+    return __atomic_exchange_8((uint32_t*)addr, val, memorder);
+#else
+    uint64_t tmp = atomic_load_uint64_relax(addr);
+    while (!atomic_cas_uint64_loop(addr, &tmp, val)) {
+    }
+    return tmp;
+#endif
+}
+
+static forceinline uint64_t atomic_swap_uint64(void* addr, uint64_t val)
+{
+    return atomic_swap_uint64_ex(addr, val, ATOMIC_ACQ_REL);
+}
+
+static forceinline void atomic_store_uint64_ex(void* addr, uint64_t val, int memorder)
+{
+    UNUSED(memorder);
+#if defined(ATOMIC_EMU64_IMPL)
+    atomic_swap_uint64_ex(addr, val, memorder);
+#elif defined(GNU_ATOMICS_IMPL)
+    __atomic_store_n((uint64_t*)addr, val, memorder);
+#elif defined(C11_ATOMICS_IMPL)
+    atomic_store_explicit((_Atomic uint64_t*)addr, val, memorder);
+#else
+    if (likely(atomic_ordering_is_natural(memorder) && sizeof(void*) >= sizeof(uint64_t))) {
+        *(volatile uint64_t*)addr = val;
+        return;
+    }
+#if defined(LIBATOMIC_IMPL)
+    __atomic_store_8((uint32_t*)addr, val, memorder);
+#else
+    atomic_swap_uint64_ex(addr, val, memorder);
+#endif
+#endif
+}
+
+static forceinline void atomic_store_uint64_relax(void* addr, uint64_t val)
+{
+    atomic_store_uint64_ex(addr, val, ATOMIC_RELAXED);
+}
+
+static forceinline void atomic_store_uint64(void* addr, uint64_t val)
+{
+    atomic_store_uint64_ex(addr, val, ATOMIC_RELEASE);
+}
+
+static forceinline uint64_t atomic_add_uint64_ex(void* addr, uint64_t val, int memorder)
+{
+    UNUSED(memorder);
+#if defined(ATOMIC_EMU64_IMPL)
+    atomic_emu_lock(addr);
+    uint64_t ret      = *(uint64_t*)addr;
+    *(uint64_t*)addr += val;
+    atomic_emu_unlock(addr);
+    return ret;
+#elif defined(GNU_ATOMICS_IMPL)
+    return __atomic_fetch_add((uint64_t*)addr, val, memorder);
+#elif defined(C11_ATOMICS_IMPL)
+    return atomic_fetch_add_explicit((_Atomic uint64_t*)addr, val, memorder);
+#elif defined(SYNC_ATOMICS_IMPL)
+    return __sync_fetch_and_add((uint64_t*)addr, val);
+#elif defined(WIN32_ATOMICS_IMPL)
+    return InterlockedExchangeAdd64((LONG64*)addr, val);
+#elif defined(LIBATOMIC_IMPL)
+    return __atomic_fetch_add_8((uint64_t*)addr, val, memorder);
+#else
+    uint64_t tmp = atomic_load_uint64_relax(addr);
+    while (!atomic_cas_uint64_loop(addr, &tmp, tmp + val)) {
+    }
+    return tmp;
+#endif
+}
+
+static forceinline uint64_t atomic_add_uint64(void* addr, uint64_t val)
+{
+    return atomic_add_uint64_ex(addr, val, ATOMIC_ACQ_REL);
+}
+
+static forceinline uint64_t atomic_sub_uint64_ex(void* addr, uint64_t val, int memorder)
+{
+#if defined(GNU_ATOMICS_IMPL)
+    return __atomic_fetch_sub((uint64_t*)addr, val, memorder);
+#elif defined(C11_ATOMICS_IMPL)
+    return atomic_fetch_sub_explicit((_Atomic uint64_t*)addr, val, memorder);
+#else
+    return atomic_add_uint64_ex(addr, -val, memorder);
+#endif
+}
+
+static forceinline uint64_t atomic_sub_uint64(void* addr, uint64_t val)
+{
+    return atomic_sub_uint64_ex(addr, val, ATOMIC_ACQ_REL);
+}
+
+static forceinline uint64_t atomic_and_uint64_ex(void* addr, uint64_t val, int memorder)
+{
+    UNUSED(memorder);
+#if defined(ATOMIC_EMU64_IMPL)
+    atomic_emu_lock(addr);
+    uint64_t ret      = *(uint64_t*)addr;
+    *(uint64_t*)addr &= val;
+    atomic_emu_unlock(addr);
+    return ret;
+#elif defined(GNU_ATOMICS_IMPL)
+    return __atomic_fetch_and((uint64_t*)addr, val, memorder);
+#elif defined(C11_ATOMICS_IMPL)
+    return atomic_fetch_and_explicit((_Atomic uint64_t*)addr, val, memorder);
+#elif defined(SYNC_ATOMICS_IMPL)
+    return __sync_fetch_and_and((uint64_t*)addr, val);
+#elif defined(WIN32_ATOMICS_IMPL)
+    return InterlockedAnd64((LONG64*)addr, val);
+#elif defined(LIBATOMIC_IMPL)
+    return __atomic_fetch_and_8((uint64_t*)addr, val, memorder);
+#else
+    uint64_t tmp = atomic_load_uint64_relax(addr);
+    while (!atomic_cas_uint64_loop(addr, &tmp, tmp & val)) {
+    }
+    return tmp;
+#endif
+}
+
+static forceinline uint64_t atomic_and_uint64(void* addr, uint64_t val)
+{
+    return atomic_and_uint64_ex(addr, val, ATOMIC_ACQ_REL);
+}
+
+static forceinline uint64_t atomic_xor_uint64_ex(void* addr, uint64_t val, int memorder)
+{
+    UNUSED(memorder);
+#if defined(ATOMIC_EMU64_IMPL)
+    atomic_emu_lock(addr);
+    uint64_t ret      = *(uint64_t*)addr;
+    *(uint64_t*)addr ^= val;
+    atomic_emu_unlock(addr);
+    return ret;
+#elif defined(GNU_ATOMICS_IMPL)
+    return __atomic_fetch_xor((uint64_t*)addr, val, memorder);
+#elif defined(C11_ATOMICS_IMPL)
+    return atomic_fetch_xor_explicit((_Atomic uint64_t*)addr, val, memorder);
+#elif defined(SYNC_ATOMICS_IMPL)
+    return __sync_fetch_and_xor((uint64_t*)addr, val);
+#elif defined(WIN32_ATOMICS_IMPL)
+    return InterlockedXor64((LONG64*)addr, val);
+#elif defined(LIBATOMIC_IMPL)
+    return __atomic_fetch_xor_8((uint64_t*)addr, val, memorder);
+#else
+    uint64_t tmp = atomic_load_uint64_relax(addr);
+    while (!atomic_cas_uint64_loop(addr, &tmp, tmp ^ val)) {
+    }
+    return tmp;
+#endif
+}
+
+static forceinline uint64_t atomic_xor_uint64(void* addr, uint64_t val)
+{
+    return atomic_xor_uint64_ex(addr, val, ATOMIC_ACQ_REL);
+}
+
+static forceinline uint64_t atomic_or_uint64_ex(void* addr, uint64_t val, int memorder)
+{
+    UNUSED(memorder);
+#if defined(ATOMIC_EMU64_IMPL)
+    atomic_emu_lock(addr);
+    uint64_t ret      = *(uint64_t*)addr;
+    *(uint64_t*)addr |= val;
+    atomic_emu_unlock(addr);
+    return ret;
+#elif defined(GNU_ATOMICS_IMPL)
+    return __atomic_fetch_or((uint64_t*)addr, val, memorder);
+#elif defined(C11_ATOMICS_IMPL)
+    return atomic_fetch_or_explicit((_Atomic uint64_t*)addr, val, memorder);
+#elif defined(SYNC_ATOMICS_IMPL)
+    return __sync_fetch_and_or((uint64_t*)addr, val);
+#elif defined(WIN32_ATOMICS_IMPL)
+    return InterlockedOr64((LONG64*)addr, val);
+#elif defined(LIBATOMIC_IMPL)
+    return __atomic_fetch_or_8((uint64_t*)addr, val, memorder);
+#else
+    uint64_t tmp = atomic_load_uint64_relax(addr);
+    while (!atomic_cas_uint64_loop(addr, &tmp, tmp | val)) {
+    }
+    return tmp;
+#endif
+}
+
+static forceinline uint64_t atomic_or_uint64(void* addr, uint64_t val)
+{
+    return atomic_or_uint64_ex(addr, val, ATOMIC_ACQ_REL);
+}
+
+/*
  * Atomic 8-bit operations
  */
 
@@ -652,15 +945,15 @@ static forceinline bool atomic_cas_uint8_ex(void* addr, uint8_t* exp, uint8_t va
     *exp = orig;
     atomic_emu_unlock(addr);
     return orig == chck;
-#elif defined(GNU_ATOMICS_IMPL)
+#elif defined(GNU_ATOMICS_IMPL) && !defined(RISCV_CAS_WORKAROUND)
     return __atomic_compare_exchange_n((uint8_t*)addr, exp, val, weak, succ, fail);
-#elif defined(C11_ATOMICS_IMPL)
+#elif defined(C11_ATOMICS_IMPL) && !defined(RISCV_CAS_WORKAROUND)
     if (weak) {
         return atomic_compare_exchange_weak_explicit((_Atomic uint8_t*)addr, exp, val, succ, fail);
     } else {
         return atomic_compare_exchange_strong_explicit((_Atomic uint8_t*)addr, exp, val, succ, fail);
     }
-#elif defined(SYNC_ATOMICS_IMPL)
+#elif defined(SYNC_ATOMICS_IMPL) || defined(RISCV_CAS_WORKAROUND)
     uint8_t chck = *exp;
     uint8_t orig = __sync_val_compare_and_swap((uint8_t*)addr, chck, val);
     *exp         = orig;
@@ -951,15 +1244,15 @@ static forceinline bool atomic_cas_uint16_ex(void* addr, uint16_t* exp, uint16_t
     *exp = orig;
     atomic_emu_unlock(addr);
     return orig == chck;
-#elif defined(GNU_ATOMICS_IMPL)
+#elif defined(GNU_ATOMICS_IMPL) && !defined(RISCV_CAS_WORKAROUND)
     return __atomic_compare_exchange_n((uint16_t*)addr, exp, val, weak, succ, fail);
-#elif defined(C11_ATOMICS_IMPL)
+#elif defined(C11_ATOMICS_IMPL) && !defined(RISCV_CAS_WORKAROUND)
     if (weak) {
         return atomic_compare_exchange_weak_explicit((_Atomic uint16_t*)addr, exp, val, succ, fail);
     } else {
         return atomic_compare_exchange_strong_explicit((_Atomic uint16_t*)addr, exp, val, succ, fail);
     }
-#elif defined(SYNC_ATOMICS_IMPL)
+#elif defined(SYNC_ATOMICS_IMPL) || defined(RISCV_CAS_WORKAROUND)
     uint16_t chck = *exp;
     uint16_t orig = __sync_val_compare_and_swap((uint16_t*)addr, chck, val);
     *exp          = orig;
@@ -1238,307 +1531,7 @@ static forceinline uint16_t atomic_or_uint16(void* addr, uint16_t val)
 }
 
 /*
- * Atomic 64-bit operations
- */
-
-static forceinline bool atomic_cas_uint64_ex(void* addr, uint64_t* exp, uint64_t val, //
-                                             bool weak, int succ, int fail)
-{
-    UNUSED(weak && succ && fail);
-#if defined(ATOMIC_EMU64_IMPL)
-    uint64_t chck = *exp;
-    atomic_emu_lock(addr);
-    uint64_t orig = *(uint64_t*)addr;
-    if (orig == chck) {
-        *(uint64_t*)addr = val;
-    }
-    *exp = orig;
-    atomic_emu_unlock(addr);
-    return orig == chck;
-#elif defined(__riscv) && GCC_CHECK_VER(7, 0) && !GCC_CHECK_VER(14, 1)
-    /*
-     * Workaround atomic CAS miscompilation on RISC-V GCC <14.1
-     */
-    uint64_t chck = *exp;
-    __atomic_compare_exchange_n((uint64_t*)addr, exp, val, false, succ, fail);
-    return chck == *exp;
-#elif defined(GNU_ATOMICS_IMPL)
-    return __atomic_compare_exchange_n((uint64_t*)addr, exp, val, weak, succ, fail);
-#elif defined(C11_ATOMICS_IMPL)
-    if (weak) {
-        return atomic_compare_exchange_weak_explicit((_Atomic uint64_t*)addr, exp, val, succ, fail);
-    } else {
-        return atomic_compare_exchange_strong_explicit((_Atomic uint64_t*)addr, exp, val, succ, fail);
-    }
-#elif defined(SYNC_ATOMICS_IMPL)
-    uint64_t chck = *exp;
-    uint64_t orig = __sync_val_compare_and_swap((uint64_t*)addr, chck, val);
-    *exp          = orig;
-    return orig == chck;
-#elif defined(WIN32_ATOMICS_IMPL)
-    uint64_t chck = *exp;
-    uint64_t orig = InterlockedCompareExchange64((LONG64*)addr, val, chck);
-    *exp          = orig;
-    return orig == chck;
-#elif defined(LIBATOMIC_IMPL)
-    return __atomic_compare_exchange_8((uint64_t*)addr, exp, val, weak, succ, fail);
-#endif
-}
-
-static forceinline bool atomic_cas_uint64_loop(void* addr, uint64_t* exp, uint64_t val)
-{
-    return atomic_cas_uint64_ex(addr, exp, val, true, ATOMIC_ACQ_REL, ATOMIC_RELAXED);
-}
-
-static forceinline bool atomic_cas_uint64_try(void* addr, uint64_t exp, uint64_t val, bool weak, int memorder)
-{
-    return atomic_cas_uint64_ex(addr, &exp, val, weak, memorder, ATOMIC_RELAXED);
-}
-
-static forceinline bool atomic_cas_uint64(void* addr, uint64_t exp, uint64_t val)
-{
-    return atomic_cas_uint64_try(addr, exp, val, false, ATOMIC_ACQ_REL);
-}
-
-static forceinline uint64_t atomic_load_uint64_ex(const void* addr, int memorder)
-{
-    UNUSED(memorder);
-#if !defined(ATOMIC_EMU64_IMPL) && defined(GNU_ATOMICS_IMPL)
-    return __atomic_load_n(NONCONST_CAST(uint64_t*, addr), memorder);
-#elif !defined(ATOMIC_EMU64_IMPL) && defined(C11_ATOMICS_IMPL)
-    return atomic_load_explicit(NONCONST_CAST(_Atomic uint64_t*, addr), memorder);
-#else
-    if (likely(atomic_ordering_is_natural(memorder) && sizeof(void*) >= sizeof(uint64_t))) {
-        return *(const volatile uint64_t*)addr;
-    }
-#if defined(LIBATOMIC_IMPL)
-    return __atomic_load_8(NONCONST_CAST(uint64_t*, addr), memorder);
-#else
-    uint64_t tmp = 0;
-    atomic_cas_uint64_ex(NONCONST_CAST(void*, addr), &tmp, tmp, true, memorder, memorder);
-    return tmp;
-#endif
-#endif
-}
-
-static forceinline uint64_t atomic_load_uint64_relax(const void* addr)
-{
-    return atomic_load_uint64_ex(addr, ATOMIC_RELAXED);
-}
-
-static forceinline uint64_t atomic_load_uint64(const void* addr)
-{
-    return atomic_load_uint64_ex(addr, ATOMIC_ACQUIRE);
-}
-
-static forceinline uint64_t atomic_swap_uint64_ex(void* addr, uint64_t val, int memorder)
-{
-    UNUSED(memorder);
-#if defined(ATOMIC_EMU64_IMPL)
-    atomic_emu_lock(addr);
-    uint64_t ret     = *(uint64_t*)addr;
-    *(uint64_t*)addr = val;
-    atomic_emu_unlock(addr);
-    return ret;
-#elif defined(GNU_ATOMICS_IMPL)
-    return __atomic_exchange_n((uint64_t*)addr, val, memorder);
-#elif defined(C11_ATOMICS_IMPL)
-    return atomic_exchange_explicit((_Atomic uint64_t*)addr, val, memorder);
-#elif defined(WIN32_ATOMICS_IMPL)
-    return InterlockedExchange64((LONG64*)addr, val);
-#elif defined(LIBATOMIC_IMPL)
-    return __atomic_exchange_8((uint32_t*)addr, val, memorder);
-#else
-    uint64_t tmp = atomic_load_uint64_relax(addr);
-    while (!atomic_cas_uint64_loop(addr, &tmp, val)) {
-    }
-    return tmp;
-#endif
-}
-
-static forceinline uint64_t atomic_swap_uint64(void* addr, uint64_t val)
-{
-    return atomic_swap_uint64_ex(addr, val, ATOMIC_ACQ_REL);
-}
-
-static forceinline void atomic_store_uint64_ex(void* addr, uint64_t val, int memorder)
-{
-    UNUSED(memorder);
-#if defined(ATOMIC_EMU64_IMPL)
-    atomic_swap_uint64_ex(addr, val, memorder);
-#elif defined(GNU_ATOMICS_IMPL)
-    __atomic_store_n((uint64_t*)addr, val, memorder);
-#elif defined(C11_ATOMICS_IMPL)
-    atomic_store_explicit((_Atomic uint64_t*)addr, val, memorder);
-#else
-    if (likely(atomic_ordering_is_natural(memorder) && sizeof(void*) >= sizeof(uint64_t))) {
-        *(volatile uint64_t*)addr = val;
-        return;
-    }
-#if defined(LIBATOMIC_IMPL)
-    __atomic_store_8((uint32_t*)addr, val, memorder);
-#else
-    atomic_swap_uint64_ex(addr, val, memorder);
-#endif
-#endif
-}
-
-static forceinline void atomic_store_uint64_relax(void* addr, uint64_t val)
-{
-    atomic_store_uint64_ex(addr, val, ATOMIC_RELAXED);
-}
-
-static forceinline void atomic_store_uint64(void* addr, uint64_t val)
-{
-    atomic_store_uint64_ex(addr, val, ATOMIC_RELEASE);
-}
-
-static forceinline uint64_t atomic_add_uint64_ex(void* addr, uint64_t val, int memorder)
-{
-    UNUSED(memorder);
-#if defined(ATOMIC_EMU64_IMPL)
-    atomic_emu_lock(addr);
-    uint64_t ret      = *(uint64_t*)addr;
-    *(uint64_t*)addr += val;
-    atomic_emu_unlock(addr);
-    return ret;
-#elif defined(GNU_ATOMICS_IMPL)
-    return __atomic_fetch_add((uint64_t*)addr, val, memorder);
-#elif defined(C11_ATOMICS_IMPL)
-    return atomic_fetch_add_explicit((_Atomic uint64_t*)addr, val, memorder);
-#elif defined(SYNC_ATOMICS_IMPL)
-    return __sync_fetch_and_add((uint64_t*)addr, val);
-#elif defined(WIN32_ATOMICS_IMPL)
-    return InterlockedExchangeAdd64((LONG64*)addr, val);
-#elif defined(LIBATOMIC_IMPL)
-    return __atomic_fetch_add_8((uint64_t*)addr, val, memorder);
-#else
-    uint64_t tmp = atomic_load_uint64_relax(addr);
-    while (!atomic_cas_uint64_loop(addr, &tmp, tmp + val)) {
-    }
-    return tmp;
-#endif
-}
-
-static forceinline uint64_t atomic_add_uint64(void* addr, uint64_t val)
-{
-    return atomic_add_uint64_ex(addr, val, ATOMIC_ACQ_REL);
-}
-
-static forceinline uint64_t atomic_sub_uint64_ex(void* addr, uint64_t val, int memorder)
-{
-#if defined(GNU_ATOMICS_IMPL)
-    return __atomic_fetch_sub((uint64_t*)addr, val, memorder);
-#elif defined(C11_ATOMICS_IMPL)
-    return atomic_fetch_sub_explicit((_Atomic uint64_t*)addr, val, memorder);
-#else
-    return atomic_add_uint64_ex(addr, -val, memorder);
-#endif
-}
-
-static forceinline uint64_t atomic_sub_uint64(void* addr, uint64_t val)
-{
-    return atomic_sub_uint64_ex(addr, val, ATOMIC_ACQ_REL);
-}
-
-static forceinline uint64_t atomic_and_uint64_ex(void* addr, uint64_t val, int memorder)
-{
-    UNUSED(memorder);
-#if defined(ATOMIC_EMU64_IMPL)
-    atomic_emu_lock(addr);
-    uint64_t ret      = *(uint64_t*)addr;
-    *(uint64_t*)addr &= val;
-    atomic_emu_unlock(addr);
-    return ret;
-#elif defined(GNU_ATOMICS_IMPL)
-    return __atomic_fetch_and((uint64_t*)addr, val, memorder);
-#elif defined(C11_ATOMICS_IMPL)
-    return atomic_fetch_and_explicit((_Atomic uint64_t*)addr, val, memorder);
-#elif defined(SYNC_ATOMICS_IMPL)
-    return __sync_fetch_and_and((uint64_t*)addr, val);
-#elif defined(WIN32_ATOMICS_IMPL)
-    return InterlockedAnd64((LONG64*)addr, val);
-#elif defined(LIBATOMIC_IMPL)
-    return __atomic_fetch_and_8((uint64_t*)addr, val, memorder);
-#else
-    uint64_t tmp = atomic_load_uint64_relax(addr);
-    while (!atomic_cas_uint64_loop(addr, &tmp, tmp & val)) {
-    }
-    return tmp;
-#endif
-}
-
-static forceinline uint64_t atomic_and_uint64(void* addr, uint64_t val)
-{
-    return atomic_and_uint64_ex(addr, val, ATOMIC_ACQ_REL);
-}
-
-static forceinline uint64_t atomic_xor_uint64_ex(void* addr, uint64_t val, int memorder)
-{
-    UNUSED(memorder);
-#if defined(ATOMIC_EMU64_IMPL)
-    atomic_emu_lock(addr);
-    uint64_t ret      = *(uint64_t*)addr;
-    *(uint64_t*)addr ^= val;
-    atomic_emu_unlock(addr);
-    return ret;
-#elif defined(GNU_ATOMICS_IMPL)
-    return __atomic_fetch_xor((uint64_t*)addr, val, memorder);
-#elif defined(C11_ATOMICS_IMPL)
-    return atomic_fetch_xor_explicit((_Atomic uint64_t*)addr, val, memorder);
-#elif defined(SYNC_ATOMICS_IMPL)
-    return __sync_fetch_and_xor((uint64_t*)addr, val);
-#elif defined(WIN32_ATOMICS_IMPL)
-    return InterlockedXor64((LONG64*)addr, val);
-#elif defined(LIBATOMIC_IMPL)
-    return __atomic_fetch_xor_8((uint64_t*)addr, val, memorder);
-#else
-    uint64_t tmp = atomic_load_uint64_relax(addr);
-    while (!atomic_cas_uint64_loop(addr, &tmp, tmp ^ val)) {
-    }
-    return tmp;
-#endif
-}
-
-static forceinline uint64_t atomic_xor_uint64(void* addr, uint64_t val)
-{
-    return atomic_xor_uint64_ex(addr, val, ATOMIC_ACQ_REL);
-}
-
-static forceinline uint64_t atomic_or_uint64_ex(void* addr, uint64_t val, int memorder)
-{
-    UNUSED(memorder);
-#if defined(ATOMIC_EMU64_IMPL)
-    atomic_emu_lock(addr);
-    uint64_t ret      = *(uint64_t*)addr;
-    *(uint64_t*)addr |= val;
-    atomic_emu_unlock(addr);
-    return ret;
-#elif defined(GNU_ATOMICS_IMPL)
-    return __atomic_fetch_or((uint64_t*)addr, val, memorder);
-#elif defined(C11_ATOMICS_IMPL)
-    return atomic_fetch_or_explicit((_Atomic uint64_t*)addr, val, memorder);
-#elif defined(SYNC_ATOMICS_IMPL)
-    return __sync_fetch_and_or((uint64_t*)addr, val);
-#elif defined(WIN32_ATOMICS_IMPL)
-    return InterlockedOr64((LONG64*)addr, val);
-#elif defined(LIBATOMIC_IMPL)
-    return __atomic_fetch_or_8((uint64_t*)addr, val, memorder);
-#else
-    uint64_t tmp = atomic_load_uint64_relax(addr);
-    while (!atomic_cas_uint64_loop(addr, &tmp, tmp | val)) {
-    }
-    return tmp;
-#endif
-}
-
-static forceinline uint64_t atomic_or_uint64(void* addr, uint64_t val)
-{
-    return atomic_or_uint64_ex(addr, val, ATOMIC_ACQ_REL);
-}
-
-/*
- * Pointer atomic operations (For RCU, lock-free linked lists, etc)
+ * Atomic pointer operations
  */
 
 static forceinline void* atomic_load_pointer_ex(const void* addr, int memorder)
@@ -1572,9 +1565,9 @@ static forceinline void* atomic_load_pointer(const void* addr)
 
 static forceinline bool atomic_cas_pointer_ex(void* addr, void** exp, void* val, bool weak, int succ, int fail)
 {
-#if defined(GNU_ATOMICS_IMPL) && (!defined(__riscv_a) || __riscv_xlen > 64)
+#if defined(GNU_ATOMICS_IMPL) && !defined(RISCV_CAS_WORKAROUND)
     return __atomic_compare_exchange_n((void**)addr, exp, val, weak, succ, fail);
-#elif defined(C11_ATOMICS_IMPL) && (!defined(__riscv_a) || __riscv_xlen > 64)
+#elif defined(C11_ATOMICS_IMPL) && !defined(RISCV_CAS_WORKAROUND)
     if (weak) {
         return atomic_compare_exchange_weak_explicit((void* _Atomic*)addr, exp, val, succ, fail);
     } else {
@@ -1635,18 +1628,8 @@ static forceinline void atomic_store_pointer(void* addr, void* val)
 }
 
 /*
- * Emulated little-endian atomics for big-endian hosts
+ * Little-endian atomics for shared memory / emulation
  */
-
-static inline void atomic_store_uint32_le(void* addr, uint32_t val)
-{
-#if defined(HOST_LITTLE_ENDIAN)
-    atomic_store_uint32(addr, val);
-#else
-    write_uint32_le(&val, val);
-    atomic_store_uint32(addr, val);
-#endif
-}
 
 static inline uint32_t atomic_load_uint32_le(const void* addr)
 {
@@ -1658,14 +1641,13 @@ static inline uint32_t atomic_load_uint32_le(const void* addr)
 #endif
 }
 
-static inline uint32_t atomic_swap_uint32_le(void* addr, uint32_t val)
+static inline void atomic_store_uint32_le(void* addr, uint32_t val)
 {
 #if defined(HOST_LITTLE_ENDIAN)
-    return atomic_swap_uint32(addr, val);
+    atomic_store_uint32(addr, val);
 #else
     write_uint32_le(&val, val);
-    val = atomic_swap_uint32(addr, val);
-    return read_uint32_le(&val);
+    atomic_store_uint32(addr, val);
 #endif
 }
 
@@ -1680,13 +1662,47 @@ static inline bool atomic_cas_uint32_le(void* addr, uint32_t exp, uint32_t val)
 #endif
 }
 
-static inline uint32_t atomic_or_uint32_le(void* addr, uint32_t val)
+static inline uint32_t atomic_swap_uint32_le(void* addr, uint32_t val)
 {
 #if defined(HOST_LITTLE_ENDIAN)
-    return atomic_or_uint32(addr, val);
+    return atomic_swap_uint32(addr, val);
 #else
     write_uint32_le(&val, val);
-    val = atomic_or_uint32(addr, val);
+    val = atomic_swap_uint32(addr, val);
+    return read_uint32_le(&val);
+#endif
+}
+
+static inline uint32_t atomic_add_uint32_le(void* addr, uint32_t val)
+{
+#if defined(HOST_LITTLE_ENDIAN)
+    return atomic_add_uint32(addr, val);
+#else
+    uint32_t tmp = atomic_load_uint32_relax(addr);
+    uint32_t res;
+    do {
+        write_uint32_le(&res, read_uint32_le(&tmp) + val);
+    } while (!atomic_cas_uint32_loop(addr, &tmp, res));
+    return read_uint32_le(&tmp);
+#endif
+}
+
+static inline uint32_t atomic_sub_uint32_le(void* addr, uint32_t val)
+{
+#if defined(HOST_LITTLE_ENDIAN)
+    return atomic_sub_uint32(addr, val);
+#else
+    return atomic_add_uint32_le(addr, -val);
+#endif
+}
+
+static inline uint32_t atomic_and_uint32_le(void* addr, uint32_t val)
+{
+#if defined(HOST_LITTLE_ENDIAN)
+    return atomic_and_uint32(addr, val);
+#else
+    write_uint32_le(&val, val);
+    val = atomic_and_uint32(addr, val);
     return read_uint32_le(&val);
 #endif
 }
@@ -1702,120 +1718,14 @@ static inline uint32_t atomic_xor_uint32_le(void* addr, uint32_t val)
 #endif
 }
 
-static inline uint32_t atomic_and_uint32_le(void* addr, uint32_t val)
+static inline uint32_t atomic_or_uint32_le(void* addr, uint32_t val)
 {
 #if defined(HOST_LITTLE_ENDIAN)
-    return atomic_and_uint32(addr, val);
+    return atomic_or_uint32(addr, val);
 #else
     write_uint32_le(&val, val);
-    val = atomic_and_uint32(addr, val);
+    val = atomic_or_uint32(addr, val);
     return read_uint32_le(&val);
-#endif
-}
-
-static inline void atomic_store_uint64_le(void* addr, uint64_t val)
-{
-#if defined(HOST_LITTLE_ENDIAN)
-    atomic_store_uint64(addr, val);
-#else
-    write_uint64_le(&val, val);
-    atomic_store_uint64(addr, val);
-#endif
-}
-
-static inline uint64_t atomic_load_uint64_le(const void* addr)
-{
-#if defined(HOST_LITTLE_ENDIAN)
-    return atomic_load_uint64(addr);
-#else
-    uint64_t val = atomic_load_uint64(addr);
-    return read_uint64_le(&val);
-#endif
-}
-
-static inline uint64_t atomic_swap_uint64_le(void* addr, uint64_t val)
-{
-#if defined(HOST_LITTLE_ENDIAN)
-    return atomic_swap_uint64(addr, val);
-#else
-    write_uint64_le(&val, val);
-    val = atomic_swap_uint64(addr, val);
-    return read_uint64_le(&val);
-#endif
-}
-
-static inline bool atomic_cas_uint64_le(void* addr, uint64_t exp, uint64_t val)
-{
-#if defined(HOST_LITTLE_ENDIAN)
-    return atomic_cas_uint64(addr, exp, val);
-#else
-    write_uint64_le(&exp, exp);
-    write_uint64_le(&val, val);
-    return atomic_cas_uint64(addr, exp, val);
-#endif
-}
-
-static inline uint64_t atomic_or_uint64_le(void* addr, uint64_t val)
-{
-#if defined(HOST_LITTLE_ENDIAN)
-    return atomic_or_uint64(addr, val);
-#else
-    write_uint64_le(&val, val);
-    val = atomic_or_uint64(addr, val);
-    return read_uint64_le(&val);
-#endif
-}
-
-static inline uint64_t atomic_xor_uint64_le(void* addr, uint64_t val)
-{
-#if defined(HOST_LITTLE_ENDIAN)
-    return atomic_xor_uint64(addr, val);
-#else
-    write_uint64_le(&val, val);
-    val = atomic_xor_uint64(addr, val);
-    return read_uint64_le(&val);
-#endif
-}
-
-static inline uint64_t atomic_and_uint64_le(void* addr, uint64_t val)
-{
-#if defined(HOST_LITTLE_ENDIAN)
-    return atomic_and_uint64(addr, val);
-#else
-    write_uint64_le(&val, val);
-    val = atomic_and_uint64(addr, val);
-    return read_uint64_le(&val);
-#endif
-}
-
-/*
- * CAS-based arithmetic operations
- * Store operation result if the value is unchanged
- */
-
-static inline uint32_t atomic_add_uint32_le(void* addr, uint32_t val)
-{
-#if defined(HOST_LITTLE_ENDIAN)
-    return atomic_add_uint32(addr, val);
-#else
-    uint32_t tmp;
-    do {
-        tmp = atomic_load_uint32_le(addr);
-    } while (!atomic_cas_uint32_le(addr, tmp, tmp + val));
-    return tmp;
-#endif
-}
-
-static inline uint32_t atomic_sub_uint32_le(void* addr, uint32_t val)
-{
-#if defined(HOST_LITTLE_ENDIAN)
-    return atomic_sub_uint32(addr, val);
-#else
-    uint32_t tmp;
-    do {
-        tmp = atomic_load_uint32_le(addr);
-    } while (!atomic_cas_uint32_le(addr, tmp, tmp - val));
-    return tmp;
 #endif
 }
 
@@ -1855,16 +1765,59 @@ static inline uint32_t atomic_minu_uint32_le(void* addr, uint32_t val)
     return tmp;
 }
 
+static inline uint64_t atomic_load_uint64_le(const void* addr)
+{
+#if defined(HOST_LITTLE_ENDIAN)
+    return atomic_load_uint64(addr);
+#else
+    uint64_t val = atomic_load_uint64(addr);
+    return read_uint64_le(&val);
+#endif
+}
+
+static inline void atomic_store_uint64_le(void* addr, uint64_t val)
+{
+#if defined(HOST_LITTLE_ENDIAN)
+    atomic_store_uint64(addr, val);
+#else
+    write_uint64_le(&val, val);
+    atomic_store_uint64(addr, val);
+#endif
+}
+
+static inline uint64_t atomic_swap_uint64_le(void* addr, uint64_t val)
+{
+#if defined(HOST_LITTLE_ENDIAN)
+    return atomic_swap_uint64(addr, val);
+#else
+    write_uint64_le(&val, val);
+    val = atomic_swap_uint64(addr, val);
+    return read_uint64_le(&val);
+#endif
+}
+
+static inline bool atomic_cas_uint64_le(void* addr, uint64_t exp, uint64_t val)
+{
+#if defined(HOST_LITTLE_ENDIAN)
+    return atomic_cas_uint64(addr, exp, val);
+#else
+    write_uint64_le(&exp, exp);
+    write_uint64_le(&val, val);
+    return atomic_cas_uint64(addr, exp, val);
+#endif
+}
+
 static inline uint64_t atomic_add_uint64_le(void* addr, uint64_t val)
 {
 #if defined(HOST_LITTLE_ENDIAN)
     return atomic_add_uint64(addr, val);
 #else
-    uint64_t tmp;
+    uint64_t tmp = atomic_load_uint64_relax(addr);
+    uint64_t res;
     do {
-        tmp = atomic_load_uint64_le(addr);
-    } while (!atomic_cas_uint64_le(addr, tmp, tmp + val));
-    return tmp;
+        write_uint64_le(&res, read_uint64_le(&tmp) + val);
+    } while (!atomic_cas_uint64_loop(addr, &tmp, res));
+    return read_uint64_le(&tmp);
 #endif
 }
 
@@ -1873,11 +1826,40 @@ static inline uint64_t atomic_sub_uint64_le(void* addr, uint64_t val)
 #if defined(HOST_LITTLE_ENDIAN)
     return atomic_sub_uint64(addr, val);
 #else
-    uint64_t tmp;
-    do {
-        tmp = atomic_load_uint64_le(addr);
-    } while (!atomic_cas_uint64_le(addr, tmp, tmp - val));
-    return tmp;
+    return atomic_add_uint64_le(addr, -val);
+#endif
+}
+
+static inline uint64_t atomic_and_uint64_le(void* addr, uint64_t val)
+{
+#if defined(HOST_LITTLE_ENDIAN)
+    return atomic_and_uint64(addr, val);
+#else
+    write_uint64_le(&val, val);
+    val = atomic_and_uint64(addr, val);
+    return read_uint64_le(&val);
+#endif
+}
+
+static inline uint64_t atomic_xor_uint64_le(void* addr, uint64_t val)
+{
+#if defined(HOST_LITTLE_ENDIAN)
+    return atomic_xor_uint64(addr, val);
+#else
+    write_uint64_le(&val, val);
+    val = atomic_xor_uint64(addr, val);
+    return read_uint64_le(&val);
+#endif
+}
+
+static inline uint64_t atomic_or_uint64_le(void* addr, uint64_t val)
+{
+#if defined(HOST_LITTLE_ENDIAN)
+    return atomic_or_uint64(addr, val);
+#else
+    write_uint64_le(&val, val);
+    val = atomic_or_uint64(addr, val);
+    return read_uint64_le(&val);
 #endif
 }
 
@@ -1914,6 +1896,140 @@ static inline uint64_t atomic_minu_uint64_le(void* addr, uint64_t val)
     do {
         tmp = atomic_load_uint64_le(addr);
     } while (!atomic_cas_uint64_le(addr, tmp, tmp < val ? tmp : val));
+    return tmp;
+}
+
+static inline uint16_t atomic_load_uint16_le(const void* addr)
+{
+#if defined(HOST_LITTLE_ENDIAN)
+    return atomic_load_uint16(addr);
+#else
+    uint32_t val = atomic_load_uint16(addr);
+    return read_uint16_le(&val);
+#endif
+}
+
+static inline void atomic_store_uint16_le(void* addr, uint16_t val)
+{
+#if defined(HOST_LITTLE_ENDIAN)
+    atomic_store_uint16(addr, val);
+#else
+    write_uint16_le(&val, val);
+    atomic_store_uint16(addr, val);
+#endif
+}
+
+static inline bool atomic_cas_uint16_le(void* addr, uint16_t exp, uint16_t val)
+{
+#if defined(HOST_LITTLE_ENDIAN)
+    return atomic_cas_uint16(addr, exp, val);
+#else
+    write_uint16_le(&exp, exp);
+    write_uint16_le(&val, val);
+    return atomic_cas_uint16(addr, exp, val);
+#endif
+}
+
+static inline uint16_t atomic_swap_uint16_le(void* addr, uint16_t val)
+{
+#if defined(HOST_LITTLE_ENDIAN)
+    return atomic_swap_uint16(addr, val);
+#else
+    write_uint16_le(&val, val);
+    val = atomic_swap_uint16(addr, val);
+    return read_uint16_le(&val);
+#endif
+}
+
+static inline uint16_t atomic_add_uint16_le(void* addr, uint16_t val)
+{
+#if defined(HOST_LITTLE_ENDIAN)
+    return atomic_add_uint16(addr, val);
+#else
+    uint16_t tmp = atomic_load_uint16_relax(addr);
+    uint16_t res;
+    do {
+        write_uint16_le(&res, read_uint16_le(&tmp) + val);
+    } while (!atomic_cas_uint16_loop(addr, &tmp, res));
+    return read_uint16_le(&tmp);
+#endif
+}
+
+static inline uint16_t atomic_sub_uint16_le(void* addr, uint16_t val)
+{
+#if defined(HOST_LITTLE_ENDIAN)
+    return atomic_sub_uint16(addr, val);
+#else
+    return atomic_add_uint16_le(addr, -val);
+#endif
+}
+
+static inline uint16_t atomic_and_uint16_le(void* addr, uint16_t val)
+{
+#if defined(HOST_LITTLE_ENDIAN)
+    return atomic_and_uint16(addr, val);
+#else
+    write_uint32_le(&val, val);
+    val = atomic_and_uint32(addr, val);
+    return read_uint32_le(&val);
+#endif
+}
+
+static inline uint16_t atomic_xor_uint16_le(void* addr, uint16_t val)
+{
+#if defined(HOST_LITTLE_ENDIAN)
+    return atomic_xor_uint16(addr, val);
+#else
+    write_uint16_le(&val, val);
+    val = atomic_xor_uint16(addr, val);
+    return read_uint16_le(&val);
+#endif
+}
+
+static inline uint16_t atomic_or_uint16_le(void* addr, uint16_t val)
+{
+#if defined(HOST_LITTLE_ENDIAN)
+    return atomic_or_uint16(addr, val);
+#else
+    write_uint16_le(&val, val);
+    val = atomic_or_uint16(addr, val);
+    return read_uint16_le(&val);
+#endif
+}
+
+static inline int16_t atomic_max_int16_le(void* addr, int16_t val)
+{
+    int16_t tmp;
+    do {
+        tmp = atomic_load_uint16_le(addr);
+    } while (!atomic_cas_uint16_le(addr, tmp, tmp > val ? tmp : val));
+    return tmp;
+}
+
+static inline int16_t atomic_min_int16_le(void* addr, int16_t val)
+{
+    int16_t tmp;
+    do {
+        tmp = atomic_load_uint16_le(addr);
+    } while (!atomic_cas_uint16_le(addr, tmp, tmp < val ? tmp : val));
+    return tmp;
+}
+
+static inline uint16_t atomic_maxu_uint16_le(void* addr, uint16_t val)
+{
+    uint16_t tmp;
+    do {
+        tmp = atomic_load_uint16_le(addr);
+    } while (!atomic_cas_uint16_le(addr, tmp, tmp > val ? tmp : val));
+    return tmp;
+}
+
+static inline uint16_t atomic_minu_uint16_le(void* addr, uint16_t val)
+{
+    uint16_t tmp;
+    do {
+        tmp = atomic_load_uint16_le(addr);
+    } while (!atomic_cas_uint16_le(addr, tmp, tmp < val ? tmp : val));
     return tmp;
 }
 
