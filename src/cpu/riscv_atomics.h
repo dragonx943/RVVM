@@ -7,16 +7,22 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#ifndef RISCV_ATOMICS_H
-#define RISCV_ATOMICS_H
+#ifndef RVVM_RISCV_ATOMICS_H
+#define RVVM_RISCV_ATOMICS_H
 
-#define RISCV_AMO_LR   0x2
-#define RISCV_AMO_SC   0x3
-#define RISCV_AMO_SWAP 0x1
-#define RISCV_AMO_ADD  0x0
-#define RISCV_AMO_XOR  0x4
-#define RISCV_AMO_AND  0xC
-#define RISCV_AMO_OR   0x8
+#include "riscv_common.h"
+
+/*
+ * AMO 5-bit operation code in insn[31:27]
+ */
+
+#define RISCV_AMO_LR   0x02
+#define RISCV_AMO_SC   0x03
+#define RISCV_AMO_SWAP 0x01
+#define RISCV_AMO_ADD  0x00
+#define RISCV_AMO_XOR  0x04
+#define RISCV_AMO_AND  0x0C
+#define RISCV_AMO_OR   0x08
 #define RISCV_AMO_MIN  0x10
 #define RISCV_AMO_MAX  0x14
 #define RISCV_AMO_MINU 0x18
@@ -24,15 +30,18 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 static forceinline void riscv_emulate_atomic_w(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const uint32_t op = insn >> 27;
-    const regid_t rds = bit_cut(insn, 7, 5);
-    const regid_t rs1 = bit_cut(insn, 15, 5);
-    const regid_t rs2 = bit_cut(insn, 20, 5);
-    const xaddr_t vaddr = riscv_read_reg(vm, rs1);
-    const uint32_t val = riscv_read_reg(vm, rs2);
-    // MMIO atomics bounce buffer
+    const uint32_t op    = insn >> 27;
+    const regid_t  rds   = bit_cut(insn, 7, 5);
+    const regid_t  rs1   = bit_cut(insn, 15, 5);
+    const regid_t  rs2   = bit_cut(insn, 20, 5);
+    const xaddr_t  vaddr = riscv_read_reg(vm, rs1);
+    const uint32_t val   = riscv_read_reg(vm, rs2);
+
+    /*
+     * MMIO atomics bounce buffer
+     */
     uint32_t bounce = 0;
-    void* ptr = NULL;
+    void*    ptr    = NULL;
 
     if (unlikely(vaddr & 3)) {
         // Misaligned atomic
@@ -55,9 +64,9 @@ static forceinline void riscv_emulate_atomic_w(rvvm_hart_t* vm, const uint32_t i
     switch (op) {
         case RISCV_AMO_LR:
             // Mark our reservation
-            vm->lrsc = true;
+            vm->lrsc      = true;
             vm->lrsc_addr = vaddr;
-            vm->lrsc_cas = atomic_load_uint32_le(ptr);
+            vm->lrsc_cas  = atomic_load_uint32_le(ptr);
             riscv_write_reg(vm, rds, (int32_t)vm->lrsc_cas);
 
             // Return to skip RMW MMIO commit
@@ -112,19 +121,22 @@ static forceinline void riscv_emulate_atomic_w(rvvm_hart_t* vm, const uint32_t i
     }
 }
 
-#ifdef RV64
+#if defined(RISCV64)
 
 static forceinline void riscv_emulate_atomic_d(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const uint32_t op = insn >> 27;
-    const regid_t rds = bit_cut(insn, 7, 5);
-    const regid_t rs1 = bit_cut(insn, 15, 5);
-    const regid_t rs2 = bit_cut(insn, 20, 5);
-    const xaddr_t vaddr = riscv_read_reg(vm, rs1);
-    const uint64_t val = riscv_read_reg(vm, rs2);
-    // MMIO atomics bounce buffer
+    const uint32_t op    = insn >> 27;
+    const regid_t  rds   = bit_cut(insn, 7, 5);
+    const regid_t  rs1   = bit_cut(insn, 15, 5);
+    const regid_t  rs2   = bit_cut(insn, 20, 5);
+    const xaddr_t  vaddr = riscv_read_reg(vm, rs1);
+    const uint64_t val   = riscv_read_reg(vm, rs2);
+
+    /*
+     * MMIO atomics bounce buffer
+     */
     uint64_t bounce;
-    void* ptr = NULL;
+    void*    ptr = NULL;
 
     if (unlikely(vaddr & 7)) {
         uint32_t cause = (op == RISCV_AMO_LR) ? RISCV_TRAP_LOAD_MISALIGN : RISCV_TRAP_STORE_MISALIGN;
@@ -146,9 +158,9 @@ static forceinline void riscv_emulate_atomic_d(rvvm_hart_t* vm, const uint32_t i
     switch (op) {
         case RISCV_AMO_LR:
             // Mark our reservation
-            vm->lrsc = true;
+            vm->lrsc      = true;
             vm->lrsc_addr = vaddr;
-            vm->lrsc_cas = atomic_load_uint64_le(ptr);
+            vm->lrsc_cas  = atomic_load_uint64_le(ptr);
             riscv_write_reg(vm, rds, vm->lrsc_cas);
 
             // Return to skip RMW MMIO commit
@@ -205,15 +217,15 @@ static forceinline void riscv_emulate_atomic_d(rvvm_hart_t* vm, const uint32_t i
 
 #endif
 
-static no_inline void riscv_emulate_a_opc_amo(rvvm_hart_t* vm, const uint32_t insn)
+static slow_path void riscv_emulate_a_opc_amo(rvvm_hart_t* vm, const uint32_t insn)
 {
     const uint32_t funct3 = bit_cut(insn, 12, 3);
     switch (funct3) {
-        case 0x2:
+        case 0x02:
             riscv_emulate_atomic_w(vm, insn);
             return;
-#ifdef RV64
-        case 0x3:
+#if defined(RISCV64)
+        case 0x03:
             riscv_emulate_atomic_d(vm, insn);
             return;
 #endif
