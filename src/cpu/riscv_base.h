@@ -22,26 +22,26 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  * Base 5-bit opcodes in insn[6:2]
  */
 #define RISCV_OPC_LOAD     0x00
-#define RISCV_OPC_LOAD_FP  0x01
-#define RISCV_OPC_MISC_MEM 0x03
-#define RISCV_OPC_OP_IMM   0x04
-#define RISCV_OPC_AUIPC    0x05
-#define RISCV_OPC_OP_IMM32 0x06
-#define RISCV_OPC_STORE    0x08
-#define RISCV_OPC_STORE_FP 0x09
-#define RISCV_OPC_AMO      0x0B
-#define RISCV_OPC_OP       0x0C
-#define RISCV_OPC_LUI      0x0D
-#define RISCV_OPC_OP32     0x0E
-#define RISCV_OPC_FMADD    0x10
-#define RISCV_OPC_FMSUB    0x11
-#define RISCV_OPC_FNMSUB   0x12
-#define RISCV_OPC_FNMADD   0x13
-#define RISCV_OPC_OP_FP    0x14
-#define RISCV_OPC_BRANCH   0x18
-#define RISCV_OPC_JALR     0x19
-#define RISCV_OPC_JAL      0x1B
-#define RISCV_OPC_SYSTEM   0x1C
+#define RISCV_OPC_LOAD_FP  0x04
+#define RISCV_OPC_MISC_MEM 0x0C
+#define RISCV_OPC_OP_IMM   0x10
+#define RISCV_OPC_AUIPC    0x14
+#define RISCV_OPC_OP_IMM32 0x18
+#define RISCV_OPC_STORE    0x20
+#define RISCV_OPC_STORE_FP 0x24
+#define RISCV_OPC_AMO      0x2C
+#define RISCV_OPC_OP       0x30
+#define RISCV_OPC_LUI      0x34
+#define RISCV_OPC_OP32     0x38
+#define RISCV_OPC_FMADD    0x40
+#define RISCV_OPC_FMSUB    0x44
+#define RISCV_OPC_FNMSUB   0x48
+#define RISCV_OPC_FNMADD   0x4C
+#define RISCV_OPC_OP_FP    0x50
+#define RISCV_OPC_BRANCH   0x60
+#define RISCV_OPC_JALR     0x64
+#define RISCV_OPC_JAL      0x6C
+#define RISCV_OPC_SYSTEM   0x70
 
 #if defined(RISCV64)
 #define bit_clz(val)        bit_clz64(val)
@@ -83,20 +83,19 @@ static forceinline bitcnt_t decode_i_shift_funct7(const uint32_t insn)
 
 static forceinline sxlen_t decode_i_branch_off(const uint32_t insn)
 {
-    const xlen_t imm = (bit_cut(insn, 31, 1) << 12) //
-                     | (bit_cut(insn, 7, 1) << 11)  //
-                     | (bit_cut(insn, 25, 6) << 5)  //
-                     | (bit_cut(insn, 8, 4) << 1);
+    const uint32_t imm = (bit_cut(insn, 31, 1) << 12) //
+                       | (bit_cut(insn, 7, 1) << 11)  //
+                       | (bit_cut(insn, 25, 6) << 5)  //
+                       | (bit_cut(insn, 8, 4) << 1);
     return sign_extend(imm, 13);
 }
 
 static forceinline sxlen_t decode_i_jal_off(const uint32_t insn)
 {
-    // May be replaced by translation table
-    const xlen_t imm = (bit_cut(insn, 31, 1) << 20) //
-                     | (bit_cut(insn, 12, 8) << 12) //
-                     | (bit_cut(insn, 20, 1) << 11) //
-                     | (bit_cut(insn, 21, 10) << 1);
+    const uint32_t imm = (bit_cut(insn, 31, 1) << 20) //
+                       | (bit_cut(insn, 12, 8) << 12) //
+                       | (bit_cut(insn, 20, 1) << 11) //
+                       | (bit_cut(insn, 21, 10) << 1);
     return sign_extend(imm, 21);
 }
 
@@ -384,251 +383,234 @@ static forceinline void riscv_emulate_i_opc_store(rvvm_hart_t* vm, const uint32_
 
 static forceinline void riscv_emulate_i_opc_op(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const uint32_t funct3 = bit_cut(insn, 12, 3);
-    const uint32_t funct7 = insn >> 25;
-    const regid_t  rds    = bit_cut(insn, 7, 5);
-    const regid_t  rs1    = bit_cut(insn, 15, 5);
-    const regid_t  rs2    = bit_cut(insn, 20, 5);
-    const xlen_t   reg1   = riscv_read_reg(vm, rs1);
-    const xlen_t   reg2   = riscv_read_reg(vm, rs2);
-    switch (funct3) {
-        case 0x00:
-            switch (funct7) {
-                case 0x00: // add
-                    rvjit_trace_add(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, reg1 + reg2);
-                    return;
-                case 0x20: // sub
-                    rvjit_trace_sub(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, reg1 - reg2);
-                    return;
-                case 0x01: // mul
-                    rvjit_trace_mul(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, reg1 * reg2);
-                    return;
-            }
-            break;
-        case 0x01:
-            switch (funct7) {
-                case 0x00: // sll
-                    rvjit_trace_sll(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, reg1 << (reg2 & bit_mask(SHAMT_BITS)));
-                    return;
-                case 0x01: // mulh
-                    rvjit_trace_mulh(rds, rs1, rs2, 4);
+    const uint32_t funct = insn & 0xFE007000;
+    const regid_t  rds   = bit_cut(insn, 7, 5);
+    const regid_t  rs1   = bit_cut(insn, 15, 5);
+    const regid_t  rs2   = bit_cut(insn, 20, 5);
+    const xlen_t   reg1  = riscv_read_reg(vm, rs1);
+    const xlen_t   reg2  = riscv_read_reg(vm, rs2);
+
+    switch (funct) {
+        case 0x00000000: // add
+            rvjit_trace_add(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, reg1 + reg2);
+            return;
+        case 0x40000000: // sub
+            rvjit_trace_sub(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, reg1 - reg2);
+            return;
+        case 0x00001000: // sll
+            rvjit_trace_sll(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, reg1 << (reg2 & bit_mask(SHAMT_BITS)));
+            return;
+        case 0x00002000: // slt
+            rvjit_trace_slt(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, (((sxlen_t)reg1) < ((sxlen_t)reg2)) ? 1 : 0);
+            return;
+        case 0x00003000: // sltu
+            rvjit_trace_sltu(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, (reg1 < reg2) ? 1 : 0);
+            return;
+        case 0x00004000: // xor
+            rvjit_trace_xor(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, reg1 ^ reg2);
+            return;
+        case 0x00005000: // srl
+            rvjit_trace_srl(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, reg1 >> (reg2 & bit_mask(SHAMT_BITS)));
+            return;
+        case 0x40005000: // sra
+            rvjit_trace_sra(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, ((sxlen_t)reg1) >> (reg2 & bit_mask(SHAMT_BITS)));
+            return;
+        case 0x00006000: // or
+            rvjit_trace_or(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, reg1 | reg2);
+            return;
+        case 0x00007000: // and
+            rvjit_trace_and(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, reg1 & reg2);
+            return;
+        /*
+         * Multiplication / Division
+         */
+        case 0x02000000: // mul
+            rvjit_trace_mul(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, reg1 * reg2);
+            return;
+        case 0x02001000: // mulh
+            rvjit_trace_mulh(rds, rs1, rs2, 4);
 #if defined(RISCV64)
-                    riscv_write_reg(vm, rds, mulh_uint64(reg1, reg2));
+            riscv_write_reg(vm, rds, mulh_uint64(reg1, reg2));
 #else
-                    riscv_write_reg(vm, rds, ((int64_t)(sxlen_t)reg1 * (int64_t)(sxlen_t)reg2) >> 32);
+            riscv_write_reg(vm, rds, ((int64_t)(sxlen_t)reg1 * (int64_t)(sxlen_t)reg2) >> 32);
 #endif
-                    return;
-                case 0x05: // clmul (Zbc)
-                    riscv_write_reg(vm, rds, bit_clmul(reg1, reg2));
-                    return;
-                case 0x14: // bset (Zbs)
-                    rvjit_trace_bset(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, reg1 | (((xlen_t)1U) << (reg2 & bit_mask(SHAMT_BITS))));
-                    return;
-                case 0x24: // bclr (Zbs)
-                    rvjit_trace_bclr(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, reg1 & ~(((xlen_t)1U) << (reg2 & bit_mask(SHAMT_BITS))));
-                    return;
-                case 0x34: // binv (Zbs)
-                    rvjit_trace_binv(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, reg1 ^ (((xlen_t)1U) << (reg2 & bit_mask(SHAMT_BITS))));
-                    return;
-                case 0x30: // rol (Zbb)
-                    rvjit_trace_rol(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, bit_rotl(reg1, reg2 & bit_mask(SHAMT_BITS)));
-                    return;
-            }
-            break;
-        case 0x02:
-            switch (funct7) {
-                case 0x00: // slt
-                    rvjit_trace_slt(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, (((sxlen_t)reg1) < ((sxlen_t)reg2)) ? 1 : 0);
-                    return;
-                case 0x01: // mulhsu
-                    rvjit_trace_mulhsu(rds, rs1, rs2, 4);
+            return;
+        case 0x02002000: // mulhsu
+            rvjit_trace_mulhsu(rds, rs1, rs2, 4);
 #if defined(RISCV64)
-                    riscv_write_reg(vm, rds, mulhsu_uint64(reg1, reg2));
+            riscv_write_reg(vm, rds, mulhsu_uint64(reg1, reg2));
 #else
-                    riscv_write_reg(vm, rds, ((int64_t)(sxlen_t)reg1 * (uint64_t)reg2) >> 32);
+            riscv_write_reg(vm, rds, ((int64_t)(sxlen_t)reg1 * (uint64_t)reg2) >> 32);
 #endif
-                    return;
-                case 0x05: // clmulr (Zbc)
-                    riscv_write_reg(vm, rds, bit_clmulr(reg1, reg2));
-                    return;
-                case 0x10: // sh1add (Zba)
-                    rvjit_trace_shadd(rds, rs1, rs2, 1, 4);
-                    riscv_write_reg(vm, rds, reg2 + (reg1 << 1));
-                    return;
-            }
-            break;
-        case 0x03:
-            switch (funct7) {
-                case 0x00: // sltu
-                    rvjit_trace_sltu(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, (reg1 < reg2) ? 1 : 0);
-                    return;
-                case 0x01: // mulhu
-                    rvjit_trace_mulhu(rds, rs1, rs2, 4);
+            return;
+        case 0x02003000: // mulhu
+            rvjit_trace_mulhu(rds, rs1, rs2, 4);
 #if defined(RISCV64)
-                    riscv_write_reg(vm, rds, mulhu_uint64(reg1, reg2));
+            riscv_write_reg(vm, rds, mulhu_uint64(reg1, reg2));
 #else
-                    riscv_write_reg(vm, rds, ((uint64_t)reg1 * (uint64_t)reg2) >> 32);
+            riscv_write_reg(vm, rds, ((uint64_t)reg1 * (uint64_t)reg2) >> 32);
 #endif
-                    return;
-                case 0x05: // clmulh (Zbc)
-                    riscv_write_reg(vm, rds, bit_clmulh(reg1, reg2));
-                    return;
+            return;
+        case 0x02004000: { // div
+            sxlen_t result = -1;
+            rvjit_trace_div(rds, rs1, rs2, 4);
+            if ((sxlen_t)reg1 == DIV_OVERFLOW_RS1 && (sxlen_t)reg2 == -1) {
+                // overflow
+                result = DIV_OVERFLOW_RS1;
+            } else if (reg2 != 0) {
+                // division by zero check (we already setup result var for error)
+                result = (sxlen_t)reg1 / (sxlen_t)reg2;
             }
-            break;
-        case 0x04:
-            switch (funct7) {
-                case 0x00: // xor
-                    rvjit_trace_xor(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, reg1 ^ reg2);
-                    return;
-                case 0x01: { // div
-                    sxlen_t result = -1;
-                    rvjit_trace_div(rds, rs1, rs2, 4);
-                    if ((sxlen_t)reg1 == DIV_OVERFLOW_RS1 && (sxlen_t)reg2 == -1) {
-                        // overflow
-                        result = DIV_OVERFLOW_RS1;
-                    } else if (reg2 != 0) {
-                        // division by zero check (we already setup result var for error)
-                        result = (sxlen_t)reg1 / (sxlen_t)reg2;
-                    }
-                    riscv_write_reg(vm, rds, result);
-                    return;
-                }
-                case 0x10: // sh2add (Zba)
-                    rvjit_trace_shadd(rds, rs1, rs2, 2, 4);
-                    riscv_write_reg(vm, rds, reg2 + (reg1 << 2));
-                    return;
-                case 0x20: // xnor (Zbb)
-                    rvjit_trace_xnor(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, reg1 ^ ~reg2);
-                    return;
-#if !defined(RISCV64)
-                case 0x04: // zext.h (Zbb), RV32 encoding
-                    if (likely(!rs2)) {
-                        rvjit_trace_andi(rds, rs1, 0xFFFF, 4);
-                        riscv_write_reg(vm, rds, (uint16_t)reg1);
-                        return;
-                    }
-                    break;
+            riscv_write_reg(vm, rds, result);
+            return;
+        }
+        case 0x02005000: { // divu
+            xlen_t result = (sxlen_t)-1;
+            rvjit_trace_divu(rds, rs1, rs2, 4);
+            // division by zero check (we already setup result var for error)
+            if (reg2 != 0) {
+                result = reg1 / reg2;
+            }
+            riscv_write_reg(vm, rds, result);
+            return;
+        }
+        case 0x02006000: { // rem
+            sxlen_t result = reg1;
+            rvjit_trace_rem(rds, rs1, rs2, 4);
+            // overflow
+            if ((sxlen_t)reg1 == DIV_OVERFLOW_RS1 && (sxlen_t)reg2 == -1) {
+                result = 0;
+                // division by zero check (we already setup result var for error)
+            } else if (reg2 != 0) {
+                result = (sxlen_t)reg1 % (sxlen_t)reg2;
+            }
+            riscv_write_reg(vm, rds, result);
+            return;
+        }
+        case 0x02007000: { // remu
+            xlen_t result = reg1;
+            rvjit_trace_remu(rds, rs1, rs2, 4);
+            // division by zero check (we already setup result var for error)
+            if (reg2 != 0) {
+                result = reg1 % reg2;
+            }
+            riscv_write_reg(vm, rds, result);
+            return;
+        }
+        /*
+         * Zbc: Carry-less multiplication
+         */
+        case 0x0A001000: // clmul (Zbc)
+            riscv_write_reg(vm, rds, bit_clmul(reg1, reg2));
+            return;
+        case 0x0A002000: // clmulr (Zbc)
+            riscv_write_reg(vm, rds, bit_clmulr(reg1, reg2));
+            return;
+        case 0x0A003000: // clmulh (Zbc)
+            riscv_write_reg(vm, rds, bit_clmulh(reg1, reg2));
+            return;
+        /*
+         * Zbb: Basic bit-manipulation
+         */
+        case 0x0A004000: // min (Zbb)
+            rvjit_trace_min(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, EVAL_MIN((sxlen_t)reg1, (sxlen_t)reg2));
+            return;
+        case 0x0A005000: // minu (Zbb)
+            rvjit_trace_minu(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, EVAL_MIN(reg1, reg2));
+            return;
+        case 0x0A006000: // max (Zbb)
+            rvjit_trace_max(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, EVAL_MAX((sxlen_t)reg1, (sxlen_t)reg2));
+            return;
+        case 0x0A007000: // maxu (Zbb)
+            rvjit_trace_maxu(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, EVAL_MAX(reg1, reg2));
+            return;
+#if defined(RISCV32)
+        case 0x08004000: // zext.h (Zbb), RV32 encoding
+            if (likely(!rs2)) {
+                rvjit_trace_andi(rds, rs1, 0xFFFF, 4);
+                riscv_write_reg(vm, rds, (uint16_t)reg1);
+                return;
+            }
+            return;
 #endif
-                case 0x05: // min (Zbb)
-                    rvjit_trace_min(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, EVAL_MIN((sxlen_t)reg1, (sxlen_t)reg2));
-                    return;
-            }
-            break;
-        case 0x05:
-            switch (funct7) {
-                case 0x00: // srl
-                    rvjit_trace_srl(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, reg1 >> (reg2 & bit_mask(SHAMT_BITS)));
-                    return;
-                case 0x20: // sra
-                    rvjit_trace_sra(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, ((sxlen_t)reg1) >> (reg2 & bit_mask(SHAMT_BITS)));
-                    return;
-                case 0x01: { // divu
-                    xlen_t result = (sxlen_t)-1;
-                    rvjit_trace_divu(rds, rs1, rs2, 4);
-                    // division by zero check (we already setup result var for error)
-                    if (reg2 != 0) {
-                        result = reg1 / reg2;
-                    }
-                    riscv_write_reg(vm, rds, result);
-                    return;
-                }
-                case 0x24: // bext (Zbs)
-                    rvjit_trace_bext(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, (reg1 >> (reg2 & bit_mask(SHAMT_BITS))) & 1);
-                    return;
-                case 0x05: // minu (Zbb)
-                    rvjit_trace_minu(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, EVAL_MIN(reg1, reg2));
-                    return;
-                case 0x30: // ror (Zbb)
-                    rvjit_trace_ror(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, bit_rotr(reg1, reg2 & bit_mask(SHAMT_BITS)));
-                    return;
-                case 0x07: // czero.eqz (Zicond)
-                    // TODO: JIT
-                    riscv_write_reg(vm, rds, reg2 ? reg1 : 0);
-                    return;
-            }
-            break;
-        case 0x06:
-            switch (funct7) {
-                case 0x00: // or
-                    rvjit_trace_or(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, reg1 | reg2);
-                    return;
-                case 0x01: { // rem
-                    sxlen_t result = reg1;
-                    rvjit_trace_rem(rds, rs1, rs2, 4);
-                    // overflow
-                    if ((sxlen_t)reg1 == DIV_OVERFLOW_RS1 && (sxlen_t)reg2 == -1) {
-                        result = 0;
-                        // division by zero check (we already setup result var for error)
-                    } else if (reg2 != 0) {
-                        result = (sxlen_t)reg1 % (sxlen_t)reg2;
-                    }
-                    riscv_write_reg(vm, rds, result);
-                    return;
-                }
-                case 0x10: // sh3add (Zba)
-                    rvjit_trace_shadd(rds, rs1, rs2, 3, 4);
-                    riscv_write_reg(vm, rds, reg2 + (reg1 << 3));
-                    return;
-                case 0x20: // orn (Zbb)
-                    rvjit_trace_orn(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, reg1 | ~reg2);
-                    return;
-                case 0x05: // max (Zbb)
-                    rvjit_trace_max(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, EVAL_MAX((sxlen_t)reg1, (sxlen_t)reg2));
-                    return;
-            }
-            break;
-        case 0x07:
-            switch (funct7) {
-                case 0x00: // and
-                    rvjit_trace_and(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, reg1 & reg2);
-                    return;
-                case 0x01: { // remu
-                    xlen_t result = reg1;
-                    rvjit_trace_remu(rds, rs1, rs2, 4);
-                    // division by zero check (we already setup result var for error)
-                    if (reg2 != 0) {
-                        result = reg1 % reg2;
-                    }
-                    riscv_write_reg(vm, rds, result);
-                    return;
-                }
-                case 0x20: // andn (Zbb)
-                    rvjit_trace_andn(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, reg1 & ~reg2);
-                    return;
-                case 0x05: // maxu (Zbb)
-                    rvjit_trace_maxu(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, EVAL_MAX(reg1, reg2));
-                    return;
-                case 0x07: // czero.nez (Zicond)
-                    // TODO: JIT
-                    riscv_write_reg(vm, rds, reg2 ? 0 : reg1);
-                    return;
-            }
-            break;
+        case 0x40004000: // xnor (Zbb)
+            rvjit_trace_xnor(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, reg1 ^ ~reg2);
+            return;
+        case 0x40006000: // orn (Zbb)
+            rvjit_trace_orn(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, reg1 | ~reg2);
+            return;
+        case 0x40007000: // andn (Zbb)
+            rvjit_trace_andn(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, reg1 & ~reg2);
+            return;
+        case 0x60001000: // rol (Zbb)
+            rvjit_trace_rol(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, bit_rotl(reg1, reg2 & bit_mask(SHAMT_BITS)));
+            return;
+        case 0x60005000: // ror (Zbb)
+            rvjit_trace_ror(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, bit_rotr(reg1, reg2 & bit_mask(SHAMT_BITS)));
+            return;
+        /*
+         * Zicond: Integer conditionals
+         */
+        case 0x0E005000: // czero.eqz (Zicond)
+            // TODO: JIT
+            riscv_write_reg(vm, rds, reg2 ? reg1 : 0);
+            return;
+        case 0x0E007000: // czero.nez (Zicond)
+            // TODO: JIT
+            riscv_write_reg(vm, rds, reg2 ? 0 : reg1);
+            return;
+        /*
+         * Zba: Address generation
+         */
+        case 0x20002000: // sh1add (Zba)
+            rvjit_trace_shadd(rds, rs1, rs2, 1, 4);
+            riscv_write_reg(vm, rds, reg2 + (reg1 << 1));
+            return;
+        case 0x20004000: // sh2add (Zba)
+            rvjit_trace_shadd(rds, rs1, rs2, 2, 4);
+            riscv_write_reg(vm, rds, reg2 + (reg1 << 2));
+            return;
+        case 0x20006000: // sh3add (Zba)
+            rvjit_trace_shadd(rds, rs1, rs2, 3, 4);
+            riscv_write_reg(vm, rds, reg2 + (reg1 << 3));
+            return;
+        /*
+         * Zbs: Bitset manipulation
+         */
+        case 0x28001000: // bset (Zbs)
+            rvjit_trace_bset(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, reg1 | (((xlen_t)1U) << (reg2 & bit_mask(SHAMT_BITS))));
+            return;
+        case 0x48005000: // bext (Zbs)
+            rvjit_trace_bext(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, (reg1 >> (reg2 & bit_mask(SHAMT_BITS))) & 1);
+            return;
+        case 0x68001000: // binv (Zbs)
+            rvjit_trace_binv(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, reg1 ^ (((xlen_t)1U) << (reg2 & bit_mask(SHAMT_BITS))));
+            return;
     }
+
     riscv_illegal_insn(vm, insn);
 }
 
@@ -645,144 +627,126 @@ static forceinline void riscv_emulate_i_lui(rvvm_hart_t* vm, const uint32_t insn
 
 static forceinline void riscv_emulate_i_opc_op32(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const uint32_t funct3 = bit_cut(insn, 12, 3);
-    const uint32_t funct7 = insn >> 25;
-    const regid_t  rds    = bit_cut(insn, 7, 5);
-    const regid_t  rs1    = bit_cut(insn, 15, 5);
-    const regid_t  rs2    = bit_cut(insn, 20, 5);
-    const uint32_t reg1   = riscv_read_reg(vm, rs1);
-    const uint32_t reg2   = riscv_read_reg(vm, rs2);
-    switch (funct3) {
-        case 0x00:
-            switch (funct7) {
-                case 0x00: // addw
-                    rvjit_trace_addw(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, (int32_t)(reg1 + reg2));
-                    return;
-                case 0x20: // subw
-                    rvjit_trace_subw(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, (int32_t)(reg1 - reg2));
-                    return;
-                case 0x01: // mulw
-                    rvjit_trace_mulw(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, (int32_t)(reg1 * reg2));
-                    return;
-                case 0x04: // add.uw (Zba)
-                    rvjit_trace_shadd_uw(rds, rs1, rs2, 0, 4);
-                    riscv_write_reg(vm, rds, riscv_read_reg(vm, rs2) + ((xlen_t)reg1));
-                    return;
+    const uint32_t funct = insn & 0xFE007000;
+    const regid_t  rds   = bit_cut(insn, 7, 5);
+    const regid_t  rs1   = bit_cut(insn, 15, 5);
+    const regid_t  rs2   = bit_cut(insn, 20, 5);
+    const uint32_t reg1  = riscv_read_reg(vm, rs1);
+    const uint32_t reg2  = riscv_read_reg(vm, rs2);
+
+    switch (funct) {
+        case 0x00000000: // addw
+            rvjit_trace_addw(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, (int32_t)(reg1 + reg2));
+            return;
+        case 0x40000000: // subw
+            rvjit_trace_subw(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, (int32_t)(reg1 - reg2));
+            return;
+        case 0x00001000: // sllw
+            rvjit_trace_sllw(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, (int32_t)(reg1 << (reg2 & 0x1F)));
+            return;
+        case 0x00005000: // srlw
+            rvjit_trace_srlw(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, (int32_t)(reg1 >> (reg2 & 0x1F)));
+            return;
+        case 0x40005000: // sraw
+            rvjit_trace_sraw(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, (int32_t)(((int32_t)reg1) >> (reg2 & 0x1F)));
+            return;
+        /*
+         * Multiplication / Division
+         */
+        case 0x02000000: // mulw
+            rvjit_trace_mulw(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, (int32_t)(reg1 * reg2));
+            return;
+        case 0x02004000: { // divw
+            int32_t result = -1;
+            rvjit_trace_divw(rds, rs1, rs2, 4);
+            // overflow
+            if ((int32_t)reg1 == ((int32_t)0x80000000U) && (int32_t)reg2 == -1) {
+                result = ((int32_t)0x80000000U);
+                // division by zero check (we already setup result var for error)
+            } else if (reg2 != 0) {
+                result = (int32_t)reg1 / (int32_t)reg2;
+            }
+            riscv_write_reg(vm, rds, result);
+            return;
+        }
+        case 0x02005000: { // divuw
+            uint32_t result = -1;
+            rvjit_trace_divuw(rds, rs1, rs2, 4);
+            // overflow
+            if (reg2 != 0) {
+                result = reg1 / reg2;
+            }
+            riscv_write_reg(vm, rds, (int32_t)result);
+            return;
+        }
+        case 0x02006000: { // remw
+            int32_t result = reg1;
+            rvjit_trace_remw(rds, rs1, rs2, 4);
+            // overflow
+            if ((int32_t)reg1 == ((int32_t)0x80000000U) && (int32_t)reg2 == -1) {
+                result = 0;
+                // division by zero check (we already setup result var for error)
+            } else if (reg2 != 0) {
+                result = (int32_t)reg1 % (int32_t)reg2;
+            }
+            riscv_write_reg(vm, rds, result);
+            return;
+        }
+        case 0x02007000: { // remuw
+            uint32_t result = reg1;
+            rvjit_trace_remuw(rds, rs1, rs2, 4);
+            // division by zero check (we already setup result var for error)
+            if (reg2 != 0) {
+                result = reg1 % reg2;
+            }
+            riscv_write_reg(vm, rds, (int32_t)result);
+            return;
+        }
+        /*
+         * Zbb: Basic bit-manipulation
+         */
+        case 0x08004000: // zext.h (Zbb), RV64 encoding
+            if (likely(!rs2)) {
+                rvjit_trace_andi(rds, rs1, 0xFFFF, 4);
+                riscv_write_reg(vm, rds, (uint16_t)reg1);
+                return;
             }
             break;
-        case 0x01:
-            switch (funct7) {
-                case 0x00: // sllw
-                    rvjit_trace_sllw(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, (int32_t)(reg1 << (reg2 & 0x1F)));
-                    return;
-                case 0x30: // rolw (Zbb)
-                    rvjit_trace_rolw(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, (int32_t)bit_rotl32(reg1, reg2 & bit_mask(SHAMT_BITS)));
-                    return;
-            }
-            break;
-        case 0x02:
-            switch (funct7) {
-                case 0x10: // sh1add.uw (Zba)
-                    rvjit_trace_shadd_uw(rds, rs1, rs2, 1, 4);
-                    riscv_write_reg(vm, rds, riscv_read_reg(vm, rs2) + (((xlen_t)reg1) << 1));
-                    return;
-            }
-            break;
-        case 0x04:
-            switch (funct7) {
-                case 0x01: { // divw
-                    int32_t result = -1;
-                    rvjit_trace_divw(rds, rs1, rs2, 4);
-                    // overflow
-                    if ((int32_t)reg1 == ((int32_t)0x80000000U) && (int32_t)reg2 == -1) {
-                        result = ((int32_t)0x80000000U);
-                        // division by zero check (we already setup result var for error)
-                    } else if (reg2 != 0) {
-                        result = (int32_t)reg1 / (int32_t)reg2;
-                    }
-                    riscv_write_reg(vm, rds, result);
-                    return;
-                }
-                case 0x10: // sh2add.uw (Zba)
-                    rvjit_trace_shadd_uw(rds, rs1, rs2, 2, 4);
-                    riscv_write_reg(vm, rds, riscv_read_reg(vm, rs2) + (((xlen_t)reg1) << 2));
-                    return;
-                case 0x04: // zext.h (Zbb), RV64 encoding
-                    if (likely(!rs2)) {
-                        rvjit_trace_andi(rds, rs1, 0xFFFF, 4);
-                        riscv_write_reg(vm, rds, (uint16_t)reg1);
-                        return;
-                    }
-                    break;
-            }
-            break;
-        case 0x05:
-            switch (funct7) {
-                case 0x00: // srlw
-                    rvjit_trace_srlw(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, (int32_t)(reg1 >> (reg2 & 0x1F)));
-                    return;
-                case 0x20: // sraw
-                    rvjit_trace_sraw(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, (int32_t)(((int32_t)reg1) >> (reg2 & 0x1F)));
-                    return;
-                case 0x01: { // divuw
-                    uint32_t result = -1;
-                    rvjit_trace_divuw(rds, rs1, rs2, 4);
-                    // overflow
-                    if (reg2 != 0) {
-                        result = reg1 / reg2;
-                    }
-                    riscv_write_reg(vm, rds, (int32_t)result);
-                    return;
-                }
-                case 0x30: // rorw (Zbb)
-                    rvjit_trace_rorw(rds, rs1, rs2, 4);
-                    riscv_write_reg(vm, rds, (int32_t)bit_rotr32(reg1, reg2 & bit_mask(SHAMT_BITS)));
-                    return;
-            }
-            break;
-        case 0x06:
-            switch (funct7) {
-                case 0x01: { // remw
-                    int32_t result = reg1;
-                    rvjit_trace_remw(rds, rs1, rs2, 4);
-                    // overflow
-                    if ((int32_t)reg1 == ((int32_t)0x80000000U) && (int32_t)reg2 == -1) {
-                        result = 0;
-                        // division by zero check (we already setup result var for error)
-                    } else if (reg2 != 0) {
-                        result = (int32_t)reg1 % (int32_t)reg2;
-                    }
-                    riscv_write_reg(vm, rds, result);
-                    return;
-                }
-                case 0x10: // sh3add.uw (Zba)
-                    rvjit_trace_shadd_uw(rds, rs1, rs2, 3, 4);
-                    riscv_write_reg(vm, rds, riscv_read_reg(vm, rs2) + (((xlen_t)reg1) << 3));
-                    return;
-            }
-            break;
-        case 0x07:
-            switch (funct7) {
-                case 0x01: { // remuw
-                    uint32_t result = reg1;
-                    rvjit_trace_remuw(rds, rs1, rs2, 4);
-                    // division by zero check (we already setup result var for error)
-                    if (reg2 != 0) {
-                        result = reg1 % reg2;
-                    }
-                    riscv_write_reg(vm, rds, (int32_t)result);
-                    return;
-                }
-            }
-            break;
+        case 0x60001000: // rolw (Zbb)
+            rvjit_trace_rolw(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, (int32_t)bit_rotl32(reg1, reg2 & bit_mask(SHAMT_BITS)));
+            return;
+        case 0x60005000: // rorw (Zbb)
+            rvjit_trace_rorw(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, (int32_t)bit_rotr32(reg1, reg2 & bit_mask(SHAMT_BITS)));
+            return;
+        /*
+         * Zba: Address generation
+         */
+        case 0x08000000: // add.uw (Zba)
+            rvjit_trace_shadd_uw(rds, rs1, rs2, 0, 4);
+            riscv_write_reg(vm, rds, riscv_read_reg(vm, rs2) + ((xlen_t)reg1));
+            return;
+        case 0x20002000: // sh1add.uw (Zba)
+            rvjit_trace_shadd_uw(rds, rs1, rs2, 1, 4);
+            riscv_write_reg(vm, rds, riscv_read_reg(vm, rs2) + (((xlen_t)reg1) << 1));
+            return;
+        case 0x20004000: // sh2add.uw (Zba)
+            rvjit_trace_shadd_uw(rds, rs1, rs2, 2, 4);
+            riscv_write_reg(vm, rds, riscv_read_reg(vm, rs2) + (((xlen_t)reg1) << 2));
+            return;
+        case 0x20006000: // sh3add.uw (Zba)
+            rvjit_trace_shadd_uw(rds, rs1, rs2, 3, 4);
+            riscv_write_reg(vm, rds, riscv_read_reg(vm, rs2) + (((xlen_t)reg1) << 3));
+            return;
     }
+
     riscv_illegal_insn(vm, insn);
 }
 
@@ -883,7 +847,7 @@ static forceinline void riscv_emulate_i_jal(rvvm_hart_t* vm, const uint32_t insn
 
 static forceinline void riscv_emulate_i(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const uint32_t op = bit_cut(insn, 2, 5);
+    const uint32_t op = insn & 0x7C;
     switch (op) {
         case RISCV_OPC_LOAD:
             riscv_emulate_i_opc_load(vm, insn);
