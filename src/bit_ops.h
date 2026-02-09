@@ -43,7 +43,7 @@ static forceinline uint64_t bit_mask(bitcnt_t count)
 // Cut bits from val at given position (from lower bit)
 static forceinline uint64_t bit_cut(uint64_t val, bitcnt_t pos, bitcnt_t bits)
 {
-    return (val >> pos) & bit_mask(bits);
+    return (val << (64 - bits - pos)) >> (64 - bits);
 }
 
 // Replace bits in val at given position (from lower bit) by rep
