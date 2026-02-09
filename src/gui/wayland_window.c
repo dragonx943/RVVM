@@ -532,9 +532,9 @@ static void wl_pointer_on_axis(void* data, struct wl_pointer* pointer, //
 {
     wl_ptr_data_t* ptr_data = data;
     UNUSED(pointer && time);
-    if (ptr_data && ptr_data->surface && axis) {
+    if (ptr_data && ptr_data->surface && !axis) {
         gui_window_t* win = wl_surface_get_user_data(ptr_data->surface);
-        gui_backend_on_mouse_scroll(win, wl_fixed_to_int(value));
+        gui_backend_on_mouse_scroll(win, EVAL_MAX(EVAL_MIN(wl_fixed_to_int(value), -1), 1));
     }
 }
 
