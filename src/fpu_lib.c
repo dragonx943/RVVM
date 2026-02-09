@@ -160,9 +160,9 @@ static uint32_t fpu_pump_exceptions_internal(uint32_t set_exceptions, uint32_t c
             fenv[2] &= ~fpu_exceptions_to_x86_sw(clr_exceptions);
         }
         if (unlikely(fenv[2] != sw)) {
-            // Mask all exceptions, set mantissa precision to 53 bits
+            // Mask all exceptions
             fenv[0] &= 0xFCFFU;
-            fenv[0] |= 0x013FU;
+            fenv[0] |= 0x033FU;
             __asm__ __volatile__("fldenv %0" : : "m"(*&fenv) : "memory");
         }
     } else {
@@ -226,8 +226,8 @@ static uint32_t fpu_pump_rounding_mode_internal(uint32_t mode)
     uint16_t cw = 0, ncw = 0;
     __asm__ __volatile__("fnstcw %0" : "=m"(*&cw) : : "memory");
     if (mode <= FPU_LIB_ROUND_MM) {
-        // Mask all exceptions, set mantissa precision to 53 bits
-        ncw = (cw & 0xF0FFU) | 0x013FU;
+        // Mask all exceptions
+        ncw = (cw & 0xF0FFU) | 0x033FU;
         switch (mode) {
             case FPU_LIB_ROUND_DN:
                 ncw |= 0x0400U;
