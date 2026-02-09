@@ -456,10 +456,14 @@ static void x11_handle_mouse_button(const XEvent* ev, gui_window_t* win)
             btns = HID_BTN_RIGHT;
             break;
         case Button4:
-            gui_backend_on_mouse_scroll(win, HID_SCROLL_UP);
+            if (ev->type == ButtonPress) {
+                gui_backend_on_mouse_scroll(win, HID_SCROLL_UP);
+            }
             return;
         case Button5:
-            gui_backend_on_mouse_scroll(win, HID_SCROLL_DOWN);
+            if (ev->type == ButtonPress) {
+                gui_backend_on_mouse_scroll(win, HID_SCROLL_DOWN);
+            }
             return;
     }
     if (ev->type == ButtonPress) {
