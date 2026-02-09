@@ -38,6 +38,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define RISCV_OPC_FNMSUB   0x48
 #define RISCV_OPC_FNMADD   0x4C
 #define RISCV_OPC_OP_FP    0x50
+#define RISCV_OPC_OP_VEC   0x54
 #define RISCV_OPC_BRANCH   0x60
 #define RISCV_OPC_JALR     0x64
 #define RISCV_OPC_JAL      0x6C
@@ -81,22 +82,20 @@ static forceinline bitcnt_t decode_i_shift_funct7(const uint32_t insn)
 #endif
 }
 
-static forceinline sxlen_t decode_i_branch_off(const uint32_t insn)
+static forceinline int32_t decode_i_branch_off(const uint32_t insn)
 {
-    const uint32_t imm = (bit_cut(insn, 31, 1) << 12) //
-                       | (bit_cut(insn, 7, 1) << 11)  //
-                       | (bit_cut(insn, 25, 6) << 5)  //
-                       | (bit_cut(insn, 8, 4) << 1);
-    return sign_extend(imm, 13);
+    return (((uint32_t)(((int32_t)insn) >> 31)) << 12) //
+         | ((insn >> 7) & 0x0000001E)                  //
+         | ((insn & 0x00000080) << 4)                  //
+         | ((insn >> 20) & 0x000007E0);
 }
 
-static forceinline sxlen_t decode_i_jal_off(const uint32_t insn)
+static forceinline int32_t decode_i_jal_off(const uint32_t insn)
 {
-    const uint32_t imm = (bit_cut(insn, 31, 1) << 20) //
-                       | (bit_cut(insn, 12, 8) << 12) //
-                       | (bit_cut(insn, 20, 1) << 11) //
-                       | (bit_cut(insn, 21, 10) << 1);
-    return sign_extend(imm, 21);
+    return (((uint32_t)(((int32_t)insn) >> 31)) << 20) //
+         | (insn & 0x000FF000)                         //
+         | ((insn >> 9) & 0x00000800)                  //
+         | ((insn >> 20) & 0x000007FE);
 }
 
 static forceinline void riscv_emulate_i_opc_load(rvvm_hart_t* vm, const uint32_t insn)

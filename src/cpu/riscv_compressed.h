@@ -13,101 +13,99 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 // Provides entry point to riscv_emulate_i()
 #include "riscv_base.h"
 
-static forceinline xlen_t decode_c_addi4spn_imm(const uint16_t insn)
+static forceinline uint32_t decode_c_addi4spn_imm(const uint32_t insn)
 {
-    return (bit_cut(insn, 6, 1) << 2)  //
-         | (bit_cut(insn, 5, 1) << 3)  //
-         | (bit_cut(insn, 11, 2) << 4) //
-         | (bit_cut(insn, 7, 4) << 6);
+    return ((insn >> 1) & 0x3C0) //
+         | ((insn >> 2) & 0x008) //
+         | ((insn >> 4) & 0x004) //
+         | ((insn >> 7) & 0x030);
 }
 
-static forceinline sxlen_t decode_c_jal_imm(const uint16_t insn)
+static forceinline sxlen_t decode_c_jal_imm(const uint32_t insn)
 {
-    const uint32_t imm = (bit_cut(insn, 3, 3) << 1)  //
-                       | (bit_cut(insn, 11, 1) << 4) //
-                       | (bit_cut(insn, 2, 1) << 5)  //
-                       | (bit_cut(insn, 7, 1) << 6)  //
-                       | (bit_cut(insn, 6, 1) << 7)  //
-                       | (bit_cut(insn, 9, 2) << 8)  //
-                       | (bit_cut(insn, 8, 1) << 10) //
-                       | (bit_cut(insn, 12, 1) << 11);
+    const uint32_t imm = ((insn >> 1) & 0xB40) //
+                       | ((insn >> 2) & 0x00E) //
+                       | ((insn >> 7) & 0x010) //
+                       | ((insn << 1) & 0x080) //
+                       | ((insn << 2) & 0x400) //
+                       | ((insn << 3) & 0x020);
     return sign_extend(imm, 12);
 }
 
-static forceinline xlen_t decode_c_ld_off(const uint16_t insn)
+static forceinline uint32_t decode_c_ld_off(const uint32_t insn)
 {
-    return (bit_cut(insn, 10, 3) << 3) //
-         | (bit_cut(insn, 5, 2) << 6);
+    return ((insn << 1) & 0xC0) //
+         | ((insn >> 7) & 0x38);
 }
 
-static forceinline xlen_t decode_c_lw_off(const uint16_t insn)
+static forceinline uint32_t decode_c_lw_off(const uint32_t insn)
 {
-    return (bit_cut(insn, 6, 1) << 2)  //
-         | (bit_cut(insn, 10, 3) << 3) //
-         | (bit_cut(insn, 5, 1) << 6);
+    return ((insn << 1) & 0x40) //
+         | ((insn >> 4) & 0x04) //
+         | ((insn >> 7) & 0x38);
 }
 
-static forceinline xlen_t decode_c_ldsp_off(const uint16_t insn)
+static forceinline uint32_t decode_c_ldsp_off(const uint32_t insn)
 {
-    return (bit_cut(insn, 5, 2) << 3)  //
-         | (bit_cut(insn, 12, 1) << 5) //
-         | (bit_cut(insn, 2, 3) << 6);
+    return ((insn >> 2) & 0x018) //
+         | ((insn >> 7) & 0x020) //
+         | ((insn << 4) & 0x1C0);
 }
 
-static forceinline xlen_t decode_c_lwsp_off(const uint16_t insn)
+static forceinline uint32_t decode_c_lwsp_off(const uint32_t insn)
 {
-    return (bit_cut(insn, 4, 3) << 2)  //
-         | (bit_cut(insn, 12, 1) << 5) //
-         | (bit_cut(insn, 2, 2) << 6);
+    return ((insn >> 2) & 0x1C) //
+         | ((insn >> 7) & 0x20) //
+         | ((insn << 4) & 0xC0);
 }
 
-static forceinline xlen_t decode_c_sdsp_off(const uint16_t insn)
+static forceinline uint32_t decode_c_sdsp_off(const uint32_t insn)
 {
-    return (bit_cut(insn, 10, 3) << 3) //
-         | (bit_cut(insn, 7, 3) << 6);
+    return ((insn >> 1) & 0x1C0) //
+         | ((insn >> 7) & 0x038);
 }
 
-static forceinline xlen_t decode_c_swsp_off(const uint16_t insn)
+static forceinline uint32_t decode_c_swsp_off(const uint32_t insn)
 {
-    return (bit_cut(insn, 9, 4) << 2) //
-         | (bit_cut(insn, 7, 2) << 6);
+    return ((insn >> 1) & 0xC0) //
+         | ((insn >> 7) & 0x3C);
 }
 
-static forceinline sxlen_t decode_c_alu_imm(const uint16_t insn)
+static forceinline int32_t decode_c_alu_imm(const uint32_t insn)
 {
-    const uint32_t imm = (bit_cut(insn, 12, 1) << 5) //
-                       | (bit_cut(insn, 2, 5));
-    return sign_extend(imm, 6);
+    const int32_t imm = ((insn << 25) >> 1) //
+                      | ((insn >> 12) << 31);
+    return imm >> 26;
 }
 
-static forceinline sxlen_t decode_c_addi16sp_off(const uint16_t insn)
+static forceinline sxlen_t decode_c_addi16sp_off(const uint32_t insn)
 {
-    const uint32_t imm = (bit_cut(insn, 6, 1) << 4) //
-                       | (bit_cut(insn, 2, 1) << 5) //
-                       | (bit_cut(insn, 5, 1) << 6) //
-                       | (bit_cut(insn, 3, 2) << 7) //
-                       | (bit_cut(insn, 12, 1) << 9);
+    const uint32_t imm = ((insn >> 2) & 0x010) //
+                       | ((insn << 3) & 0x020) //
+                       | ((insn << 1) & 0x040) //
+                       | ((insn << 4) & 0x180) //
+                       | ((insn >> 3) & 0x200);
     return sign_extend(imm, 10);
 }
 
-static forceinline sxlen_t decode_c_lui_imm(const uint16_t insn)
+static forceinline int32_t decode_c_lui_imm(const uint32_t insn)
 {
-    const uint32_t imm = (bit_cut(insn, 2, 5) << 12) //
-                       | (bit_cut(insn, 12, 1) << 17);
-    return sign_extend(imm, 18);
+    const int32_t imm = ((insn & 0x7C) << 24) //
+                      | ((insn >> 12) << 31);
+    return imm >> 14;
 }
 
-static forceinline sxlen_t decode_c_branch_imm(const uint16_t insn)
+static forceinline sxlen_t decode_c_branch_imm(const uint32_t insn)
 {
-    const uint32_t imm = (bit_cut(insn, 3, 2) << 1)  //
-                       | (bit_cut(insn, 10, 2) << 3) //
-                       | (bit_cut(insn, 2, 1) << 5)  //
-                       | (bit_cut(insn, 5, 2) << 6)  //
-                       | (bit_cut(insn, 12, 1) << 8);
+    const uint32_t imm = ((insn >> 2) & 0x006) //
+                       | ((insn >> 7) & 0x018) //
+                       | ((insn << 3) & 0x020) //
+                       | ((insn << 1) & 0x0C0) //
+                       | ((insn >> 4) & 0x100);
     return sign_extend(imm, 9);
 }
 
-static forceinline bitcnt_t decode_c_shamt(const uint16_t insn)
+static forceinline bitcnt_t decode_c_shamt(const uint32_t insn)
 {
 #if defined(RISCV64)
     return bit_cut(insn, 2, 5) | (bit_cut(insn, 12, 1) << 5);
