@@ -120,13 +120,8 @@ void riscv_update_xlen(rvvm_hart_t* vm)
             rv64 = bit_check(vm->csr.status, 33);
             break;
     }
-
     if (vm->rv64 != rv64) {
         vm->rv64 = rv64;
-#ifdef USE_JIT
-        rvjit_set_rv64(&vm->jit, rv64);
-        riscv_jit_flush_cache(vm);
-#endif
         riscv_restart_dispatch(vm);
     }
 #else
