@@ -316,12 +316,12 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define func_opt_size GNU_DUMMY_ATTRIBUTE
 #endif
 
-// Optimize cold function for size
+// Hint cold function, minimize call site intrusion if possible
 #undef func_opt_cold
 #if GCC_CHECK_VER(4, 5)
-#define func_opt_cold func_opt_size __attribute__((__cold__, __noclone__))
+#define func_opt_cold __attribute__((__cold__, __noclone__))
 #elif GNU_ATTRIBUTE(__cold__)
-#define func_opt_cold func_opt_size __attribute__((__cold__))
+#define func_opt_cold __attribute__((__cold__))
 #else
 #define func_opt_cold GNU_DUMMY_ATTRIBUTE
 #endif
@@ -340,7 +340,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #undef slow_path
 #if !defined(USE_NO_SLOW_PATH) && CLANG_CHECK_VER(17, 0)                                                               \
     && (defined(__x86_64__) || (defined(__aarch64__) && !defined(_WIN32)))
-#define slow_path no_inline func_opt_size __attribute__((__preserve_most__))
+#define slow_path no_inline func_opt_cold __attribute__((__preserve_most__))
+#elif defined(__i386__) && GNU_ATTRIBUTE(__stdcall__)
+#define slow_path no_inline func_opt_cold __attribute__((__stdcall__))
 #else
 #define slow_path no_inline func_opt_cold
 #endif
