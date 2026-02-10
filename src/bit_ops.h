@@ -19,55 +19,73 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #endif
 
 /*
- * Simple bit operations (sign-extend, mask, bit check/set)
+ * Simple bit operations (bit extract, sign-extend, mask, bit check/set)
  */
 
-/*
- * Sign-extend bits in the lower part of val into signed i64
- * Usage:
- *     int ext = sign_extend(val, 20);
- *
- *     [ext is now equal to signed lower 20 bits of val]
- */
-static forceinline int64_t sign_extend(uint64_t val, bitcnt_t bits)
+// Bit extract u32 field
+static forceinline uint32_t bit_ext_u32(uint32_t val, uint32_t pos, uint32_t bits)
 {
-    return ((int64_t)(val << (64 - bits))) >> (64 - bits);
+    return (val << (32 - bits - pos)) >> (32 - bits);
 }
 
-// Generate bitmask of given bitcount
-static forceinline uint64_t bit_mask(bitcnt_t count)
+// Bit extract i32 field
+static forceinline int32_t bit_ext_i32(uint32_t val, uint32_t pos, uint32_t bits)
 {
-    return (1ULL << count) - 1;
+    return ((int32_t)(val << (32 - bits - pos))) >> (32 - bits);
 }
 
-// Cut bits from val at given position (from lower bit)
-static forceinline uint64_t bit_cut(uint64_t val, bitcnt_t pos, bitcnt_t bits)
+// Bit extract u64 field
+static forceinline uint64_t bit_ext_u64(uint64_t val, uint32_t pos, uint32_t bits)
 {
     return (val << (64 - bits - pos)) >> (64 - bits);
 }
 
-// Replace bits in val at given position (from lower bit) by rep
-static inline uint64_t bit_replace(uint64_t val, bitcnt_t pos, bitcnt_t bits, uint64_t rep)
+// Bit extract i64 field
+static forceinline int64_t bit_ext_i64(uint64_t val, uint32_t pos, uint32_t bits)
+{
+    return ((int64_t)(val << (64 - bits - pos))) >> (64 - bits);
+}
+
+// Sign extend n-bit value
+static forceinline int64_t sign_extend(uint64_t val, uint32_t bits)
+{
+    return bit_ext_i64(val, 0, bits);
+}
+
+// Generate bitmask of given bitcount
+static forceinline uint64_t bit_mask(uint32_t count)
+{
+    return (1ULL << count) - 1;
+}
+
+// Same as bit_ext_u64()
+static forceinline uint64_t bit_cut(uint64_t val, uint32_t pos, uint32_t bits)
+{
+    return bit_ext_u64(val, pos, bits);
+}
+
+// Replace bit field in value
+static forceinline uint64_t bit_replace(uint64_t val, uint32_t pos, uint32_t bits, uint64_t rep)
 {
     return (val & (~(bit_mask(bits) << pos))) | ((rep & bit_mask(bits)) << pos);
 }
 
 // Check if Nth bit of a value is set
-static forceinline bool bit_check(uint64_t val, bitcnt_t pos)
+static forceinline bool bit_check(uint64_t val, uint32_t pos)
 {
-    return (val >> pos) & 0x1;
+    return (val >> pos) & 0x01;
 }
 
 // Return a bitmask with Nth bit set, clamp to 32 bits
-static forceinline uint32_t bit_set32(bitcnt_t pos)
+static forceinline uint32_t bit_set32(uint32_t pos)
 {
-    return (1U << (pos & 31));
+    return (1U << (pos & 0x1F));
 }
 
 // Return a bitmask with Nth bit set, clamp to 64 bits
-static forceinline uint64_t bit_set64(bitcnt_t pos)
+static forceinline uint64_t bit_set64(uint32_t pos)
 {
-    return (1ULL << (pos & 63));
+    return (1ULL << (pos & 0x3F));
 }
 
 /*
@@ -75,25 +93,25 @@ static forceinline uint64_t bit_set64(bitcnt_t pos)
  */
 
 // Rotate u32 left
-static forceinline uint32_t bit_rotl32(uint32_t val, bitcnt_t bits)
+static forceinline uint32_t bit_rotl32(uint32_t val, uint32_t bits)
 {
     return (val << (bits & 0x1F)) | (val >> ((32 - bits) & 0x1F));
 }
 
 // Rotate u64 left
-static forceinline uint64_t bit_rotl64(uint64_t val, bitcnt_t bits)
+static forceinline uint64_t bit_rotl64(uint64_t val, uint32_t bits)
 {
     return (val << (bits & 0x3F)) | (val >> ((64 - bits) & 0x3F));
 }
 
 // Rotate u32 right
-static forceinline uint32_t bit_rotr32(uint32_t val, bitcnt_t bits)
+static forceinline uint32_t bit_rotr32(uint32_t val, uint32_t bits)
 {
     return (val >> (bits & 0x1F)) | (val << ((32 - bits) & 0x1F));
 }
 
 // Rotate u64 right
-static forceinline uint64_t bit_rotr64(uint64_t val, bitcnt_t bits)
+static forceinline uint64_t bit_rotr64(uint64_t val, uint32_t bits)
 {
     return (val >> (bits & 0x3F)) | (val << ((64 - bits) & 0x3F));
 }
@@ -103,7 +121,7 @@ static forceinline uint64_t bit_rotr64(uint64_t val, bitcnt_t bits)
  */
 
 // Count leading zeroes (from highest bit position) in u32
-static inline bitcnt_t bit_clz32(uint32_t val)
+static inline uint32_t bit_clz32(uint32_t val)
 {
     if (likely(val)) {
 #if GCC_CHECK_VER(3, 4) || GNU_BUILTIN(__builtin_clz)
@@ -130,7 +148,7 @@ static inline bitcnt_t bit_clz32(uint32_t val)
 }
 
 // Count leading zeroes (from highest bit position) in u64
-static inline bitcnt_t bit_clz64(uint64_t val)
+static inline uint32_t bit_clz64(uint64_t val)
 {
     if (likely(val)) {
 #if defined(HOST_64BIT) && (GCC_CHECK_VER(3, 4) || GNU_BUILTIN(__builtin_clzll))
@@ -147,7 +165,7 @@ static inline bitcnt_t bit_clz64(uint64_t val)
 }
 
 // Count trailing zeroes (Least significant set bit position) in u32
-static inline bitcnt_t bit_ctz32(uint32_t val)
+static inline uint32_t bit_ctz32(uint32_t val)
 {
     if (likely(val)) {
 #if GCC_CHECK_VER(3, 4) || GNU_BUILTIN(__builtin_ctz)
@@ -169,7 +187,7 @@ static inline bitcnt_t bit_ctz32(uint32_t val)
 }
 
 // Count trailing zeroes (Least significant set bit position) in u64
-static inline bitcnt_t bit_ctz64(uint64_t val)
+static inline uint32_t bit_ctz64(uint64_t val)
 {
     if (likely(val)) {
 #if defined(HOST_64BIT) && (GCC_CHECK_VER(3, 4) || GNU_BUILTIN(__builtin_ctzll))
@@ -179,7 +197,7 @@ static inline bitcnt_t bit_ctz64(uint64_t val)
         _BitScanForward64(&index, val);
         return index;
 #else
-        bitcnt_t tmp = (!((uint32_t)val)) << 5;
+        uint32_t tmp = (!((uint32_t)val)) << 5;
         return bit_ctz32(val >> tmp) + tmp;
 #endif
     }
@@ -187,7 +205,7 @@ static inline bitcnt_t bit_ctz64(uint64_t val)
 }
 
 // Get most significant set bit position in u32
-static inline bitcnt_t bit_bsr32(uint32_t val)
+static inline uint32_t bit_bsr32(uint32_t val)
 {
     if (likely(val)) {
 #if GCC_CHECK_VER(3, 4) || GNU_BUILTIN(__builtin_clz)
@@ -204,7 +222,7 @@ static inline bitcnt_t bit_bsr32(uint32_t val)
 }
 
 // Get most significant set bit position in u64
-static inline bitcnt_t bit_bsr64(uint64_t val)
+static inline uint32_t bit_bsr64(uint64_t val)
 {
     if (likely(val)) {
 #if defined(HOST_64BIT) && (GCC_CHECK_VER(3, 4) || GNU_BUILTIN(__builtin_clzll))
@@ -245,7 +263,7 @@ static inline uint64_t bit_next_pow2(uint64_t val)
 }
 
 // Count raised bits in u32
-static inline bitcnt_t bit_popcnt32(uint32_t val)
+static inline uint32_t bit_popcnt32(uint32_t val)
 {
 #if GCC_CHECK_VER(3, 4) || GNU_BUILTIN(__builtin_popcount)
     return __builtin_popcount(val);
@@ -259,7 +277,7 @@ static inline bitcnt_t bit_popcnt32(uint32_t val)
 }
 
 // Count raised bits in u64
-static inline bitcnt_t bit_popcnt64(uint64_t val)
+static inline uint32_t bit_popcnt64(uint64_t val)
 {
 #if defined(HOST_64BIT) && (GCC_CHECK_VER(3, 4) || GNU_BUILTIN(__builtin_popcountll))
     return __builtin_popcountll(val);
@@ -331,7 +349,7 @@ static inline uint64_t bit_clmul64(uint64_t a, uint64_t b)
 static inline uint32_t bit_clmulh32(uint32_t a, uint32_t b)
 {
     uint32_t ret = 0;
-    bitcnt_t i   = 31;
+    uint32_t i   = 31;
     do {
         b >>= 1;
         if (b & 1) {
@@ -345,7 +363,7 @@ static inline uint32_t bit_clmulh32(uint32_t a, uint32_t b)
 static inline uint64_t bit_clmulh64(uint64_t a, uint64_t b)
 {
     uint64_t ret = 0;
-    bitcnt_t i   = 63;
+    uint32_t i   = 63;
     do {
         b >>= 1;
         if (b & 1) {
@@ -359,7 +377,7 @@ static inline uint64_t bit_clmulh64(uint64_t a, uint64_t b)
 static inline uint32_t bit_clmulr32(uint32_t a, uint32_t b)
 {
     uint32_t ret = 0;
-    bitcnt_t i   = 31;
+    uint32_t i   = 31;
     do {
         if (b & 1) {
             ret ^= (a >> i);
@@ -373,7 +391,7 @@ static inline uint32_t bit_clmulr32(uint32_t a, uint32_t b)
 static inline uint64_t bit_clmulr64(uint64_t a, uint64_t b)
 {
     uint64_t ret = 0;
-    bitcnt_t i   = 63;
+    uint32_t i   = 63;
     do {
         if (b & 1) {
             ret ^= (a >> i);
