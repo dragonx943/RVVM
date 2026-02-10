@@ -492,7 +492,7 @@ static void riscv_mmu_pagefault(rvvm_hart_t* vm, rvvm_addr_t vaddr, uint32_t att
     }
 }
 
-no_inline void* riscv_mmu_op_internal(rvvm_hart_t* vm, rvvm_addr_t vaddr, void* data, uint32_t attr)
+slow_path void* riscv_mmu_op_internal(rvvm_hart_t* vm, rvvm_addr_t vaddr, void* data, uint32_t attr)
 {
     rvvm_addr_t paddr = 0;
     uint8_t access = attr & 0xFF;
