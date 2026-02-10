@@ -61,33 +61,33 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #if defined(USE_FPU)
 
 // Rounding mode values of 5 & 6 are illegal
-static forceinline bool riscv_fpu_rm_is_valid(uint8_t rm)
+static forceinline bool riscv_fpu_rm_is_valid(uint32_t rm)
 {
     rm = 6 - rm;
     return rm > 1;
 }
 
 // Bit-precise register reads
-static forceinline fpu_f32_t riscv_view_s(rvvm_hart_t* vm, regid_t reg)
+static forceinline fpu_f32_t riscv_view_s(rvvm_hart_t* vm, size_t reg)
 {
     return fpu_unpack_f32_from_f64(vm->fpu_registers[reg]);
 }
 
 // Normalized register reads
-static forceinline fpu_f32_t riscv_read_s(rvvm_hart_t* vm, regid_t reg)
+static forceinline fpu_f32_t riscv_read_s(rvvm_hart_t* vm, size_t reg)
 {
     return fpu_nan_unbox_f32(vm->fpu_registers[reg]);
 }
 
 // For bit-precise float register writes
-static forceinline void riscv_emit_s(rvvm_hart_t* vm, regid_t reg, fpu_f32_t val)
+static forceinline void riscv_emit_s(rvvm_hart_t* vm, size_t reg, fpu_f32_t val)
 {
     vm->fpu_registers[reg] = fpu_nanbox_f32(val);
     riscv_fpu_set_dirty(vm);
 }
 
 // Canonizes the written result
-static forceinline void riscv_write_s(rvvm_hart_t* vm, regid_t reg, fpu_f32_t val)
+static forceinline void riscv_write_s(rvvm_hart_t* vm, size_t reg, fpu_f32_t val)
 {
     if (likely(!fpu_is_nan32(val))) {
         riscv_emit_s(vm, reg, val);
@@ -96,23 +96,23 @@ static forceinline void riscv_write_s(rvvm_hart_t* vm, regid_t reg, fpu_f32_t va
     }
 }
 
-static forceinline fpu_f64_t riscv_view_d(rvvm_hart_t* vm, regid_t reg)
+static forceinline fpu_f64_t riscv_view_d(rvvm_hart_t* vm, size_t reg)
 {
     return vm->fpu_registers[reg];
 }
 
-static forceinline fpu_f64_t riscv_read_d(rvvm_hart_t* vm, regid_t reg)
+static forceinline fpu_f64_t riscv_read_d(rvvm_hart_t* vm, size_t reg)
 {
     return vm->fpu_registers[reg];
 }
 
-static forceinline void riscv_emit_d(rvvm_hart_t* vm, regid_t reg, fpu_f64_t val)
+static forceinline void riscv_emit_d(rvvm_hart_t* vm, size_t reg, fpu_f64_t val)
 {
     vm->fpu_registers[reg] = val;
     riscv_fpu_set_dirty(vm);
 }
 
-static forceinline void riscv_write_d(rvvm_hart_t* vm, regid_t reg, fpu_f64_t val)
+static forceinline void riscv_write_d(rvvm_hart_t* vm, size_t reg, fpu_f64_t val)
 {
     if (likely(!fpu_is_nan64(val))) {
         riscv_emit_d(vm, reg, val);
@@ -127,13 +127,13 @@ slow_path void riscv_emulate_f_opc_op(rvvm_hart_t* vm, const uint32_t insn);
 
 static forceinline void riscv_emulate_f_opc_load(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const uint32_t funct3 = bit_cut(insn, 12, 3);
-    const regid_t  rds    = bit_cut(insn, 7, 5);
-    const regid_t  rs1    = bit_cut(insn, 15, 5);
-    const sxlen_t  offset = sign_extend(bit_cut(insn, 20, 12), 12);
-    const xlen_t   addr   = riscv_read_reg(vm, rs1) + offset;
+    const size_t  rds  = bit_ext_u32(insn, 7, 5);
+    const size_t  rs1  = bit_ext_u32(insn, 15, 5);
+    const sxlen_t off  = bit_ext_i32(insn, 20, 12);
+    const xlen_t  addr = riscv_read_reg(vm, rs1) + off;
+
     if (likely(riscv_fpu_is_enabled(vm))) {
-        switch (funct3) {
+        switch (bit_ext_u32(insn, 12, 3)) {
             case 0x2: // flw
                 riscv_load_float(vm, addr, rds);
                 return;
@@ -142,18 +142,19 @@ static forceinline void riscv_emulate_f_opc_load(rvvm_hart_t* vm, const uint32_t
                 return;
         }
     }
+
     riscv_illegal_insn(vm, insn);
 }
 
 static forceinline void riscv_emulate_f_opc_store(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const uint32_t funct3 = bit_cut(insn, 12, 3);
-    const regid_t  rs1    = bit_cut(insn, 15, 5);
-    const regid_t  rs2    = bit_cut(insn, 20, 5);
-    const sxlen_t  offset = sign_extend(bit_cut(insn, 7, 5) | (bit_cut(insn, 25, 7) << 5), 12);
-    const xlen_t   addr   = riscv_read_reg(vm, rs1) + offset;
+    const size_t  rs1  = bit_ext_u32(insn, 15, 5);
+    const size_t  rs2  = bit_ext_u32(insn, 20, 5);
+    const sxlen_t off  = (int32_t)((((uint32_t)(((int32_t)insn) >> 25)) << 5) | bit_ext_u32(insn, 7, 5));
+    const xlen_t  addr = riscv_read_reg(vm, rs1) + off;
+
     if (likely(riscv_fpu_is_enabled(vm))) {
-        switch (funct3) {
+        switch (bit_ext_u32(insn, 12, 3)) {
             case 0x2: // fsw
                 riscv_store_float(vm, addr, rs2);
                 return;
@@ -162,20 +163,20 @@ static forceinline void riscv_emulate_f_opc_store(rvvm_hart_t* vm, const uint32_
                 return;
         }
     }
+
     riscv_illegal_insn(vm, insn);
 }
 
 static forceinline void riscv_emulate_f_fmadd(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const regid_t  rds    = bit_cut(insn, 7, 5);
-    const uint8_t  rm     = bit_cut(insn, 12, 3);
-    const regid_t  rs1    = bit_cut(insn, 15, 5);
-    const regid_t  rs2    = bit_cut(insn, 20, 5);
-    const uint32_t funct2 = bit_cut(insn, 25, 2);
-    const regid_t  rs3    = insn >> 27;
+    const size_t   rds = bit_ext_u32(insn, 7, 5);
+    const uint32_t rm  = bit_ext_u32(insn, 12, 3);
+    const size_t   rs1 = bit_ext_u32(insn, 15, 5);
+    const size_t   rs2 = bit_ext_u32(insn, 20, 5);
+    const size_t   rs3 = insn >> 27;
 
     if (likely(riscv_fpu_is_enabled(vm) && riscv_fpu_rm_is_valid(rm))) {
-        switch (funct2) {
+        switch (bit_ext_u32(insn, 25, 2)) {
             case 0x0: // fmadd.s
                 riscv_emit_s(vm, rds,
                              fpu_fma32(riscv_view_s(vm, rs1), //
@@ -190,20 +191,20 @@ static forceinline void riscv_emulate_f_fmadd(rvvm_hart_t* vm, const uint32_t in
                 return;
         }
     }
+
     riscv_illegal_insn(vm, insn);
 }
 
 static forceinline void riscv_emulate_f_fmsub(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const regid_t  rds    = bit_cut(insn, 7, 5);
-    const uint8_t  rm     = bit_cut(insn, 12, 3);
-    const regid_t  rs1    = bit_cut(insn, 15, 5);
-    const regid_t  rs2    = bit_cut(insn, 20, 5);
-    const uint32_t funct2 = bit_cut(insn, 25, 2);
-    const regid_t  rs3    = insn >> 27;
+    const size_t   rds = bit_ext_u32(insn, 7, 5);
+    const uint32_t rm  = bit_ext_u32(insn, 12, 3);
+    const size_t   rs1 = bit_ext_u32(insn, 15, 5);
+    const size_t   rs2 = bit_ext_u32(insn, 20, 5);
+    const size_t   rs3 = insn >> 27;
 
     if (likely(riscv_fpu_is_enabled(vm) && riscv_fpu_rm_is_valid(rm))) {
-        switch (funct2) {
+        switch (bit_ext_u32(insn, 25, 2)) {
             case 0x0: // fmsub.s
                 riscv_emit_s(vm, rds,
                              fpu_fma32(riscv_view_s(vm, rs1), //
@@ -218,20 +219,20 @@ static forceinline void riscv_emulate_f_fmsub(rvvm_hart_t* vm, const uint32_t in
                 return;
         }
     }
+
     riscv_illegal_insn(vm, insn);
 }
 
 static forceinline void riscv_emulate_f_fnmsub(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const regid_t  rds    = bit_cut(insn, 7, 5);
-    const uint8_t  rm     = bit_cut(insn, 12, 3);
-    const regid_t  rs1    = bit_cut(insn, 15, 5);
-    const regid_t  rs2    = bit_cut(insn, 20, 5);
-    const uint32_t funct2 = bit_cut(insn, 25, 2);
-    const regid_t  rs3    = insn >> 27;
+    const size_t   rds = bit_ext_u32(insn, 7, 5);
+    const uint32_t rm  = bit_ext_u32(insn, 12, 3);
+    const size_t   rs1 = bit_ext_u32(insn, 15, 5);
+    const size_t   rs2 = bit_ext_u32(insn, 20, 5);
+    const size_t   rs3 = insn >> 27;
 
     if (likely(riscv_fpu_is_enabled(vm) && riscv_fpu_rm_is_valid(rm))) {
-        switch (funct2) {
+        switch (bit_ext_u32(insn, 25, 2)) {
             case 0x0: // fnmsub.s
                 riscv_emit_s(vm, rds,
                              fpu_fma32(fpu_neg32(riscv_view_s(vm, rs1)), //
@@ -246,20 +247,20 @@ static forceinline void riscv_emulate_f_fnmsub(rvvm_hart_t* vm, const uint32_t i
                 return;
         }
     }
+
     riscv_illegal_insn(vm, insn);
 }
 
 static forceinline void riscv_emulate_f_fnmadd(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const regid_t  rds    = bit_cut(insn, 7, 5);
-    const uint8_t  rm     = bit_cut(insn, 12, 3);
-    const regid_t  rs1    = bit_cut(insn, 15, 5);
-    const regid_t  rs2    = bit_cut(insn, 20, 5);
-    const uint32_t funct2 = bit_cut(insn, 25, 2);
-    const regid_t  rs3    = insn >> 27;
+    const size_t   rds = bit_ext_u32(insn, 7, 5);
+    const uint32_t rm  = bit_ext_u32(insn, 12, 3);
+    const size_t   rs1 = bit_ext_u32(insn, 15, 5);
+    const size_t   rs2 = bit_ext_u32(insn, 20, 5);
+    const size_t   rs3 = insn >> 27;
 
     if (likely(riscv_fpu_is_enabled(vm) && riscv_fpu_rm_is_valid(rm))) {
-        switch (funct2) {
+        switch (bit_ext_u32(insn, 25, 2)) {
             case 0x0: // fnmadd.s
                 riscv_emit_s(vm, rds,
                              fpu_neg32(fpu_fma32(riscv_view_s(vm, rs1), //
@@ -274,6 +275,7 @@ static forceinline void riscv_emulate_f_fnmadd(rvvm_hart_t* vm, const uint32_t i
                 return;
         }
     }
+
     riscv_illegal_insn(vm, insn);
 }
 

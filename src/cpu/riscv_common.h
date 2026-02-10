@@ -35,17 +35,17 @@ typedef uint64_t xaddr_t;
 
 #endif
 
-static forceinline xlen_t riscv_read_reg(rvvm_hart_t* vm, regid_t reg)
+static forceinline xlen_t riscv_read_reg(rvvm_hart_t* vm, size_t reg)
 {
     return vm->registers[reg];
 }
 
-static forceinline sxlen_t riscv_read_reg_s(rvvm_hart_t* vm, regid_t reg)
+static forceinline sxlen_t riscv_read_reg_s(rvvm_hart_t* vm, size_t reg)
 {
     return vm->registers[reg];
 }
 
-static forceinline void riscv_write_reg(rvvm_hart_t* vm, regid_t reg, sxlen_t data)
+static forceinline void riscv_write_reg(rvvm_hart_t* vm, size_t reg, sxlen_t data)
 {
     vm->registers[reg] = data;
 }

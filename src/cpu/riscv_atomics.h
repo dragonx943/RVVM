@@ -31,9 +31,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 static forceinline void riscv_emulate_atomic_w(rvvm_hart_t* vm, const uint32_t insn)
 {
     const uint32_t op    = insn >> 27;
-    const regid_t  rds   = bit_cut(insn, 7, 5);
-    const regid_t  rs1   = bit_cut(insn, 15, 5);
-    const regid_t  rs2   = bit_cut(insn, 20, 5);
+    const size_t   rds   = bit_ext_u32(insn, 7, 5);
+    const size_t   rs1   = bit_ext_u32(insn, 15, 5);
+    const size_t   rs2   = bit_ext_u32(insn, 20, 5);
     const xaddr_t  vaddr = riscv_read_reg(vm, rs1);
     const uint32_t val   = riscv_read_reg(vm, rs2);
 
@@ -126,9 +126,9 @@ static forceinline void riscv_emulate_atomic_w(rvvm_hart_t* vm, const uint32_t i
 static forceinline void riscv_emulate_atomic_d(rvvm_hart_t* vm, const uint32_t insn)
 {
     const uint32_t op    = insn >> 27;
-    const regid_t  rds   = bit_cut(insn, 7, 5);
-    const regid_t  rs1   = bit_cut(insn, 15, 5);
-    const regid_t  rs2   = bit_cut(insn, 20, 5);
+    const size_t   rds   = bit_ext_u32(insn, 7, 5);
+    const size_t   rs1   = bit_ext_u32(insn, 15, 5);
+    const size_t   rs2   = bit_ext_u32(insn, 20, 5);
     const xaddr_t  vaddr = riscv_read_reg(vm, rs1);
     const uint64_t val   = riscv_read_reg(vm, rs2);
 
@@ -207,7 +207,7 @@ static forceinline void riscv_emulate_atomic_d(rvvm_hart_t* vm, const uint32_t i
             break;
         default:
             riscv_illegal_insn(vm, insn);
-            break;
+            return;
     }
 
     if (unlikely(ptr == &bounce)) {
@@ -219,8 +219,7 @@ static forceinline void riscv_emulate_atomic_d(rvvm_hart_t* vm, const uint32_t i
 
 static slow_path void riscv_emulate_a_opc_amo(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const uint32_t funct3 = bit_cut(insn, 12, 3);
-    switch (funct3) {
+    switch (bit_ext_u32(insn, 12, 3)) {
         case 0x02:
             riscv_emulate_atomic_w(vm, insn);
             return;
@@ -230,6 +229,7 @@ static slow_path void riscv_emulate_a_opc_amo(rvvm_hart_t* vm, const uint32_t in
             return;
 #endif
     }
+
     riscv_illegal_insn(vm, insn);
 }
 

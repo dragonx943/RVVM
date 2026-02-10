@@ -64,16 +64,16 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define bit_clmulr(a, b)    bit_clmulr32(a, b)
 #endif
 
-static forceinline bitcnt_t decode_i_shamt(const uint32_t insn)
+static forceinline uint32_t decode_i_shamt(const uint32_t insn)
 {
 #if defined(RISCV64)
-    return bit_cut(insn, 20, 6);
+    return bit_ext_u32(insn, 20, 6);
 #else
-    return bit_cut(insn, 20, 5);
+    return bit_ext_u32(insn, 20, 5);
 #endif
 }
 
-static forceinline bitcnt_t decode_i_shift_funct7(const uint32_t insn)
+static forceinline uint32_t decode_i_shift_funct7(const uint32_t insn)
 {
 #if defined(RISCV64)
     return (insn >> 26) << 1;
@@ -100,62 +100,63 @@ static forceinline int32_t decode_i_jal_off(const uint32_t insn)
 
 static forceinline void riscv_emulate_i_opc_load(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const uint32_t funct3 = bit_cut(insn, 12, 3);
-    const regid_t  rds    = bit_cut(insn, 7, 5);
-    const regid_t  rs1    = bit_cut(insn, 15, 5);
-    const sxlen_t  offset = sign_extend(bit_cut(insn, 20, 12), 12);
-    const xlen_t   addr   = riscv_read_reg(vm, rs1) + offset;
-    switch (funct3) {
+    const size_t  rds  = bit_ext_u32(insn, 7, 5);
+    const size_t  rs1  = bit_ext_u32(insn, 15, 5);
+    const sxlen_t off  = bit_ext_i32(insn, 20, 12);
+    const xlen_t  addr = riscv_read_reg(vm, rs1) + off;
+
+    switch (bit_ext_u32(insn, 12, 3)) {
         case 0x00: // lb
-            rvjit_trace_lb(rds, rs1, offset, 4);
+            rvjit_trace_lb(rds, rs1, off, 4);
             riscv_load_s8(vm, addr, rds);
             return;
         case 0x01: // lh
-            rvjit_trace_lh(rds, rs1, offset, 4);
+            rvjit_trace_lh(rds, rs1, off, 4);
             riscv_load_s16(vm, addr, rds);
             return;
         case 0x02: // lw
-            rvjit_trace_lw(rds, rs1, offset, 4);
+            rvjit_trace_lw(rds, rs1, off, 4);
             riscv_load_s32(vm, addr, rds);
             return;
 #if defined(RISCV64)
         case 0x03: // ld
-            rvjit_trace_ld(rds, rs1, offset, 4);
+            rvjit_trace_ld(rds, rs1, off, 4);
             riscv_load_u64(vm, addr, rds);
             return;
 #endif
         case 0x04: // lbu
-            rvjit_trace_lbu(rds, rs1, offset, 4);
+            rvjit_trace_lbu(rds, rs1, off, 4);
             riscv_load_u8(vm, addr, rds);
             return;
         case 0x05: // lhu
-            rvjit_trace_lhu(rds, rs1, offset, 4);
+            rvjit_trace_lhu(rds, rs1, off, 4);
             riscv_load_u16(vm, addr, rds);
             return;
 #if defined(RISCV64)
         case 0x06: // lwu
-            rvjit_trace_lwu(rds, rs1, offset, 4);
+            rvjit_trace_lwu(rds, rs1, off, 4);
             riscv_load_u32(vm, addr, rds);
             return;
 #endif
     }
+
     riscv_illegal_insn(vm, insn);
 }
 
 static forceinline void riscv_emulate_i_opc_imm(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const uint32_t funct3 = bit_cut(insn, 12, 3);
-    const regid_t  rds    = bit_cut(insn, 7, 5);
-    const regid_t  rs1    = bit_cut(insn, 15, 5);
-    const xlen_t   imm    = sign_extend(bit_cut(insn, 20, 12), 12);
-    const xlen_t   src    = riscv_read_reg(vm, rs1);
-    switch (funct3) {
+    const size_t rds = bit_ext_u32(insn, 7, 5);
+    const size_t rs1 = bit_ext_u32(insn, 15, 5);
+    const xlen_t imm = bit_ext_i32(insn, 20, 12);
+    const xlen_t src = riscv_read_reg(vm, rs1);
+
+    switch (bit_ext_u32(insn, 12, 3)) {
         case 0x00: // addi
             rvjit_trace_addi(rds, rs1, imm, 4);
             riscv_write_reg(vm, rds, src + imm);
             return;
         case 0x01: {
-            const bitcnt_t shamt = decode_i_shamt(insn);
+            const uint32_t shamt = decode_i_shamt(insn);
             switch (decode_i_shift_funct7(insn)) {
                 case 0x00: // slli
                     rvjit_trace_slli(rds, rs1, shamt, 4);
@@ -213,7 +214,7 @@ static forceinline void riscv_emulate_i_opc_imm(rvvm_hart_t* vm, const uint32_t 
             riscv_write_reg(vm, rds, src ^ imm);
             return;
         case 0x05: {
-            const bitcnt_t shamt = decode_i_shamt(insn);
+            const uint32_t shamt = decode_i_shamt(insn);
             switch (decode_i_shift_funct7(insn)) {
                 case 0x00: // srli
                     rvjit_trace_srli(rds, rs1, shamt, 4);
@@ -265,14 +266,15 @@ static forceinline void riscv_emulate_i_opc_imm(rvvm_hart_t* vm, const uint32_t 
             riscv_write_reg(vm, rds, src & imm);
             return;
     }
+
     riscv_illegal_insn(vm, insn);
 }
 
 static forceinline void riscv_emulate_i_auipc(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const regid_t rds = bit_cut(insn, 7, 5);
-    const xlen_t  imm = sign_extend(insn & 0xFFFFF000, 32);
-    const xlen_t  pc  = riscv_read_reg(vm, RISCV_REG_PC);
+    const size_t rds = bit_ext_u32(insn, 7, 5);
+    const xlen_t imm = (int32_t)(insn & 0xFFFFF000);
+    const xlen_t pc  = riscv_read_reg(vm, RISCV_REG_PC);
 
     rvjit_trace_auipc(rds, imm, 4);
     riscv_write_reg(vm, rds, pc + imm);
@@ -282,34 +284,34 @@ static forceinline void riscv_emulate_i_auipc(rvvm_hart_t* vm, const uint32_t in
 
 static forceinline void riscv_emulate_i_opc_imm32(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const uint32_t funct3 = bit_cut(insn, 12, 3);
-    const regid_t  rds    = bit_cut(insn, 7, 5);
-    const regid_t  rs1    = bit_cut(insn, 15, 5);
-    const uint32_t src    = riscv_read_reg(vm, rs1);
-    switch (funct3) {
+    const size_t   rds = bit_ext_u32(insn, 7, 5);
+    const size_t   rs1 = bit_ext_u32(insn, 15, 5);
+    const uint32_t src = riscv_read_reg(vm, rs1);
+
+    switch (bit_ext_u32(insn, 12, 3)) {
         case 0x00: { // addiw
-            const uint32_t imm = sign_extend(bit_cut(insn, 20, 12), 12);
+            const uint32_t imm = bit_ext_i32(insn, 20, 12);
             rvjit_trace_addiw(rds, rs1, imm, 4);
-            vm->registers[rds] = (int32_t)(src + imm);
+            riscv_write_reg(vm, rds, (int32_t)(src + imm));
             return;
         }
         case 0x01:
             switch (insn >> 25) {
                 case 0x00: { // slliw
-                    const bitcnt_t shamt = bit_cut(insn, 20, 5);
+                    const uint32_t shamt = bit_ext_u32(insn, 20, 5);
                     rvjit_trace_slliw(rds, rs1, shamt, 4);
                     riscv_write_reg(vm, rds, (int32_t)(src << shamt));
                     return;
                 }
                 case 0x04:
                 case 0x05: { // slli.uw (Zba)
-                    const bitcnt_t shamt = bit_cut(insn, 20, 6);
+                    const uint32_t shamt = bit_ext_u32(insn, 20, 6);
                     rvjit_trace_slli_uw(rds, rs1, shamt, 4);
                     riscv_write_reg(vm, rds, ((xlen_t)src) << shamt);
                     return;
                 }
                 case 0x30:
-                    switch (bit_cut(insn, 20, 5)) {
+                    switch (bit_ext_u32(insn, 20, 5)) {
                         case 0x00: // clzw (Zbb)
                             // TODO: JIT
                             riscv_write_reg(vm, rds, bit_clz32(src));
@@ -327,7 +329,7 @@ static forceinline void riscv_emulate_i_opc_imm32(rvvm_hart_t* vm, const uint32_
             }
             break;
         case 0x05: {
-            const bitcnt_t shamt = bit_cut(insn, 20, 5);
+            const uint32_t shamt = bit_ext_u32(insn, 20, 5);
             switch (insn >> 25) {
                 case 0x00: // srli
                     rvjit_trace_srliw(rds, rs1, shamt, 4);
@@ -345,6 +347,7 @@ static forceinline void riscv_emulate_i_opc_imm32(rvvm_hart_t* vm, const uint32_
             break;
         }
     }
+
     riscv_illegal_insn(vm, insn);
 }
 
@@ -352,44 +355,44 @@ static forceinline void riscv_emulate_i_opc_imm32(rvvm_hart_t* vm, const uint32_
 
 static forceinline void riscv_emulate_i_opc_store(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const uint32_t funct3 = bit_cut(insn, 12, 3);
-    const regid_t  rs1    = bit_cut(insn, 15, 5);
-    const regid_t  rs2    = bit_cut(insn, 20, 5);
-    const sxlen_t  offset = sign_extend(bit_cut(insn, 7, 5) | (bit_cut(insn, 25, 7) << 5), 12);
-    const xlen_t   addr   = riscv_read_reg(vm, rs1) + offset;
-    switch (funct3) {
+    const size_t  rs1  = bit_ext_u32(insn, 15, 5);
+    const size_t  rs2  = bit_ext_u32(insn, 20, 5);
+    const sxlen_t off  = (int32_t)((((uint32_t)(((int32_t)insn) >> 25)) << 5) | bit_ext_u32(insn, 7, 5));
+    const xlen_t  addr = riscv_read_reg(vm, rs1) + off;
+
+    switch (bit_ext_u32(insn, 12, 3)) {
         case 0x00: // sb
-            rvjit_trace_sb(rs2, rs1, offset, 4);
+            rvjit_trace_sb(rs2, rs1, off, 4);
             riscv_store_u8(vm, addr, rs2);
             return;
         case 0x01: // sh
-            rvjit_trace_sh(rs2, rs1, offset, 4);
+            rvjit_trace_sh(rs2, rs1, off, 4);
             riscv_store_u16(vm, addr, rs2);
             return;
         case 0x02: // sw
-            rvjit_trace_sw(rs2, rs1, offset, 4);
+            rvjit_trace_sw(rs2, rs1, off, 4);
             riscv_store_u32(vm, addr, rs2);
             return;
 #if defined(RISCV64)
         case 0x03: // sd
-            rvjit_trace_sd(rs2, rs1, offset, 4);
+            rvjit_trace_sd(rs2, rs1, off, 4);
             riscv_store_u64(vm, addr, rs2);
             return;
 #endif
     }
+
     riscv_illegal_insn(vm, insn);
 }
 
 static forceinline void riscv_emulate_i_opc_op(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const uint32_t funct = insn & 0xFE007000;
-    const regid_t  rds   = bit_cut(insn, 7, 5);
-    const regid_t  rs1   = bit_cut(insn, 15, 5);
-    const regid_t  rs2   = bit_cut(insn, 20, 5);
-    const xlen_t   reg1  = riscv_read_reg(vm, rs1);
-    const xlen_t   reg2  = riscv_read_reg(vm, rs2);
+    const size_t rds  = bit_ext_u32(insn, 7, 5);
+    const size_t rs1  = bit_ext_u32(insn, 15, 5);
+    const size_t rs2  = bit_ext_u32(insn, 20, 5);
+    const xlen_t reg1 = riscv_read_reg(vm, rs1);
+    const xlen_t reg2 = riscv_read_reg(vm, rs2);
 
-    switch (funct) {
+    switch (insn & 0xFE007000) {
         case 0x00000000: // add
             rvjit_trace_add(rds, rs1, rs2, 4);
             riscv_write_reg(vm, rds, reg1 + reg2);
@@ -615,8 +618,8 @@ static forceinline void riscv_emulate_i_opc_op(rvvm_hart_t* vm, const uint32_t i
 
 static forceinline void riscv_emulate_i_lui(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const regid_t rds = bit_cut(insn, 7, 5);
-    const xlen_t  imm = sign_extend(insn & 0xFFFFF000, 32);
+    const size_t rds = bit_ext_u32(insn, 7, 5);
+    const xlen_t imm = (int32_t)(insn & 0xFFFFF000);
 
     rvjit_trace_li(rds, imm, 4);
     riscv_write_reg(vm, rds, imm);
@@ -626,14 +629,13 @@ static forceinline void riscv_emulate_i_lui(rvvm_hart_t* vm, const uint32_t insn
 
 static forceinline void riscv_emulate_i_opc_op32(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const uint32_t funct = insn & 0xFE007000;
-    const regid_t  rds   = bit_cut(insn, 7, 5);
-    const regid_t  rs1   = bit_cut(insn, 15, 5);
-    const regid_t  rs2   = bit_cut(insn, 20, 5);
-    const uint32_t reg1  = riscv_read_reg(vm, rs1);
-    const uint32_t reg2  = riscv_read_reg(vm, rs2);
+    const size_t   rds  = bit_ext_u32(insn, 7, 5);
+    const size_t   rs1  = bit_ext_u32(insn, 15, 5);
+    const size_t   rs2  = bit_ext_u32(insn, 20, 5);
+    const uint32_t reg1 = riscv_read_reg(vm, rs1);
+    const uint32_t reg2 = riscv_read_reg(vm, rs2);
 
-    switch (funct) {
+    switch (insn & 0xFE007000) {
         case 0x00000000: // addw
             rvjit_trace_addw(rds, rs1, rs2, 4);
             riscv_write_reg(vm, rds, (int32_t)(reg1 + reg2));
@@ -753,101 +755,100 @@ static forceinline void riscv_emulate_i_opc_op32(rvvm_hart_t* vm, const uint32_t
 
 static forceinline void riscv_emulate_i_opc_branch(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const uint32_t funct3 = bit_cut(insn, 12, 3);
-    const regid_t  rs1    = bit_cut(insn, 15, 5);
-    const regid_t  rs2    = bit_cut(insn, 20, 5);
-    const sxlen_t  offset = decode_i_branch_off(insn);
-    switch (funct3) {
+    const size_t  rs1 = bit_ext_u32(insn, 15, 5);
+    const size_t  rs2 = bit_ext_u32(insn, 20, 5);
+    const sxlen_t off = decode_i_branch_off(insn);
+
+    switch (bit_ext_u32(insn, 12, 3)) {
         case 0x00: // beq
             if (riscv_read_reg(vm, rs1) == riscv_read_reg(vm, rs2)) {
                 const xlen_t pc = riscv_read_reg(vm, RISCV_REG_PC);
-                rvjit_trace_beq(rs1, rs2, offset, 4, 4);
-                riscv_write_reg(vm, RISCV_REG_PC, pc + offset - 4);
+                rvjit_trace_beq(rs1, rs2, off, 4, 4);
+                riscv_write_reg(vm, RISCV_REG_PC, pc + off - 4);
             } else {
-                rvjit_trace_bne(rs1, rs2, 4, offset, 4);
+                rvjit_trace_bne(rs1, rs2, 4, off, 4);
             }
             return;
         case 0x01: // bne
             if (riscv_read_reg(vm, rs1) != riscv_read_reg(vm, rs2)) {
                 const xlen_t pc = riscv_read_reg(vm, RISCV_REG_PC);
-                rvjit_trace_bne(rs1, rs2, offset, 4, 4);
-                riscv_write_reg(vm, RISCV_REG_PC, pc + offset - 4);
+                rvjit_trace_bne(rs1, rs2, off, 4, 4);
+                riscv_write_reg(vm, RISCV_REG_PC, pc + off - 4);
             } else {
-                rvjit_trace_beq(rs1, rs2, 4, offset, 4);
+                rvjit_trace_beq(rs1, rs2, 4, off, 4);
             }
             return;
         case 0x04: // blt
             if (riscv_read_reg_s(vm, rs1) < riscv_read_reg_s(vm, rs2)) {
                 const xlen_t pc = riscv_read_reg(vm, RISCV_REG_PC);
-                rvjit_trace_blt(rs1, rs2, offset, 4, 4);
-                riscv_write_reg(vm, RISCV_REG_PC, pc + offset - 4);
+                rvjit_trace_blt(rs1, rs2, off, 4, 4);
+                riscv_write_reg(vm, RISCV_REG_PC, pc + off - 4);
             } else {
-                rvjit_trace_bge(rs1, rs2, 4, offset, 4);
+                rvjit_trace_bge(rs1, rs2, 4, off, 4);
             }
             return;
         case 0x05: // bge
             if (riscv_read_reg_s(vm, rs1) >= riscv_read_reg_s(vm, rs2)) {
                 const xlen_t pc = riscv_read_reg(vm, RISCV_REG_PC);
-                rvjit_trace_bge(rs1, rs2, offset, 4, 4);
-                riscv_write_reg(vm, RISCV_REG_PC, pc + offset - 4);
+                rvjit_trace_bge(rs1, rs2, off, 4, 4);
+                riscv_write_reg(vm, RISCV_REG_PC, pc + off - 4);
             } else {
-                rvjit_trace_blt(rs1, rs2, 4, offset, 4);
+                rvjit_trace_blt(rs1, rs2, 4, off, 4);
             }
             return;
         case 0x06: // bltu
             if (riscv_read_reg(vm, rs1) < riscv_read_reg(vm, rs2)) {
                 const xlen_t pc = riscv_read_reg(vm, RISCV_REG_PC);
-                rvjit_trace_bltu(rs1, rs2, offset, 4, 4);
-                riscv_write_reg(vm, RISCV_REG_PC, pc + offset - 4);
+                rvjit_trace_bltu(rs1, rs2, off, 4, 4);
+                riscv_write_reg(vm, RISCV_REG_PC, pc + off - 4);
             } else {
-                rvjit_trace_bgeu(rs1, rs2, 4, offset, 4);
+                rvjit_trace_bgeu(rs1, rs2, 4, off, 4);
             }
             return;
         case 0x07: // bgeu
             if (riscv_read_reg(vm, rs1) >= riscv_read_reg(vm, rs2)) {
                 const xlen_t pc = riscv_read_reg(vm, RISCV_REG_PC);
-                rvjit_trace_bgeu(rs1, rs2, offset, 4, 4);
-                riscv_write_reg(vm, RISCV_REG_PC, pc + offset - 4);
+                rvjit_trace_bgeu(rs1, rs2, off, 4, 4);
+                riscv_write_reg(vm, RISCV_REG_PC, pc + off - 4);
             } else {
-                rvjit_trace_bltu(rs1, rs2, 4, offset, 4);
+                rvjit_trace_bltu(rs1, rs2, 4, off, 4);
             }
             return;
     }
+
     riscv_illegal_insn(vm, insn);
 }
 
 static forceinline void riscv_emulate_i_jalr(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const uint32_t funct3 = bit_cut(insn, 12, 3);
-    if (likely(!funct3)) {
-        const regid_t rds      = bit_cut(insn, 7, 5);
-        const regid_t rs1      = bit_cut(insn, 15, 5);
-        const sxlen_t offset   = sign_extend(bit_cut(insn, 20, 12), 12);
+    if (likely(!bit_ext_u32(insn, 12, 3))) {
+        const size_t  rds      = bit_ext_u32(insn, 7, 5);
+        const size_t  rs1      = bit_ext_u32(insn, 15, 5);
+        const sxlen_t off      = bit_ext_i32(insn, 20, 12);
         const xlen_t  pc       = riscv_read_reg(vm, RISCV_REG_PC);
         const xlen_t  jmp_addr = riscv_read_reg(vm, rs1);
-        rvjit_trace_jalr(rds, rs1, offset, 4);
+        rvjit_trace_jalr(rds, rs1, off, 4);
         riscv_write_reg(vm, rds, pc + 4);
-        riscv_write_reg(vm, RISCV_REG_PC, ((jmp_addr + offset) & (~(xlen_t)1)) - 4);
-        return;
+        riscv_write_reg(vm, RISCV_REG_PC, ((jmp_addr + off) & (~(xlen_t)1)) - 4);
+    } else {
+        riscv_illegal_insn(vm, insn);
     }
-    riscv_illegal_insn(vm, insn);
 }
 
 static forceinline void riscv_emulate_i_jal(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const regid_t rds    = bit_cut(insn, 7, 5);
-    const sxlen_t offset = decode_i_jal_off(insn);
-    const xlen_t  pc     = riscv_read_reg(vm, RISCV_REG_PC);
+    const size_t  rds = bit_ext_u32(insn, 7, 5);
+    const sxlen_t off = decode_i_jal_off(insn);
+    const xlen_t  pc  = riscv_read_reg(vm, RISCV_REG_PC);
 
-    rvjit_trace_jal(rds, offset, 4);
+    rvjit_trace_jal(rds, off, 4);
     riscv_write_reg(vm, rds, pc + 4);
-    riscv_write_reg(vm, RISCV_REG_PC, pc + offset - 4);
+    riscv_write_reg(vm, RISCV_REG_PC, pc + off - 4);
 }
 
 static forceinline void riscv_emulate_i(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const uint32_t op = insn & 0x7C;
-    switch (op) {
+    switch (insn & 0x7C) {
         case RISCV_OPC_LOAD:
             riscv_emulate_i_opc_load(vm, insn);
             return;

@@ -13,14 +13,13 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 slow_path void riscv_emulate_f_opc_op(rvvm_hart_t* vm, const uint32_t insn)
 {
-    const regid_t  rds    = bit_cut(insn, 7, 5);
-    const uint8_t  rm     = bit_cut(insn, 12, 3);
-    const regid_t  rs1    = bit_cut(insn, 15, 5);
-    const regid_t  rs2    = bit_cut(insn, 20, 5);
-    const uint32_t funct7 = insn >> 25;
+    const size_t   rds = bit_ext_u32(insn, 7, 5);
+    const uint32_t rm  = bit_ext_u32(insn, 12, 3);
+    const size_t   rs1 = bit_ext_u32(insn, 15, 5);
+    const size_t   rs2 = bit_ext_u32(insn, 20, 5);
 
     if (likely(riscv_fpu_is_enabled(vm) && riscv_fpu_rm_is_valid(rm))) {
-        switch (funct7) {
+        switch (insn >> 25) {
             case RISCV_FADD_S:
                 riscv_emit_s(vm, rds, fpu_add32(riscv_view_s(vm, rs1), riscv_view_s(vm, rs2)));
                 return;
@@ -46,13 +45,13 @@ slow_path void riscv_emulate_f_opc_op(rvvm_hart_t* vm, const uint32_t insn)
                 riscv_emit_d(vm, rds, fpu_div64(riscv_view_d(vm, rs1), riscv_view_d(vm, rs2)));
                 return;
             case RISCV_FSQRT_S:
-                if (likely(rs2 == 0)) {
+                if (likely(!rs2)) {
                     riscv_emit_s(vm, rds, fpu_sqrt32(riscv_view_s(vm, rs1)));
                     return;
                 }
                 break;
             case RISCV_FSQRT_D:
-                if (likely(rs2 == 0)) {
+                if (likely(!rs2)) {
                     riscv_emit_d(vm, rds, fpu_sqrt64(riscv_view_d(vm, rs1)));
                     return;
                 }
@@ -110,7 +109,7 @@ slow_path void riscv_emulate_f_opc_op(rvvm_hart_t* vm, const uint32_t insn)
                 }
                 break;
             case RISCV_FCVT_D_S:
-                if (likely(rs2 == 0)) {
+                if (likely(!rs2)) {
                     riscv_write_d(vm, rds, fpu_fcvt_f32_to_f64(riscv_view_s(vm, rs1)));
                     return;
                 }
@@ -160,7 +159,7 @@ slow_path void riscv_emulate_f_opc_op(rvvm_hart_t* vm, const uint32_t insn)
                 }
                 break;
             case RISCV_FMVCLS_S:
-                if (likely(rs2 == 0)) {
+                if (likely(!rs2)) {
                     switch (rm) {
                         case 0x00: // fmv.x.w
                             riscv_write_reg(vm, rds, (int32_t)fpu_bit_f32_to_u32(riscv_view_s(vm, rs1)));
@@ -172,7 +171,7 @@ slow_path void riscv_emulate_f_opc_op(rvvm_hart_t* vm, const uint32_t insn)
                 }
                 break;
             case RISCV_FMVCLS_D:
-                if (likely(rs2 == 0)) {
+                if (likely(!rs2)) {
                     switch (rm) {
                         case 0x00: // fmv.x.d
                             if (likely(vm->rv64)) {
@@ -257,19 +256,20 @@ slow_path void riscv_emulate_f_opc_op(rvvm_hart_t* vm, const uint32_t insn)
                 }
                 break;
             case RISCV_FMV_W_X:
-                if (likely(rs2 == 0 && rm == 0)) {
+                if (likely(!rs2 && !rm)) {
                     riscv_emit_s(vm, rds, fpu_bit_u32_to_f32(riscv_read_reg(vm, rs1)));
                     return;
                 }
                 break;
             case RISCV_FMV_D_X:
-                if (likely(vm->rv64 && rs2 == 0 && rm == 0)) {
+                if (likely(vm->rv64 && !rs2 && !rm)) {
                     riscv_emit_d(vm, rds, fpu_bit_u64_to_f64(riscv_read_reg(vm, rs1)));
                     return;
                 }
                 break;
         }
     }
+
     riscv_illegal_insn(vm, insn);
 }
 
