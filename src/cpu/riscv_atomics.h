@@ -61,7 +61,7 @@ static forceinline void riscv_emulate_atomic_b(rvvm_hart_t* vm, const uint32_t i
         case RISCV_AMO_CAS: { // Zacas
             uint8_t exp = riscv_read_reg(vm, rds);
             atomic_cas_uint8_ex(ptr, &exp, val, false, ATOMIC_ACQ_REL, ATOMIC_ACQUIRE);
-            riscv_write_reg(vm, rds, (int8_t)read_uint16_le(&exp));
+            riscv_write_reg(vm, rds, (int8_t)read_uint8(&exp));
             break;
         }
         case RISCV_AMO_SWAP:
