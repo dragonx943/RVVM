@@ -271,7 +271,8 @@ void atomic_thread_fence(int memorder);
 #define ATOMIC_SEQ_CST 5
 #endif
 
-#if !defined(__SIZEOF_INT128__) || !defined(__GCC_HAVE_SYNC_COMPARE_AND_SWAP_16) || defined(USE_NO_LIBATOMIC)
+#if !defined(__SIZEOF_INT128__) || !defined(__GCC_HAVE_SYNC_COMPARE_AND_SWAP_16) /**/                                  \
+    || !defined(HOST_LITTLE_ENDIAN) || defined(USE_NO_LIBATOMIC)
 /*
  * Emulate 128-bit atomics
  */
@@ -970,8 +971,6 @@ static forceinline bool atomic_cas_uint128_ex(void* addr, uint64_t* exp, const u
     exp[0]        = orig;
     exp[1]        = orig >> 64;
     return orig == chck;
-#elif defined(WIN32_ATOMICS_IMPL)
-    return InterlockedCompareExchange128((LONG64*)addr, val[1], val[0], exp);
 #elif defined(LIBATOMIC_IMPL)
     return __atomic_compare_exchange_16((uint64_t*)addr, exp, val, weak, succ, fail);
 #endif
