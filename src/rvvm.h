@@ -34,6 +34,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define RVVM_TLB_SIZE      256 // Always nonzero & power of 2 (32, 64..)
 #define RVVM_TLB_MASK      (RVVM_TLB_SIZE - 1)
 
+#define RVVM_RVV_VLEN      256
+#define RVVM_RVV_SIZE      (RVVM_RVV_VLEN >> 3)
+
 #define RVVM_OPTS_ARR_SIZE 0x09
 
 BUILD_ASSERT(RVVM_TLB_SIZE);
@@ -123,6 +126,7 @@ typedef int32_t  rvvm_sxlen_t;
  * Address translation cache (TLB)
  */
 
+// clang-format off
 typedef randomized_struct align_type(32)
 {
     // Pointer to page (With vaddr subtracted, for faster TLB translation)
@@ -135,9 +139,8 @@ typedef randomized_struct align_type(32)
     rvvm_addr_t r;
     rvvm_addr_t w;
     rvvm_addr_t e;
-}
-
-rvvm_tlb_entry_t;
+} rvvm_tlb_entry_t;
+// clang-format on
 
 #if defined(USE_JIT)
 
@@ -204,7 +207,15 @@ struct align_cacheline rvvm_hart_t {
     rvvm_jit_tlb_entry_t jtlb[RVVM_TLB_SIZE];
 #endif
 
-    randomized_fields_start // Everything below here isn't accessed by JIT
+#if defined(USE_RVV)
+    uint8_t rvv_state[RVVM_RVV_SIZE << 5];
+#endif
+
+    /*
+     * Everything below here isn't accessed by JIT
+     */
+
+    randomized_fields_start
 
         rvvm_ram_t  mem;
     rvvm_machine_t* machine;
@@ -223,9 +234,6 @@ struct align_cacheline rvvm_hart_t {
     rvvm_uxlen_t lrsc_cas;
 
     struct randomize_layout {
-        uint32_t fcsr;
-        uint32_t hartid;
-
         rvvm_uxlen_t status;
 
         rvvm_uxlen_t ie;
@@ -245,6 +253,11 @@ struct align_cacheline rvvm_hart_t {
         rvvm_uxlen_t counteren[RISCV_PRIVS_MAX];
         uint64_t     envcfg[RISCV_PRIVS_MAX];
         uint64_t     mseccfg;
+
+        uint32_t fcsr;
+        uint32_t vcsr;
+        uint32_t vtype;
+        uint32_t hartid;
     } csr;
 
 #if defined(USE_JIT)
