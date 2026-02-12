@@ -9,7 +9,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
 // Must be included before system headers
-#include "feature_test.h"
+#include "feature_test.h" // IWYU pragma: keep
 
 #include "compiler.h"
 #include "gui_window.h"
@@ -435,7 +435,7 @@ static void wl_keyboard_on_key(void* data, struct wl_keyboard* keyboard, uint32_
         hid_key_t     hid_key = wayland_keysym_to_hid(keysym);
         if (state == WL_KEYBOARD_KEY_STATE_PRESSED) {
             gui_backend_on_key_press(win, hid_key);
-        } else {
+        } else if (state == WL_KEYBOARD_KEY_STATE_RELEASED) {
             gui_backend_on_key_release(win, hid_key);
         }
     }
@@ -521,7 +521,7 @@ static void wl_pointer_on_button(void* data, struct wl_pointer* pointer, uint32_
         }
         if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
             gui_backend_on_mouse_press(win, btns);
-        } else {
+        } else if (state == WL_POINTER_BUTTON_STATE_RELEASED) {
             gui_backend_on_mouse_release(win, btns);
         }
     }
