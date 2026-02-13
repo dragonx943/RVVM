@@ -12,7 +12,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef RVVM_UTILS_H
 #define RVVM_UTILS_H
 
-#include "atomics.h"
+#include "atomics.h" // IWYU pragma: keep
 #include "rvvmlib.h"
 
 #include <stdlib.h>
@@ -127,26 +127,26 @@ static inline size_t utf8_decode_code_point(const char* str, size_t size, uint32
 {
     const uint8_t* str_u8 = (const uint8_t*)str;
 
-    if (size >= 1 && str_u8[0] < 0x80U) {
+    if (size >= 1 && str_u8[0] < 0x80UL) {
         // ASCII character
         *code_point = str_u8[0];
         return 1;
-    } else if (size >= 1 && str_u8[0] < 0xC2U) {
+    } else if (size >= 1 && str_u8[0] < 0xC2UL) {
         // Illegal UTF8 sequence (Character starts with continuation/reserved byte)
         *code_point = 0;
         return 0;
-    } else if (size >= 2 && str_u8[0] < 0xE0U) {
+    } else if (size >= 2 && str_u8[0] < 0xE0UL) {
         // 2-byte code point
-        *code_point = ((str_u8[0] & 0x1FU) << 6) | (str_u8[1] & 0x3FU);
+        *code_point = ((str_u8[0] & 0x1FUL) << 6) | (str_u8[1] & 0x3FUL);
         return 2;
-    } else if (size >= 3 && str_u8[0] < 0xF0U) {
+    } else if (size >= 3 && str_u8[0] < 0xF0UL) {
         // 3-byte code point
-        *code_point = ((str_u8[0] & 0x0FU) << 12) | ((str_u8[1] & 0x1FU) << 6) | (str_u8[2] & 0x3FU);
+        *code_point = ((str_u8[0] & 0x0FUL) << 12) | ((str_u8[1] & 0x1FUL) << 6) | (str_u8[2] & 0x3FUL);
         return 3;
     } else if (size >= 4 && str_u8[0] < 0xF6U) {
         // 4-byte code point
-        *code_point  = ((str_u8[0] & 0x07U) << 18) | ((str_u8[1] & 0x0FU) << 12);
-        *code_point |= ((str_u8[2] & 0x1FU) << 6) | (str_u8[3] & 0x3FU);
+        *code_point  = ((str_u8[0] & 0x07UL) << 18) | ((str_u8[1] & 0x0FUL) << 12);
+        *code_point |= ((str_u8[2] & 0x1FUL) << 6) | (str_u8[3] & 0x3FUL);
         return 4;
     }
 
@@ -158,27 +158,27 @@ static inline size_t utf8_encode_code_point(char* str, size_t size, uint32_t cod
 {
     uint8_t* str_u8 = (uint8_t*)str;
 
-    if (size >= 1 && code_point < 0x80U) {
+    if (size >= 1 && code_point < 0x80UL) {
         // ASCII character
         str_u8[0] = code_point;
         return 1;
-    } else if (size >= 2 && code_point < 0x800U) {
+    } else if (size >= 2 && code_point < 0x800UL) {
         // 2-byte code point
-        str_u8[0] = (0xC0U | (code_point >> 6));
-        str_u8[1] = (0x80U | (code_point & 0x3FU));
+        str_u8[0] = (0xC0UL | (code_point >> 6));
+        str_u8[1] = (0x80UL | (code_point & 0x3FUL));
         return 2;
-    } else if (size >= 3 && code_point < 0x10000U) {
+    } else if (size >= 3 && code_point < 0x10000UL) {
         // 3-byte code point
-        str_u8[0] = (0xE0U | (code_point >> 12));
-        str_u8[1] = (0x80U | ((code_point >> 6) & 0x3FU));
-        str_u8[2] = (0x80U | (code_point & 0x3F));
+        str_u8[0] = (0xE0UL | (code_point >> 12));
+        str_u8[1] = (0x80UL | ((code_point >> 6) & 0x3FUL));
+        str_u8[2] = (0x80UL | (code_point & 0x3F));
         return 3;
-    } else if (size >= 4 && code_point < 0x200000U) {
+    } else if (size >= 4 && code_point < 0x200000UL) {
         // 4-byte code point
-        str_u8[0] = (0xF0U | (code_point >> 18));
-        str_u8[1] = (0x80U | ((code_point >> 12) & 0x3FU));
-        str_u8[2] = (0x80U | ((code_point >> 6) & 0x3FU));
-        str_u8[3] = (0x80U | (code_point & 0x3FU));
+        str_u8[0] = (0xF0UL | (code_point >> 18));
+        str_u8[1] = (0x80UL | ((code_point >> 12) & 0x3FUL));
+        str_u8[2] = (0x80UL | ((code_point >> 6) & 0x3FUL));
+        str_u8[3] = (0x80UL | (code_point & 0x3FUL));
         return 4;
     }
 
@@ -189,13 +189,13 @@ static inline size_t utf16_decode_code_point(const uint16_t* str, size_t size, u
 {
     const uint16_t* str_u16 = str;
 
-    if (size >= 1 && (str_u16[0] >= 0xE000 || str_u16[0] < 0xD800U)) {
+    if (size >= 1 && (str_u16[0] >= 0xE000UL || str_u16[0] < 0xD800UL)) {
         // Single code unit
         *code_point = str_u16[0];
         return 1;
-    } else if (size >= 2 && str_u16[0] >= 0xD800U && str_u16[0] < 0xE000U) {
+    } else if (size >= 2 && str_u16[0] >= 0xD800UL && str_u16[0] < 0xE000UL) {
         // Surrogate pair encoding
-        *code_point = (str_u16[0] & 0x3FFU) << 10 | (str_u16[1] & 0x3FFU);
+        *code_point = (str_u16[0] & 0x3FFUL) << 10 | (str_u16[1] & 0x3FFUL);
         return 2;
     }
 
@@ -207,15 +207,15 @@ static inline size_t utf16_encode_code_point(uint16_t* str, size_t size, uint32_
 {
     uint16_t* str_u16 = str;
 
-    if (size >= 1 && (code_point < 0xD800U || (code_point >= 0xE000U && code_point < 0x10000U))) {
+    if (size >= 1 && (code_point < 0xD800UL || (code_point >= 0xE000UL && code_point < 0x10000UL))) {
         // Single code unit
         str_u16[0] = code_point;
         return 1;
-    } else if (size >= 2 && code_point <= 0x110000U) {
+    } else if (size >= 2 && code_point <= 0x110000UL) {
         // Surrogate pair encoding
-        code_point -= 0x10000U;
-        str_u16[0]  = (0xD800U | (code_point >> 10));
-        str_u16[1]  = (0xDC00U | (code_point & 0x3FFU));
+        code_point -= 0x10000UL;
+        str_u16[0]  = (0xD800UL | (code_point >> 10));
+        str_u16[1]  = (0xDC00UL | (code_point & 0x3FFUL));
         return 2;
     }
 
