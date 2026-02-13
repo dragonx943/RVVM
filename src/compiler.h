@@ -137,6 +137,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define HOST_64BIT 1
 #elif !defined(UINTPTR_MAX) || !defined(SIZE_MAX) || (UINTPTR_MAX == 0xFFFFFFFFU) || (SIZE_MAX == 0xFFFFFFFFU)
 #define HOST_32BIT 1
+#elif !defined(UINTPTR_MAX) || !defined(SIZE_MAX) || (UINTPTR_MAX == 0xFFFFU) || (SIZE_MAX == 0xFFFFU)
+#define HOST_16BIT 1
 #endif
 
 // Determine integer endianness (Possibly neither big/little endian)
