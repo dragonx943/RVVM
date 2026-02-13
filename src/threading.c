@@ -38,16 +38,18 @@ PUSH_OPTIMIZATION_SIZE
 #include <pthread.h>
 #include <time.h>
 #define POSIX_THREADS_IMPL 1
-#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112LL /**/                                                   \
-    && !defined(__STDC_NO_THREADS__) && CHECK_INCLUDE(threads.h, 1)
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112LL && !defined(__STDC_NO_THREADS__) /**/                  \
+    && CHECK_INCLUDE(threads.h, 1) && !defined(HOST_TARGET_DOS) && !defined(HOST_TARGET_POSIX)
 // Use C11 threads
 #include <threads.h>
 #include <time.h>
 #define C11_THREADS_IMPL 1
-#else
+#elif CHECK_INCLUDE(SDL.h, 1)
 // Use SDL threads
-#include <SDL/SDL.h>
+#include <SDL.h>
 #define SDL_THREADS_IMPL 1
+#else
+#pragma message("Falling back to dummy threading")
 #endif
 
 #if defined(HOST_TARGET_POSIX) && HOST_TARGET_POSIX >= 199506L && CHECK_INCLUDE(sched.h, 1)
@@ -133,7 +135,7 @@ static int (*ulock_wake)(uint32_t op, void* ptr, uint64_t unused)           = NU
  * Probe for futex emulation helpers
  */
 
-#if !defined(NATIVE_FUTEX_IMPL) && !defined(HOST_TARGET_WIN32)
+#if !defined(NATIVE_FUTEX_IMPL) && defined(HOST_TARGET_POSIX)
 #if defined(USE_FUTEX_OVER_PIPE)
 // Use pipe(), select(), close() for futex emulation
 #include <sys/select.h>
@@ -1056,7 +1058,7 @@ void condvar_free(cond_var_t* cond)
  */
 
 #define WORKER_THREADS 4
-#define WORKQUEUE_SIZE 2048
+#define WORKQUEUE_SIZE 256
 #define WORKQUEUE_MASK (WORKQUEUE_SIZE - 1)
 
 BUILD_ASSERT(!(WORKQUEUE_SIZE & WORKQUEUE_MASK));
@@ -1070,11 +1072,8 @@ typedef struct {
 
 typedef struct {
     task_item_t tasks[WORKQUEUE_SIZE];
-    char        pad0[64];
     uint32_t    head;
-    char        pad1[64];
     uint32_t    tail;
-    char        pad2[64];
 } work_queue_t;
 
 static uint32_t      pool_run;
