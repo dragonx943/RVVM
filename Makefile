@@ -247,7 +247,7 @@ override canonize_arch = $(patsubst !%,%,$(patsubst x86_64,$(if $(filter -m32,$(
 # mingw*   -> windows
 # macos*   -> darwin
 # solaris* -> sunos
-override canonize_os = $(patsubst solaris%,sunos,$(patsubst macos%,darwin,$(patsubst mingw%,windows,$(call tolower,$(if $(findstring .,$1),$(firstword $(call dig_split,$1)),$1)))))
+override canonize_os = $(patsubst msdos%,dos,$(patsubst solaris%,sunos,$(patsubst macos%,darwin,$(patsubst mingw%,windows,$(call tolower,$(if $(findstring .,$1),$(firstword $(call dig_split,$1)),$1))))))
 
 # Canonize compiler brand
 # oneapi, llvm -> clang
@@ -369,7 +369,7 @@ endif
 endif
 
 # Handle special cases where OS name might be part of ABI tuple
-override TRIPLET_OS := $(firstword $(call find_any_str,$(TRIPLET_KNOWN_OS_PRIO),$(TRIPLET)) $(TRIPLET_OS))
+override TRIPLET_OS := $(firstword $(call find_any_str,$(TRIPLET_KNOWN_OS_PRIO),$(TRIPLET)) $(filter-out elf,$(TRIPLET_OS)))
 
 # Warn when neither compiler triplet nor user supplied enough cross-compile info
 ifeq (,$(filter cc,$(CC))$(TRIPLET_OS)$(OS)$(TRIPLET_ARCH)$(ARCH))
@@ -377,7 +377,7 @@ $(call log_info,Assuming target $(HOST_ARCH)-$(HOST_OS). Set OS/ARCH manually if
 endif
 
 # Canonize OS/ARCH, prioritize: compiler triplet > user-supplied > host
-override OS      := $(call canonize_os,$(firstword $(TRIPLET_OS) $(OS) $(HOST_OS)))
+override OS      := $(call canonize_os,$(firstword $(TRIPLET_OS) $(OS) $(if $(filter ia16,$(TRIPLET_ARCH)),dos) $(HOST_OS)))
 override ARCH    := $(call canonize_arch,$(firstword $(TRIPLET_ARCH) $(ARCH) $(HOST_ARCH)))
 override TRIPLET := $(ARCH)-$(OS)
 
@@ -471,6 +471,18 @@ endif
 # Cosmopolitan, Redox have no shared library support
 ifneq (,$(filter cosmo redox,$(OS)))
 USE_LIB ?= 0
+endif
+
+# DOS: Use .com bin extension, various quirks
+ifeq ($(OS),dos)
+override BIN_EXT := .com
+override CFLAGS  := $(CFLAGS) -Os -Wno-format -Wno-attributes
+ifeq ($(ARCH),ia16)
+override CFLAGS  := $(CFLAGS) -mcmodel=medium -D__SIZE_TYPE__=__UINT32_TYPE__ -Wno-pointer-to-int-cast -Wno-int-to-pointer-cast
+endif
+USE_LIB        ?= 0
+USE_NET        ?= 0
+USE_ATOMIC_EMU ?= 1
 endif
 
 # AmigaOS: Disable USE_LTO, USE_LIB, USE_NET
