@@ -104,10 +104,12 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #if GNU_BUILTIN(__builtin_sqrt) && GNU_BUILTIN(__builtin_sqrtf)
 #define fpu_sqrt_internal(d)  __builtin_sqrt(d)
 #define fpu_sqrtf_internal(f) __builtin_sqrtf(f)
-#else
+#elif CHECK_INCLUDE(math.h, 1)
 #include <math.h>
 #define fpu_sqrt_internal(d)  sqrt(d)
 #define fpu_sqrtf_internal(f) sqrtf(f)
+#else
+#define USE_SOFT_FPU_SQRT 1
 #endif
 
 // Check FPU environment support, enable emulation if needed
