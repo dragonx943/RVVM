@@ -13,17 +13,18 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "atomics.h"
 #include "rvtimer.h"
 
+#include "dlib.h"      // IWYU pragma: keep
+#include "spinlock.h"  // IWYU pragma: keep
+#include "threading.h" // IWYU pragma: keep
+#include "utils.h"     // IWYU pragma: keep
+
 // For nanosleep(), clock_gettime(), CLOCK_MONOTONIC, etc
 #include <time.h>
 
 #if defined(HOST_TARGET_WIN32)
-// Use QueryPerformanceCounter(), QueryPerformanceFrequency()
+// Use QueryPerformanceCounter(), QueryPerformanceFrequency(),
+// QueryUnbiasedInterruptTime() probing, timer locking
 #include <windows.h>
-
-// For QueryUnbiasedInterruptTime() probing, timer locking
-#include "dlib.h"
-#include "spinlock.h"
-#include "utils.h"
 
 // Obtain a thread local waitable timer with a specified timeout
 HANDLE thread_local_waitable_timer(uint64_t ns);
@@ -39,9 +40,6 @@ static uint64_t   qpc_prev = 0, uit_prev = 0, qpc_off = 0;
 #if defined(HOST_TARGET_POSIX) && HOST_TARGET_POSIX >= 199506L
 // Use nanosleep()
 #define NANOSLEEP_IMPL 1
-#elif !defined(HOST_TARGET_WIN32)
-// Use thread_futex_wait()
-#include "threading.h"
 #endif
 
 #if defined(HOST_TARGET_LINUX) && defined(THREAD_LOCAL) && CHECK_INCLUDE(sys/prctl.h, 1)
@@ -55,12 +53,12 @@ static THREAD_LOCAL bool timerslack_lowlatency = 0;
 
 #if defined(HOST_TARGET_DARWIN) && CHECK_INCLUDE(mach/mach_time.h, 1)
 // Use mach_absolute_time()
-#include "utils.h"
 #include <mach/mach_time.h>
 static uint64_t mach_clk_freq = 0;
 #define MACH_CLOCKSOURCE_IMPL 1
 #endif
 
+#if defined(HOST_TARGET_POSIX)
 #if defined(HOST_TARGET_SERENITY) && defined(CLOCK_MONOTONIC_COARSE)
 // Use CLOCK_MONOTONIC_COARSE on Serenity for performance reasons
 #define POSIX_CLOCKSOURCE CLOCK_MONOTONIC_COARSE
@@ -73,6 +71,7 @@ static uint64_t mach_clk_freq = 0;
 #elif defined(CLOCK_REALTIME)
 #define POSIX_CLOCKSOURCE CLOCK_REALTIME
 #endif
+#endif
 
 #if defined(TIME_MONOTONIC)
 #define C11_TIMESPEC_CLOCKSOURCE TIME_MONOTONIC
@@ -80,9 +79,11 @@ static uint64_t mach_clk_freq = 0;
 #define C11_TIMESPEC_CLOCKSOURCE TIME_UTC
 #endif
 
-#if !defined(HOST_TARGET_WIN32) && !defined(MACH_CLOCKSOURCE_IMPL) /**/                                                \
-    && !defined(POSIX_CLOCKSOURCE) && !defined(C11_TIMESPEC_CLOCKSOURCE)
+#if !defined(HOST_TARGET_WIN32) && !defined(MACH_CLOCKSOURCE_IMPL)       /**/                                          \
+    && !defined(POSIX_CLOCKSOURCE) && !defined(C11_TIMESPEC_CLOCKSOURCE) /**/                                          \
+    && CHECK_INCLUDE(sys/time.h, 1)
 #include <sys/time.h> // For gettimeofday()
+#define GETTIMEOFDAY_CLOCKSOURCE 1
 #endif
 
 uint64_t rvtimer_clocksource(uint64_t freq)
@@ -175,12 +176,15 @@ uint64_t rvtimer_clocksource(uint64_t freq)
     timespec_get(C11_TIMESPEC_CLOCKSOURCE, &ts);
     return (ts.tv_sec * freq) + (ts.tv_nsec * freq / 1000000000ULL);
 
-#else
-#pragma message("Falling back to gettimeofday() clocksource")
+#elif defined(GETTIMEOFDAY_CLOCKSOURCE)
     // Use gettimeofday()
     struct timeval tv = ZERO_INIT;
     gettimeofday(&tv, NULL);
     return (tv.tv_sec * freq) + (tv.tv_usec * freq / 1000000U);
+
+#else
+#pragma message("Falling back to time() clocksource")
+    return rvtimer_unixtime() * freq;
 
 #endif
 }
@@ -195,6 +199,8 @@ uint64_t rvtimer_unixtime(void)
         uint64_t wintime = ((uint64_t)(uint32_t)ft.dwLowDateTime) | (((uint64_t)(uint32_t)ft.dwHighDateTime) << 32);
         return (wintime / 10000000ULL) - 11644473600ULL;
     }
+    return 0;
+#elif defined(HOST_TARGET_DOS) && !defined(HOST_32BIT)
     return 0;
 #else
     return time(NULL);
