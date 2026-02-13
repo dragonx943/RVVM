@@ -19,7 +19,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 typedef uint32_t host_lock_t;
 #define HOST_LOCK_INITIALIZER 0
 #define host_lock(lock)                                                                                                \
-    while (!atomic_cas_uint32(lock, 0, 1)) {                                                                        \
+    while (!atomic_cas_uint32(lock, 0, 1)) {                                                                           \
     }
 #define host_unlock(lock) atomic_store_uint32(lock, 0)
 
@@ -31,13 +31,21 @@ typedef CRITICAL_SECTION host_lock_t;
 #define host_lock(lock)       EnterCriticalSection(lock)
 #define host_unlock(lock)     LeaveCriticalSection(lock)
 
-#else
+#elif defined(HOST_TARGET_POSIX) && HOST_TARGET_POSIX >= 199506L
 
 #include <pthread.h>
 typedef pthread_mutex_t host_lock_t;
 #define HOST_LOCK_INITIALIZER PTHREAD_MUTEX_INITIALIZER
 #define host_lock(lock)       pthread_mutex_lock(lock)
 #define host_unlock(lock)     pthread_mutex_unlock(lock)
+
+#else
+
+#pragma message("Falling back to non-thread-safe atomics emulation")
+typedef uint32_t host_lock_t;
+#define HOST_LOCK_INITIALIZER 0
+#define host_lock(lock)       ((void)lock)
+#define host_unlock(lock)     ((void)lock)
 
 #endif
 
