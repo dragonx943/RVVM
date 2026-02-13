@@ -329,10 +329,19 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #endif
 
 /*
- * Never inline a function, consider it a slow path, and minimize pessimizations at the call site
+ * Reduce call site overhead in a less aggressive way
  *
- * This is used to remove unnecessary register spills at the slow path call site.
- * Requires Clang 17+ ideally, otherwise __cold__ attribute is used, which moves spills away.
+ * NOTE: This affects the function ABI, do not expose such functions dynamically
+ */
+#undef cold_path
+#if defined(__i386__) && GNU_ATTRIBUTE(__stdcall__)
+#define cold_path no_inline func_opt_cold __attribute__((__stdcall__))
+#else
+#define cold_path no_inline func_opt_cold
+#endif
+
+/*
+ * Minimize call site intrusion, omitting register spill around a slow path
  *
  * NOTE: This affects the function ABI, do not expose such functions dynamically
  * NOTE: __preserve_most__ is broken on Clang <17, and on Clang Windows ARM64
@@ -342,11 +351,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #undef slow_path
 #if !defined(USE_NO_SLOW_PATH) && CLANG_CHECK_VER(17, 0)                                                               \
     && (defined(__x86_64__) || (defined(__aarch64__) && !defined(_WIN32)))
-#define slow_path no_inline func_opt_cold __attribute__((__preserve_most__))
-#elif defined(__i386__) && GNU_ATTRIBUTE(__stdcall__)
-#define slow_path no_inline func_opt_cold __attribute__((__stdcall__))
+#define slow_path cold_path __attribute__((__preserve_most__))
 #else
-#define slow_path no_inline func_opt_cold
+#define slow_path cold_path
 #endif
 
 // Per-source optimization level requests via definition (GCC only)
