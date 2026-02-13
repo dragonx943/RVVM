@@ -1593,6 +1593,8 @@ static forceinline void* atomic_load_pointer_ex(const void* addr, int memorder)
     return (void*)(size_t)atomic_load_uint64_ex(addr, memorder);
 #elif defined(HOST_32BIT)
     return (void*)(size_t)atomic_load_uint32_ex(addr, memorder);
+#elif defined(HOST_16BIT)
+    return (void*)(size_t)atomic_load_uint16_ex(addr, memorder);
 #else
 #error Unknown CPU bitness and no C11/GNU atomics!
 #endif
@@ -1626,6 +1628,8 @@ static forceinline bool atomic_cas_pointer_ex(void* addr, void** exp, void* val,
     return atomic_cas_uint64_ex(addr, (uint64_t*)exp, (size_t)val, weak, succ, fail);
 #elif defined(HOST_32BIT)
     return atomic_cas_uint32_ex(addr, (uint32_t*)exp, (size_t)val, weak, succ, fail);
+#elif defined(HOST_16BIT)
+    return atomic_cas_uint16_ex(addr, (uint16_t*)exp, (size_t)val, weak, succ, fail);
 #else
 #error Unknown CPU bitness and no C11/GNU atomics!
 #endif
@@ -1646,6 +1650,8 @@ static forceinline void* atomic_swap_pointer_ex(void* addr, void* val, int memor
     return (void*)(size_t)atomic_swap_uint64_ex(addr, (size_t)val, memorder);
 #elif defined(HOST_32BIT)
     return (void*)(size_t)atomic_swap_uint32_ex(addr, (size_t)val, memorder);
+#elif defined(HOST_16BIT)
+    return (void*)(size_t)atomic_swap_uint16_ex(addr, (size_t)val, memorder);
 #else
 #error Unknown CPU bitness and no C11/GNU atomics!
 #endif
@@ -1666,6 +1672,8 @@ static forceinline void atomic_store_pointer_ex(void* addr, void* val, int memor
     atomic_store_uint64_ex(addr, (size_t)val, memorder);
 #elif defined(HOST_32BIT)
     atomic_store_uint32_ex(addr, (size_t)val, memorder);
+#elif defined(HOST_16BIT)
+    atomic_store_uint16_ex(addr, (size_t)val, memorder);
 #else
     atomic_swap_pointer_ex(addr, val, memorder);
 #endif
