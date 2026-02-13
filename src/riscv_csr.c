@@ -12,6 +12,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "riscv_hart.h"
 #include "riscv_mmu.h"
 
+PUSH_OPTIMIZATION_SIZE
+
 #if defined(USE_FPU)
 #include "fpu_lib.h"
 #endif
@@ -834,3 +836,5 @@ void riscv_csr_sync_fpu(rvvm_hart_t* vm)
     UNUSED(vm);
 #endif
 }
+
+POP_OPTIMIZATION_SIZE
