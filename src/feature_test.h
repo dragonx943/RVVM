@@ -230,6 +230,11 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #undef _XOPEN_SOURCE_EXTENDED
 
 /*
+ * Allow non-standard language extensions
+ */
+#undef __STRICT_ANSI__
+
+/*
  * Enable GNU & BSD extensions
  * - Exposes syscall(), sysconf(), madvise(), mremap(), fallocate(), ftruncate(), prctl(), pledge()
  * - Exposes kqueue(), kevent() on BSDs (Except NetBSD, where _NETBSD_SOURCE is needed)
