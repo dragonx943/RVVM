@@ -47,9 +47,9 @@ static forceinline uint32_t decode_c_lw_off(const uint32_t insn)
 
 static forceinline uint32_t decode_c_ldsp_off(const uint32_t insn)
 {
-    return ((insn >> 2) & 0x018) //
-         | ((insn >> 7) & 0x020) //
-         | ((insn << 4) & 0x1C0);
+    return ((insn >> 2) & 0x0018) //
+         | ((insn >> 7) & 0x0020) //
+         | ((insn << 4) & 0x01C0);
 }
 
 static forceinline uint32_t decode_c_lwsp_off(const uint32_t insn)
@@ -61,8 +61,8 @@ static forceinline uint32_t decode_c_lwsp_off(const uint32_t insn)
 
 static forceinline uint32_t decode_c_sdsp_off(const uint32_t insn)
 {
-    return ((insn >> 1) & 0x1C0) //
-         | ((insn >> 7) & 0x038);
+    return ((insn >> 1) & 0x01C0) //
+         | ((insn >> 7) & 0x0038);
 }
 
 static forceinline uint32_t decode_c_swsp_off(const uint32_t insn)
@@ -123,9 +123,8 @@ static forceinline void riscv_emulate_c_c0(rvvm_hart_t* vm, const uint32_t insn)
         case 0x00: { // c.addi4spn
             const xlen_t imm = decode_c_addi4spn_imm(insn);
             if (likely(imm)) {
-                const xlen_t sp = riscv_read_reg(vm, RISCV_REG_X2);
                 rvjit_trace_addi(rds, RISCV_REG_X2, imm, 2);
-                riscv_write_reg(vm, rds, sp + imm);
+                riscv_write_reg(vm, rds, riscv_read_reg(vm, RISCV_REG_X2) + imm);
                 return;
             }
             break;
@@ -133,73 +132,65 @@ static forceinline void riscv_emulate_c_c0(rvvm_hart_t* vm, const uint32_t insn)
 #if defined(USE_FPU)
         case 0x01: // c.fld
             if (likely(riscv_fpu_is_enabled(vm))) {
-                const xlen_t offset = decode_c_ld_off(insn);
-                const xlen_t addr   = riscv_read_reg(vm, rs1) + offset;
-                riscv_load_double(vm, addr, rds);
+                const xlen_t off = decode_c_ld_off(insn);
+                riscv_load_double(vm, riscv_read_reg(vm, rs1) + off, rds);
                 return;
             }
             break;
 #endif
         case 0x02: { // c.lw
-            const xlen_t offset = decode_c_lw_off(insn);
-            const xlen_t addr   = riscv_read_reg(vm, rs1) + offset;
+            const xlen_t off = decode_c_lw_off(insn);
             rvjit_trace_lw(rds, rs1, offset, 2);
-            riscv_load_s32(vm, addr, rds);
+            riscv_load_s32(vm, riscv_read_reg(vm, rs1) + off, rds);
             return;
         }
 #if defined(USE_FPU) && !defined(RISCV64)
         case 0x03: // c.flw (RV32)
             if (likely(riscv_fpu_is_enabled(vm))) {
-                const xlen_t offset = decode_c_lw_off(insn);
-                const xlen_t addr   = riscv_read_reg(vm, rs1) + offset;
-                riscv_load_float(vm, addr, rds);
+                const xlen_t off = decode_c_lw_off(insn);
+                riscv_load_float(vm, riscv_read_reg(vm, rs1) + off, rds);
                 return;
             }
             break;
 #endif
 #if defined(RISCV64)
         case 0x03: { // c.ld (RV64)
-            const xlen_t offset = decode_c_ld_off(insn);
-            const xlen_t addr   = riscv_read_reg(vm, rs1) + offset;
-            rvjit_trace_ld(rds, rs1, offset, 2);
-            riscv_load_u64(vm, addr, rds);
+            const xlen_t off = decode_c_ld_off(insn);
+            rvjit_trace_ld(rds, rs1, off, 2);
+            riscv_load_u64(vm, riscv_read_reg(vm, rs1) + off, rds);
             return;
         }
 #endif
         case 0x04: // Zcb
             switch (bit_ext_u32(insn, 10, 3)) {
                 case 0x00: { // c.lbu (Zcb)
-                    const xlen_t offset = ((insn & 0x20) >> 4) | ((insn & 0x40) >> 6);
-                    const xlen_t addr   = riscv_read_reg(vm, rs1) + offset;
-                    rvjit_trace_lbu(rds, rs1, offset, 2);
-                    riscv_load_u8(vm, addr, rds);
+                    const xlen_t off = ((insn & 0x20) >> 4) | ((insn & 0x40) >> 6);
+                    rvjit_trace_lbu(rds, rs1, off, 2);
+                    riscv_load_u8(vm, riscv_read_reg(vm, rs1) + off, rds);
                     return;
                 }
                 case 0x01: {
-                    const xlen_t offset = (insn & 0x20) >> 4;
-                    const xlen_t addr   = riscv_read_reg(vm, rs1) + offset;
+                    const xlen_t off = (insn & 0x20) >> 4;
                     if (insn & 0x40) { // c.lh (Zcb)
-                        rvjit_trace_lh(rds, rs1, offset, 2);
-                        riscv_load_s16(vm, addr, rds);
+                        rvjit_trace_lh(rds, rs1, off, 2);
+                        riscv_load_s16(vm, riscv_read_reg(vm, rs1) + off, rds);
                     } else { // c.lhu (Zcb)
-                        rvjit_trace_lhu(rds, rs1, offset, 2);
-                        riscv_load_u16(vm, addr, rds);
+                        rvjit_trace_lhu(rds, rs1, off, 2);
+                        riscv_load_u16(vm, riscv_read_reg(vm, rs1) + off, rds);
                     }
                     return;
                 }
                 case 0x02: { // c.sb (Zcb)
-                    const xlen_t offset = ((insn & 0x20) >> 4) | ((insn & 0x40) >> 6);
-                    const xlen_t addr   = riscv_read_reg(vm, rs1) + offset;
-                    rvjit_trace_sb(rds, rs1, offset, 2);
-                    riscv_store_u8(vm, addr, rds);
+                    const xlen_t off = ((insn & 0x20) >> 4) | ((insn & 0x40) >> 6);
+                    rvjit_trace_sb(rds, rs1, off, 2);
+                    riscv_store_u8(vm, riscv_read_reg(vm, rs1) + off, rds);
                     return;
                 }
                 case 0x03:
                     if (!(insn & 0x40)) { // c.sh (Zcb)
-                        const xlen_t offset = (insn & 0x20) >> 4;
-                        const xlen_t addr   = riscv_read_reg(vm, rs1) + offset;
-                        rvjit_trace_sh(rds, rs1, offset, 2);
-                        riscv_store_u16(vm, addr, rds);
+                        const xlen_t off = (insn & 0x20) >> 4;
+                        rvjit_trace_sh(rds, rs1, off, 2);
+                        riscv_store_u16(vm, riscv_read_reg(vm, rs1) + off, rds);
                         return;
                     }
                     break;
@@ -208,40 +199,37 @@ static forceinline void riscv_emulate_c_c0(rvvm_hart_t* vm, const uint32_t insn)
 #if defined(USE_FPU)
         case 0x05: // c.fsd
             if (likely(riscv_fpu_is_enabled(vm))) {
-                const xlen_t offset = decode_c_ld_off(insn);
-                const xlen_t addr   = riscv_read_reg(vm, rs1) + offset;
-                riscv_store_double(vm, addr, rds);
+                const xlen_t off = decode_c_ld_off(insn);
+                riscv_store_double(vm, riscv_read_reg(vm, rs1) + off, rds);
                 return;
             }
             break;
 #endif
         case 0x06: { // c.sw
-            const xlen_t offset = decode_c_lw_off(insn);
-            const xlen_t addr   = riscv_read_reg(vm, rs1) + offset;
-            rvjit_trace_sw(rds, rs1, offset, 2);
-            riscv_store_u32(vm, addr, rds);
+            const xlen_t off = decode_c_lw_off(insn);
+            rvjit_trace_sw(rds, rs1, off, 2);
+            riscv_store_u32(vm, riscv_read_reg(vm, rs1) + off, rds);
             return;
         }
 #if defined(USE_FPU) && !defined(RISCV64)
         case 0x07: // c.fsw (RV32)
             if (likely(riscv_fpu_is_enabled(vm))) {
-                const xlen_t offset = decode_c_lw_off(insn);
-                const xlen_t addr   = riscv_read_reg(vm, rs1) + offset;
-                riscv_store_float(vm, addr, rds);
+                const xlen_t off = decode_c_lw_off(insn);
+                riscv_store_float(vm, riscv_read_reg(vm, rs1) + off, rds);
                 return;
             }
             break;
 #endif
 #if defined(RISCV64)
         case 0x07: { // c.sd (RV64)
-            const xlen_t offset = decode_c_ld_off(insn);
-            const xlen_t addr   = riscv_read_reg(vm, rs1) + offset;
-            rvjit_trace_sd(rds, rs1, offset, 2);
-            riscv_store_u64(vm, addr, rds);
+            const xlen_t off = decode_c_ld_off(insn);
+            rvjit_trace_sd(rds, rs1, off, 2);
+            riscv_store_u64(vm, riscv_read_reg(vm, rs1) + off, rds);
             return;
         }
 #endif
     }
+
     riscv_illegal_insn(vm, insn);
 }
 
@@ -250,26 +238,24 @@ static forceinline void riscv_emulate_c_c1(rvvm_hart_t* vm, const uint32_t insn)
     switch (bit_ext_u32(insn, 13, 3)) {
         case 0x00: { // c.addi
             const size_t  rds = bit_ext_u32(insn, 7, 5);
-            const xlen_t  src = riscv_read_reg(vm, rds);
-            const sxlen_t imm = decode_c_alu_imm(insn);
+            const int32_t imm = decode_c_alu_imm(insn);
             rvjit_trace_addi(rds, rds, imm, 2);
-            riscv_write_reg(vm, rds, src + imm);
+            riscv_write_reg(vm, rds, riscv_read_reg(vm, rds) + imm);
             return;
         }
         case 0x01: { // c.jal (RV32), c.addiw (RV64)
 #if defined(RISCV64)
             const size_t rds = bit_ext_u32(insn, 7, 5);
             if (likely(rds)) {
-                const xlen_t  src = riscv_read_reg(vm, rds);
-                const sxlen_t imm = decode_c_alu_imm(insn);
+                const int32_t imm = decode_c_alu_imm(insn);
                 rvjit_trace_addiw(rds, rds, imm, 2);
-                riscv_write_reg(vm, rds, (int32_t)(src + imm));
+                riscv_write_reg(vm, rds, (int32_t)(riscv_read_reg(vm, rds) + imm));
                 return;
             }
             break;
 #else
             const xlen_t  pc  = riscv_read_reg(vm, RISCV_REG_PC);
-            const sxlen_t off = decode_c_jal_imm(insn);
+            const int32_t off = decode_c_jal_imm(insn);
             rvjit_trace_jal(RISCV_REG_X1, off, 2);
             riscv_write_reg(vm, RISCV_REG_X1, pc + 2);
             riscv_write_reg(vm, RISCV_REG_PC, pc + off - 2);
@@ -278,7 +264,7 @@ static forceinline void riscv_emulate_c_c1(rvvm_hart_t* vm, const uint32_t insn)
         }
         case 0x02: { // c.li
             const size_t  rds = bit_ext_u32(insn, 7, 5);
-            const sxlen_t imm = decode_c_alu_imm(insn);
+            const int32_t imm = decode_c_alu_imm(insn);
             rvjit_trace_li(rds, imm, 2);
             riscv_write_reg(vm, rds, imm);
             return;
@@ -286,15 +272,14 @@ static forceinline void riscv_emulate_c_c1(rvvm_hart_t* vm, const uint32_t insn)
         case 0x03: {
             const size_t rds = bit_ext_u32(insn, 7, 5);
             if (rds == RISCV_REG_X2) { // c.addi16sp (rds == X2)
-                const sxlen_t imm = decode_c_addi16sp_off(insn);
+                const int32_t imm = decode_c_addi16sp_off(insn);
                 if (likely(imm)) {
-                    const xlen_t sp = riscv_read_reg(vm, RISCV_REG_X2);
                     rvjit_trace_addi(RISCV_REG_X2, RISCV_REG_X2, imm, 2);
-                    riscv_write_reg(vm, RISCV_REG_X2, sp + imm);
+                    riscv_write_reg(vm, RISCV_REG_X2, riscv_read_reg(vm, RISCV_REG_X2) + imm);
                     return;
                 }
             } else { // c.lui (rds != X2); imm != 0
-                const sxlen_t imm = decode_c_lui_imm(insn);
+                const int32_t imm = decode_c_lui_imm(insn);
                 if (likely(imm)) {
                     rvjit_trace_li(rds, imm, 2);
                     riscv_write_reg(vm, rds, imm);
@@ -304,35 +289,30 @@ static forceinline void riscv_emulate_c_c1(rvvm_hart_t* vm, const uint32_t insn)
             break;
         }
         case 0x05: { // c.j
-            const xlen_t  pc  = riscv_read_reg(vm, RISCV_REG_PC);
-            const sxlen_t off = decode_c_jal_imm(insn);
+            const int32_t off = decode_c_jal_imm(insn);
             rvjit_trace_jal(RISCV_REG_ZERO, off, 2);
-            riscv_write_reg(vm, RISCV_REG_PC, pc + off - 2);
+            riscv_write_reg(vm, RISCV_REG_PC, riscv_read_reg(vm, RISCV_REG_PC) + off - 2);
             return;
         }
         case 0x06: { // c.beqz
             const size_t  rs1 = bit_ext_u32(insn, 7, 3) + 8;
-            const xlen_t  src = riscv_read_reg(vm, rs1);
-            const sxlen_t off = decode_c_branch_imm(insn);
-            if (src == 0) {
-                const xlen_t pc = riscv_read_reg(vm, RISCV_REG_PC);
-                rvjit_trace_beq(rs1, RISCV_REG_ZERO, off, 2, 2);
-                riscv_write_reg(vm, RISCV_REG_PC, pc + off - 2);
-            } else {
+            const int32_t off = decode_c_branch_imm(insn);
+            if (likely(riscv_read_reg(vm, rs1))) {
                 rvjit_trace_bne(rs1, RISCV_REG_ZERO, 2, off, 2);
+            } else {
+                rvjit_trace_beq(rs1, RISCV_REG_ZERO, off, 2, 2);
+                riscv_write_reg(vm, RISCV_REG_PC, riscv_read_reg(vm, RISCV_REG_PC) + off - 2);
             }
             return;
         }
         case 0x07: { // c.bnez
             const size_t  rs1 = bit_ext_u32(insn, 7, 3) + 8;
-            const xlen_t  src = riscv_read_reg(vm, rs1);
-            const sxlen_t off = decode_c_branch_imm(insn);
-            if (src) {
-                const xlen_t pc = riscv_read_reg(vm, RISCV_REG_PC);
-                rvjit_trace_bne(rs1, RISCV_REG_ZERO, off, 2, 2);
-                riscv_write_reg(vm, RISCV_REG_PC, pc + off - 2);
-            } else {
+            const int32_t off = decode_c_branch_imm(insn);
+            if (likely(!riscv_read_reg(vm, rs1))) {
                 rvjit_trace_beq(rs1, RISCV_REG_ZERO, 2, off, 2);
+            } else {
+                rvjit_trace_bne(rs1, RISCV_REG_ZERO, off, 2, 2);
+                riscv_write_reg(vm, RISCV_REG_PC, riscv_read_reg(vm, RISCV_REG_PC) + off - 2);
             }
             return;
         }
