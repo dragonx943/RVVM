@@ -245,113 +245,6 @@ static forceinline void riscv_emulate_c_c0(rvvm_hart_t* vm, const uint32_t insn)
     riscv_illegal_insn(vm, insn);
 }
 
-static forceinline void riscv_emulate_c_misc_alu(rvvm_hart_t* vm, const uint32_t insn)
-{
-    const size_t rds  = bit_ext_u32(insn, 7, 3) + 8;
-    const xlen_t reg1 = riscv_read_reg(vm, rds);
-
-    switch (bit_ext_u32(insn, 10, 2)) {
-        case 0x00: { // c.srli
-            const bitcnt_t shamt = decode_c_shamt(insn);
-            rvjit_trace_srli(rds, rds, shamt, 2);
-            riscv_write_reg(vm, rds, reg1 >> shamt);
-            return;
-        }
-        case 0x01: { // c.srai
-            const bitcnt_t shamt = decode_c_shamt(insn);
-            rvjit_trace_srai(rds, rds, shamt, 2);
-            riscv_write_reg(vm, rds, ((sxlen_t)reg1) >> shamt);
-            return;
-        }
-        case 0x02: { // c.andi
-            const sxlen_t imm = decode_c_alu_imm(insn);
-            rvjit_trace_andi(rds, rds, imm, 2);
-            riscv_write_reg(vm, rds, reg1 & imm);
-            return;
-        }
-        case 0x03: {
-            const uint32_t funct2 = bit_ext_u32(insn, 5, 2);
-            const size_t   rs2    = bit_ext_u32(insn, 2, 3) + 8;
-            if (!bit_check(insn, 12)) {
-                const xlen_t reg2 = riscv_read_reg(vm, rs2);
-                switch (funct2) {
-                    case 0x00: // c.sub
-                        rvjit_trace_sub(rds, rds, rs2, 2);
-                        riscv_write_reg(vm, rds, reg1 - reg2);
-                        return;
-                    case 0x01: // c.xor
-                        rvjit_trace_xor(rds, rds, rs2, 2);
-                        riscv_write_reg(vm, rds, reg1 ^ reg2);
-                        return;
-                    case 0x02: // c.or
-                        rvjit_trace_or(rds, rds, rs2, 2);
-                        riscv_write_reg(vm, rds, reg1 | reg2);
-                        return;
-                    case 0x03: // c.and
-                        rvjit_trace_and(rds, rds, rs2, 2);
-                        riscv_write_reg(vm, rds, reg1 & reg2);
-                        return;
-                }
-            } else {
-                switch (funct2) {
-#if defined(RISCV64)
-                    case 0x00: { // c.subw
-                        const xlen_t reg2 = riscv_read_reg(vm, rs2);
-                        rvjit_trace_subw(rds, rds, rs2, 2);
-                        riscv_write_reg(vm, rds, (int32_t)(reg1 - reg2));
-                        return;
-                    }
-                    case 0x01: { // c.addw
-                        const xlen_t reg2 = riscv_read_reg(vm, rs2);
-                        rvjit_trace_addw(rds, rds, rs2, 2);
-                        riscv_write_reg(vm, rds, (int32_t)(reg1 + reg2));
-                        return;
-                    }
-#endif
-                    case 0x02: { // c.mul (Zcb + M)
-                        const xlen_t reg2 = riscv_read_reg(vm, rs2);
-                        rvjit_trace_mul(rds, rds, rs2, 2);
-                        riscv_write_reg(vm, rds, reg1 * reg2);
-                        return;
-                    }
-                    case 0x03:
-                        switch (bit_ext_u32(insn, 2, 3)) {
-                            case 0x00: // c.zext.b (Zcb)
-                                rvjit_trace_andi(rds, rds, 0xFF, 2);
-                                riscv_write_reg(vm, rds, (uint8_t)reg1);
-                                return;
-                            case 0x01: // c.sext.b (Zcb + Zbb)
-                                rvjit_trace_sext_b(rds, rds, 2);
-                                riscv_write_reg(vm, rds, (int8_t)reg1);
-                                return;
-                            case 0x02: // c.zext.h (Zcb + Zbb)
-                                rvjit_trace_andi(rds, rds, 0xFFFF, 2);
-                                riscv_write_reg(vm, rds, (uint16_t)reg1);
-                                return;
-                            case 0x03: // c.sext.h (Zcb + Zbb)
-                                rvjit_trace_sext_h(rds, rds, 2);
-                                riscv_write_reg(vm, rds, (int16_t)reg1);
-                                return;
-#if defined(RISCV64)
-                            case 0x04: // c.zext.w (Zcb + Zba), RV64 only
-                                rvjit_trace_shadd_uw(rds, rds, REGISTER_ZERO, 0, 2);
-                                riscv_write_reg(vm, rds, (uint32_t)reg1);
-                                return;
-#endif
-                            case 0x05: // c.not (Zcb)
-                                rvjit_trace_xori(rds, rds, -1, 2);
-                                riscv_write_reg(vm, rds, ~reg1);
-                                return;
-                        }
-                        break;
-                }
-            }
-            break;
-        }
-    }
-    riscv_illegal_insn(vm, insn);
-}
-
 static forceinline void riscv_emulate_c_c1(rvvm_hart_t* vm, const uint32_t insn)
 {
     switch (bit_ext_u32(insn, 13, 3)) {
@@ -410,9 +303,6 @@ static forceinline void riscv_emulate_c_c1(rvvm_hart_t* vm, const uint32_t insn)
             }
             break;
         }
-        case 0x04: // MISC ALU
-            riscv_emulate_c_misc_alu(vm, insn);
-            return;
         case 0x05: { // c.j
             const xlen_t  pc  = riscv_read_reg(vm, RISCV_REG_PC);
             const sxlen_t off = decode_c_jal_imm(insn);
@@ -447,6 +337,96 @@ static forceinline void riscv_emulate_c_c1(rvvm_hart_t* vm, const uint32_t insn)
             return;
         }
     }
+
+    const size_t rds  = bit_ext_u32(insn, 7, 3) + 8;
+    const xlen_t reg1 = riscv_read_reg(vm, rds);
+
+    switch (bit_ext_u32(insn, 10, 2)) {
+        case 0x00: { // c.srli
+            const bitcnt_t shamt = decode_c_shamt(insn);
+            rvjit_trace_srli(rds, rds, shamt, 2);
+            riscv_write_reg(vm, rds, reg1 >> shamt);
+            return;
+        }
+        case 0x01: { // c.srai
+            const bitcnt_t shamt = decode_c_shamt(insn);
+            rvjit_trace_srai(rds, rds, shamt, 2);
+            riscv_write_reg(vm, rds, ((sxlen_t)reg1) >> shamt);
+            return;
+        }
+        case 0x02: { // c.andi
+            const sxlen_t imm = decode_c_alu_imm(insn);
+            rvjit_trace_andi(rds, rds, imm, 2);
+            riscv_write_reg(vm, rds, reg1 & imm);
+            return;
+        }
+    }
+
+    const size_t rs2  = bit_ext_u32(insn, 2, 3) + 8;
+    const xlen_t reg2 = riscv_read_reg(vm, rs2);
+    switch (insn & 0x1C60) {
+        case 0x0C00: // c.sub
+            rvjit_trace_sub(rds, rds, rs2, 2);
+            riscv_write_reg(vm, rds, reg1 - reg2);
+            return;
+        case 0x0C20: // c.xor
+            rvjit_trace_xor(rds, rds, rs2, 2);
+            riscv_write_reg(vm, rds, reg1 ^ reg2);
+            return;
+        case 0x0C40: // c.or
+            rvjit_trace_or(rds, rds, rs2, 2);
+            riscv_write_reg(vm, rds, reg1 | reg2);
+            return;
+        case 0x0C60: // c.and
+            rvjit_trace_and(rds, rds, rs2, 2);
+            riscv_write_reg(vm, rds, reg1 & reg2);
+            return;
+#if defined(RISCV64)
+        case 0x1C00: // c.subw
+            rvjit_trace_subw(rds, rds, rs2, 2);
+            riscv_write_reg(vm, rds, (int32_t)(reg1 - reg2));
+            return;
+        case 0x1C20: // c.addw
+            rvjit_trace_addw(rds, rds, rs2, 2);
+            riscv_write_reg(vm, rds, (int32_t)(reg1 + reg2));
+            return;
+#endif
+        case 0x1C40: // c.mul (Zcb + Zmmul)
+            rvjit_trace_mul(rds, rds, rs2, 2);
+            riscv_write_reg(vm, rds, reg1 * reg2);
+            return;
+        case 0x1C60:
+            switch (bit_ext_u32(insn, 2, 3)) {
+                case 0x00: // c.zext.b (Zcb)
+                    rvjit_trace_andi(rds, rds, 0xFF, 2);
+                    riscv_write_reg(vm, rds, (uint8_t)reg1);
+                    return;
+                case 0x01: // c.sext.b (Zcb + Zbb)
+                    rvjit_trace_sext_b(rds, rds, 2);
+                    riscv_write_reg(vm, rds, (int8_t)reg1);
+                    return;
+                case 0x02: // c.zext.h (Zcb + Zbb)
+                    rvjit_trace_andi(rds, rds, 0xFFFF, 2);
+                    riscv_write_reg(vm, rds, (uint16_t)reg1);
+                    return;
+                case 0x03: // c.sext.h (Zcb + Zbb)
+                    rvjit_trace_sext_h(rds, rds, 2);
+                    riscv_write_reg(vm, rds, (int16_t)reg1);
+                    return;
+#if defined(RISCV64)
+                case 0x04: // c.zext.w (Zcb + Zba), RV64 only
+                    rvjit_trace_shadd_uw(rds, rds, REGISTER_ZERO, 0, 2);
+                    riscv_write_reg(vm, rds, (uint32_t)reg1);
+                    return;
+#endif
+                case 0x05: // c.not (Zcb)
+                    rvjit_trace_xori(rds, rds, -1, 2);
+                    riscv_write_reg(vm, rds, ~reg1);
+                    return;
+            }
+            break;
+    }
+
     riscv_illegal_insn(vm, insn);
 }
 
