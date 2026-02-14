@@ -140,7 +140,7 @@ static forceinline void riscv_emulate_c_c0(rvvm_hart_t* vm, const uint32_t insn)
 #endif
         case 0x02: { // c.lw
             const xlen_t off = decode_c_lw_off(insn);
-            rvjit_trace_lw(rds, rs1, offset, 2);
+            rvjit_trace_lw(rds, rs1, off, 2);
             riscv_load_s32(vm, riscv_read_reg(vm, rs1) + off, rds);
             return;
         }
