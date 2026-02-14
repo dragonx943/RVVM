@@ -157,6 +157,52 @@ static forceinline void riscv_emulate_i_opc_imm(rvvm_hart_t* vm, const uint32_t 
             rvjit_trace_addi(rds, rs1, imm, 4);
             riscv_write_reg(vm, rds, src + imm);
             return;
+        case 0x01: {
+            const uint32_t shamt = decode_i_shamt(insn);
+            switch (decode_i_shift_funct7(insn)) {
+                case 0x00: // slli
+                    rvjit_trace_slli(rds, rs1, shamt, 4);
+                    riscv_write_reg(vm, rds, src << shamt);
+                    return;
+                case 0x14: // bseti (Zbs)
+                    rvjit_trace_bseti(rds, rs1, shamt, 4);
+                    riscv_write_reg(vm, rds, src | (((xlen_t)1U) << shamt));
+                    return;
+                case 0x24: // bclri (Zbs)
+                    rvjit_trace_bclri(rds, rs1, shamt, 4);
+                    riscv_write_reg(vm, rds, src & ~(((xlen_t)1U) << shamt));
+                    return;
+                case 0x34: // binvi (Zbs)
+                    rvjit_trace_binvi(rds, rs1, shamt, 4);
+                    riscv_write_reg(vm, rds, src ^ (((xlen_t)1U) << shamt));
+                    return;
+                case 0x30:
+                    switch (shamt) {
+                        case 0x00: // clz (Zbb)
+                            // TODO: JIT
+                            riscv_write_reg(vm, rds, bit_clz(src));
+                            return;
+                        case 0x01: // ctz (Zbb)
+                            // TODO: JIT
+                            riscv_write_reg(vm, rds, bit_ctz(src));
+                            return;
+                        case 0x02: // cpop (Zbb)
+                            // TODO: JIT
+                            riscv_write_reg(vm, rds, bit_popcnt(src));
+                            return;
+                        case 0x04: // sext.b (Zbb)
+                            rvjit_trace_sext_b(rds, rs1, 4);
+                            riscv_write_reg(vm, rds, (int8_t)src);
+                            return;
+                        case 0x05: // sext.h (Zbb)
+                            rvjit_trace_sext_h(rds, rs1, 4);
+                            riscv_write_reg(vm, rds, (int16_t)src);
+                            return;
+                    }
+                    break;
+            }
+            break;
+        }
         case 0x02: // slti
             rvjit_trace_slti(rds, rs1, imm, 4);
             riscv_write_reg(vm, rds, (((sxlen_t)src) < ((sxlen_t)imm)) ? 1 : 0);
@@ -169,6 +215,50 @@ static forceinline void riscv_emulate_i_opc_imm(rvvm_hart_t* vm, const uint32_t 
             rvjit_trace_xori(rds, rs1, imm, 4);
             riscv_write_reg(vm, rds, src ^ imm);
             return;
+        case 0x05: {
+            const uint32_t shamt = decode_i_shamt(insn);
+            switch (decode_i_shift_funct7(insn)) {
+                case 0x00: // srli
+                    rvjit_trace_srli(rds, rs1, shamt, 4);
+                    riscv_write_reg(vm, rds, src >> shamt);
+                    return;
+                case 0x20: // srai
+                    rvjit_trace_srai(rds, rs1, shamt, 4);
+                    riscv_write_reg(vm, rds, ((sxlen_t)src) >> shamt);
+                    return;
+                case 0x14:
+                    if (likely(shamt == 0x07)) { // orc.b (Zbb)
+                        // TODO: JIT
+                        riscv_write_reg(vm, rds, bit_orc_b(src));
+                        return;
+                    }
+                    break;
+                case 0x24: // bexti (Zbs)
+                    rvjit_trace_bexti(rds, rs1, shamt, 4);
+                    riscv_write_reg(vm, rds, (src >> shamt) & 1);
+                    return;
+                case 0x34:
+#if defined(RISCV64)
+                    if (likely(shamt == 0x38)) { // rev8 (Zbb), RV64 encoding
+                        // TODO: JIT
+                        riscv_write_reg(vm, rds, byteswap_uint64(src));
+                        return;
+                    }
+#else
+                    if (likely(shamt == 0x18)) { // rev8 (Zbb), RV32 encoding
+                        // TODO: JIT
+                        riscv_write_reg(vm, rds, byteswap_uint32(src));
+                        return;
+                    }
+#endif
+                    break;
+                case 0x30: // rori (Zbb)
+                    rvjit_trace_rori(rds, rs1, shamt, 4);
+                    riscv_write_reg(vm, rds, bit_rotr(src, shamt));
+                    return;
+            }
+            break;
+        }
         case 0x06: // ori
             rvjit_trace_ori(rds, rs1, imm, 4);
             riscv_write_reg(vm, rds, src | imm);
@@ -176,88 +266,6 @@ static forceinline void riscv_emulate_i_opc_imm(rvvm_hart_t* vm, const uint32_t 
         case 0x07: // andi
             rvjit_trace_andi(rds, rs1, imm, 4);
             riscv_write_reg(vm, rds, src & imm);
-            return;
-    }
-
-    const uint32_t shamt = decode_i_shamt(insn);
-    switch (insn & RISCV_OP_IMM_MASK) {
-        case 0x00001000UL: // slli
-            rvjit_trace_slli(rds, rs1, shamt, 4);
-            riscv_write_reg(vm, rds, src << shamt);
-            return;
-        case 0x28001000UL: // bseti (Zbs)
-            rvjit_trace_bseti(rds, rs1, shamt, 4);
-            riscv_write_reg(vm, rds, src | (((xlen_t)1U) << shamt));
-            return;
-        case 0x48001000UL: // bclri (Zbs)
-            rvjit_trace_bclri(rds, rs1, shamt, 4);
-            riscv_write_reg(vm, rds, src & ~(((xlen_t)1U) << shamt));
-            return;
-        case 0x68001000UL: // binvi (Zbs)
-            rvjit_trace_binvi(rds, rs1, shamt, 4);
-            riscv_write_reg(vm, rds, src ^ (((xlen_t)1U) << shamt));
-            return;
-        case 0x60001000UL:
-            switch (shamt) {
-                case 0x00: // clz (Zbb)
-                    // TODO: JIT
-                    riscv_write_reg(vm, rds, bit_clz(src));
-                    return;
-                case 0x01: // ctz (Zbb)
-                    // TODO: JIT
-                    riscv_write_reg(vm, rds, bit_ctz(src));
-                    return;
-                case 0x02: // cpop (Zbb)
-                    // TODO: JIT
-                    riscv_write_reg(vm, rds, bit_popcnt(src));
-                    return;
-                case 0x04: // sext.b (Zbb)
-                    rvjit_trace_sext_b(rds, rs1, 4);
-                    riscv_write_reg(vm, rds, (int8_t)src);
-                    return;
-                case 0x05: // sext.h (Zbb)
-                    rvjit_trace_sext_h(rds, rs1, 4);
-                    riscv_write_reg(vm, rds, (int16_t)src);
-                    return;
-            }
-            break;
-        case 0x00005000UL: // srli
-            rvjit_trace_srli(rds, rs1, shamt, 4);
-            riscv_write_reg(vm, rds, src >> shamt);
-            return;
-        case 0x40005000UL: // srai
-            rvjit_trace_srai(rds, rs1, shamt, 4);
-            riscv_write_reg(vm, rds, ((sxlen_t)src) >> shamt);
-            return;
-        case 0x28005000UL:
-            if (likely(shamt == 0x07)) { // orc.b (Zbb)
-                // TODO: JIT
-                riscv_write_reg(vm, rds, bit_orc_b(src));
-                return;
-            }
-            break;
-        case 0x48005000UL: // bexti (Zbs)
-            rvjit_trace_bexti(rds, rs1, shamt, 4);
-            riscv_write_reg(vm, rds, (src >> shamt) & 1);
-            return;
-        case 0x68005000UL:
-#if defined(RISCV64)
-            if (likely(shamt == 0x38)) { // rev8 (Zbb), RV64 encoding
-                // TODO: JIT
-                riscv_write_reg(vm, rds, byteswap_uint64(src));
-                return;
-            }
-#else
-            if (likely(shamt == 0x18)) { // rev8 (Zbb), RV32 encoding
-                // TODO: JIT
-                riscv_write_reg(vm, rds, byteswap_uint32(src));
-                return;
-            }
-#endif
-            break;
-        case 0x60005000UL: // rori (Zbb)
-            rvjit_trace_rori(rds, rs1, shamt, 4);
-            riscv_write_reg(vm, rds, bit_rotr(src, shamt));
             return;
     }
 
