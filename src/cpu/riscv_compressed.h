@@ -7,28 +7,28 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#ifndef RISCV_COMPRESSED_H
-#define RISCV_COMPRESSED_H
+#ifndef RVVM_RISCV_COMPRESSED_H
+#define RVVM_RISCV_COMPRESSED_H
 
 // Provides entry point to riscv_emulate_i()
 #include "riscv_base.h"
 
 static forceinline uint32_t decode_c_addi4spn_imm(const uint32_t insn)
 {
-    return ((insn >> 1) & 0x3C0) //
-         | ((insn >> 2) & 0x008) //
-         | ((insn >> 4) & 0x004) //
-         | ((insn >> 7) & 0x030);
+    return ((insn >> 1) & 0x03C0) //
+         | ((insn >> 2) & 0x0008) //
+         | ((insn >> 4) & 0x0004) //
+         | ((insn >> 7) & 0x0030);
 }
 
 static forceinline sxlen_t decode_c_jal_imm(const uint32_t insn)
 {
-    const uint32_t imm = ((insn >> 1) & 0xB40) //
-                       | ((insn >> 2) & 0x00E) //
-                       | ((insn >> 7) & 0x010) //
-                       | ((insn << 1) & 0x080) //
-                       | ((insn << 2) & 0x400) //
-                       | ((insn << 3) & 0x020);
+    const uint32_t imm = ((insn >> 1) & 0x0B40) //
+                       | ((insn >> 2) & 0x000E) //
+                       | ((insn >> 7) & 0x0010) //
+                       | ((insn << 1) & 0x0080) //
+                       | ((insn << 2) & 0x0400) //
+                       | ((insn << 3) & 0x0020);
     return sign_extend(imm, 12);
 }
 
@@ -80,11 +80,11 @@ static forceinline int32_t decode_c_alu_imm(const uint32_t insn)
 
 static forceinline sxlen_t decode_c_addi16sp_off(const uint32_t insn)
 {
-    const uint32_t imm = ((insn >> 2) & 0x010) //
-                       | ((insn << 3) & 0x020) //
-                       | ((insn << 1) & 0x040) //
-                       | ((insn << 4) & 0x180) //
-                       | ((insn >> 3) & 0x200);
+    const uint32_t imm = ((insn >> 2) & 0x0010) //
+                       | ((insn << 3) & 0x0020) //
+                       | ((insn << 1) & 0x0040) //
+                       | ((insn << 4) & 0x0180) //
+                       | ((insn >> 3) & 0x0200);
     return sign_extend(imm, 10);
 }
 
@@ -97,11 +97,11 @@ static forceinline int32_t decode_c_lui_imm(const uint32_t insn)
 
 static forceinline sxlen_t decode_c_branch_imm(const uint32_t insn)
 {
-    const uint32_t imm = ((insn >> 2) & 0x006) //
-                       | ((insn >> 7) & 0x018) //
-                       | ((insn << 3) & 0x020) //
-                       | ((insn << 1) & 0x0C0) //
-                       | ((insn >> 4) & 0x100);
+    const uint32_t imm = ((insn >> 2) & 0x0006) //
+                       | ((insn >> 7) & 0x0018) //
+                       | ((insn << 3) & 0x0020) //
+                       | ((insn << 1) & 0x00C0) //
+                       | ((insn >> 4) & 0x0100);
     return sign_extend(imm, 9);
 }
 
@@ -450,149 +450,120 @@ static forceinline void riscv_emulate_c_c1(rvvm_hart_t* vm, const uint32_t insn)
     riscv_illegal_insn(vm, insn);
 }
 
-static forceinline void riscv_emulate_c_jr_mv(rvvm_hart_t* vm, const uint32_t insn)
+static forceinline void riscv_emulate_c_c2(rvvm_hart_t* vm, const uint32_t insn)
 {
     const size_t rds = bit_ext_u32(insn, 7, 5);
     const size_t rs2 = bit_ext_u32(insn, 2, 5);
 
-    if (bit_check(insn, 12)) {
-        if (likely(rds)) {
-            if (rs2) {
-                // c.add
-                const xlen_t reg1 = riscv_read_reg(vm, rds);
-                const xlen_t reg2 = riscv_read_reg(vm, rs2);
-                rvjit_trace_add(rds, rds, rs2, 2);
-                riscv_write_reg(vm, rds, reg1 + reg2);
-            } else {
-                // c.jalr
-                const xlen_t reg1 = riscv_read_reg(vm, rds);
-                const xlen_t pc   = riscv_read_reg(vm, RISCV_REG_PC);
-                rvjit_trace_jalr(RISCV_REG_X1, rds, 0, 2);
-                riscv_write_reg(vm, RISCV_REG_X1, pc + 2);
-                riscv_write_reg(vm, RISCV_REG_PC, reg1 - 2);
-            }
-        } else {
-            // c.ebreak
-            riscv_breakpoint(vm);
-        }
-    } else {
-        if (rs2) {
-            // c.mv
-            const xlen_t reg2 = riscv_read_reg(vm, rs2);
-            rvjit_trace_addi(rds, rs2, 0, 2);
-            riscv_write_reg(vm, rds, reg2);
-        } else if (likely(rds)) {
-            // c.jr
-            const xlen_t reg1 = riscv_read_reg(vm, rds);
-            rvjit_trace_jalr(RISCV_REG_ZERO, rds, 0, 2);
-            riscv_write_reg(vm, RISCV_REG_PC, reg1 - 2);
-        } else {
-            riscv_illegal_insn(vm, insn);
-        }
-    }
-}
-
-static forceinline void riscv_emulate_c_c2(rvvm_hart_t* vm, const uint32_t insn)
-{
-    switch (bit_ext_u32(insn, 13, 3)) {
-        case 0x00: { // c.slli
-            const size_t   rds   = bit_ext_u32(insn, 7, 5);
-            const xlen_t   src   = riscv_read_reg(vm, rds);
+    switch (bit_ext_u32(insn, 12, 4)) {
+        case 0x00:
+        case 0x01: { // c.slli
             const uint32_t shamt = decode_c_shamt(insn);
             rvjit_trace_slli(rds, rds, shamt, 2);
-            riscv_write_reg(vm, rds, src << shamt);
+            riscv_write_reg(vm, rds, riscv_read_reg(vm, rds) << shamt);
             return;
         }
 #if defined(USE_FPU)
-        case 0x01: // c.fldsp
+        case 0x02:
+        case 0x03: // c.fldsp
             if (likely(riscv_fpu_is_enabled(vm))) {
-                const size_t rds    = bit_ext_u32(insn, 7, 5);
-                const xlen_t offset = decode_c_ldsp_off(insn);
-                const xlen_t addr   = riscv_read_reg(vm, RISCV_REG_X2) + offset;
-                riscv_load_double(vm, addr, rds);
+                const xlen_t off = decode_c_ldsp_off(insn);
+                riscv_load_double(vm, riscv_read_reg(vm, RISCV_REG_X2) + off, rds);
                 return;
             }
             break;
-#endif
-        case 0x02: { // c.lwsp
-            const size_t rds = bit_ext_u32(insn, 7, 5);
-            if (likely(rds)) {
-                const xlen_t offset = decode_c_lwsp_off(insn);
-                const xlen_t addr   = riscv_read_reg(vm, RISCV_REG_X2) + offset;
-                rvjit_trace_lw(rds, RISCV_REG_X2, offset, 2);
-                riscv_load_s32(vm, addr, rds);
-                return;
-            }
-            break;
-        }
-#if defined(USE_FPU) && !defined(RISCV64)
-        case 0x03: // c.flwsp (RV32)
-            if (likely(riscv_fpu_is_enabled(vm))) {
-                const size_t rds    = bit_ext_u32(insn, 7, 5);
-                const xlen_t offset = decode_c_lwsp_off(insn);
-                const xlen_t addr   = riscv_read_reg(vm, RISCV_REG_X2) + offset;
-                riscv_load_float(vm, addr, rds);
-                return;
-            }
-            break;
-#endif
-#if defined(RISCV64)
-        case 0x03: { // c.ldsp (RV64)
-            const size_t rds = bit_ext_u32(insn, 7, 5);
-            if (likely(rds)) {
-                const xlen_t off  = decode_c_ldsp_off(insn);
-                const xlen_t addr = riscv_read_reg(vm, RISCV_REG_X2) + off;
-                rvjit_trace_ld(rds, RISCV_REG_X2, off, 2);
-                riscv_load_u64(vm, addr, rds);
-                return;
-            }
-            break;
-        }
 #endif
         case 0x04:
-            riscv_emulate_c_jr_mv(vm, insn);
-            return;
-#if defined(USE_FPU)
-        case 0x05:
-            if (likely(riscv_fpu_is_enabled(vm))) { // c.fsdsp
-                const size_t rds  = bit_ext_u32(insn, 2, 5);
-                const xlen_t off  = decode_c_sdsp_off(insn);
-                const xlen_t addr = riscv_read_reg(vm, RISCV_REG_X2) + off;
-                riscv_store_double(vm, addr, rds);
+        case 0x05: // c.lwsp
+            if (likely(rds)) {
+                const xlen_t off = decode_c_lwsp_off(insn);
+                rvjit_trace_lw(rds, RISCV_REG_X2, off, 2);
+                riscv_load_s32(vm, riscv_read_reg(vm, RISCV_REG_X2) + off, rds);
                 return;
             }
             break;
-#endif
-        case 0x06: { // c.swsp
-            const size_t rds  = bit_ext_u32(insn, 2, 5);
-            const xlen_t off  = decode_c_swsp_off(insn);
-            const xlen_t addr = riscv_read_reg(vm, RISCV_REG_X2) + off;
-            rvjit_trace_sw(rds, RISCV_REG_X2, off, 2);
-            riscv_store_u32(vm, addr, rds);
-            return;
-        }
 #if defined(USE_FPU) && !defined(RISCV64)
-        case 0x07: // c.fswsp (RV32)
+        case 0x06:
+        case 0x07: // c.flwsp (RV32)
             if (likely(riscv_fpu_is_enabled(vm))) {
-                const size_t rds  = bit_ext_u32(insn, 2, 5);
-                const xlen_t off  = decode_c_lwsp_off(insn);
-                const xlen_t addr = riscv_read_reg(vm, RISCV_REG_X2) + off;
-                riscv_store_float(vm, addr, rds);
+                const xlen_t off = decode_c_lwsp_off(insn);
+                riscv_load_float(vm, riscv_read_reg(vm, RISCV_REG_X2) + off, rds);
                 return;
             }
             break;
 #endif
 #if defined(RISCV64)
-        case 0x07: { // c.sdsp (RV64)
-            const size_t rds    = bit_ext_u32(insn, 2, 5);
-            const xlen_t offset = decode_c_sdsp_off(insn);
-            const xlen_t addr   = riscv_read_reg(vm, RISCV_REG_X2) + offset;
-            rvjit_trace_sd(rds, RISCV_REG_X2, offset, 2);
-            riscv_store_u64(vm, addr, rds);
+        case 0x06:
+        case 0x07: // c.ldsp (RV64)
+            if (likely(rds)) {
+                const xlen_t off = decode_c_ldsp_off(insn);
+                rvjit_trace_ld(rds, RISCV_REG_X2, off, 2);
+                riscv_load_u64(vm, riscv_read_reg(vm, RISCV_REG_X2) + off, rds);
+                return;
+            }
+            break;
+#endif
+        case 0x08:
+            if (rs2) { // c.mv
+                rvjit_trace_addi(rds, rs2, 0, 2);
+                riscv_write_reg(vm, rds, riscv_read_reg(vm, rs2));
+                return;
+            } else if (likely(rds)) { // c.jr
+                rvjit_trace_jalr(RISCV_REG_ZERO, rds, 0, 2);
+                riscv_write_reg(vm, RISCV_REG_PC, riscv_read_reg(vm, rds) - 2);
+                return;
+            }
+            break;
+        case 0x09:
+            if (likely(rs2)) { // c.add
+                rvjit_trace_add(rds, rds, rs2, 2);
+                riscv_write_reg(vm, rds, riscv_read_reg(vm, rds) + riscv_read_reg(vm, rs2));
+            } else if (likely(rds)) { // c.jalr
+                rvjit_trace_jalr(RISCV_REG_X1, rds, 0, 2);
+                riscv_write_reg(vm, RISCV_REG_X1, riscv_read_reg(vm, RISCV_REG_PC) + 2);
+                riscv_write_reg(vm, RISCV_REG_PC, riscv_read_reg(vm, rds) - 2);
+            } else { // c.ebreak
+                riscv_breakpoint(vm);
+            }
+            return;
+#if defined(USE_FPU)
+        case 0x0A:
+        case 0x0B: // c.fsdsp
+            if (likely(riscv_fpu_is_enabled(vm))) {
+                const xlen_t off = decode_c_sdsp_off(insn);
+                riscv_store_double(vm, riscv_read_reg(vm, RISCV_REG_X2) + off, rds);
+                return;
+            }
+            break;
+#endif
+        case 0x0C:
+        case 0x0D: { // c.swsp
+            const xlen_t off = decode_c_swsp_off(insn);
+            rvjit_trace_sw(rs2, RISCV_REG_X2, off, 2);
+            riscv_store_u32(vm, riscv_read_reg(vm, RISCV_REG_X2) + off, rs2);
+            return;
+        }
+#if defined(USE_FPU) && !defined(RISCV64)
+        case 0x0E:
+        case 0x0F: // c.fswsp (RV32)
+            if (likely(riscv_fpu_is_enabled(vm))) {
+                const xlen_t off = decode_c_lwsp_off(insn);
+                riscv_store_float(vm, riscv_read_reg(vm, RISCV_REG_X2) + off, rs2);
+                return;
+            }
+            break;
+#endif
+#if defined(RISCV64)
+        case 0x0E:
+        case 0x0F: { // c.sdsp (RV64)
+            const xlen_t off = decode_c_sdsp_off(insn);
+            rvjit_trace_sd(rs2, RISCV_REG_X2, off, 2);
+            riscv_store_u64(vm, riscv_read_reg(vm, RISCV_REG_X2) + off, rs2);
             return;
         }
 #endif
     }
+
     riscv_illegal_insn(vm, insn);
 }
 
