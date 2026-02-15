@@ -498,7 +498,7 @@ endif
 # Disable setjmp & implicit traps for optimization, enable pthreads + main thread proxying, allow memory growth, enable full filesystem & fetch API
 ifeq ($(OS),emscripten)
 override BIN_EXT := .mjs
-override CFLAGS  := -pthread -O3 -s SUPPORT_LONGJMP=0 $(CFLAGS)
+override CFLAGS  := -pthread -s SUPPORT_LONGJMP=0 $(CFLAGS)
 override LDFLAGS := -s DEFAULT_TO_CXX=0 -s BINARYEN_IGNORE_IMPLICIT_TRAPS=1 -s ALLOW_MEMORY_GROWTH=1 \
 -s MEMORY_GROWTH_LINEAR_STEP=1mb -s PROXY_TO_PTHREAD=1 -s FORCE_FILESYSTEM=1 -s FETCH=1 $(LDFLAGS)
 # Disable shared library & network by default
