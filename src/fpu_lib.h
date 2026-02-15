@@ -76,6 +76,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  * - Windows CE (ARM32), or any other soft-float ARM target
  * Workaround: Thread-local exception flags, which are raised manually based on various checks
  *
+ * NOTE: FPU exception emulation is very expensive, and does not affect like most of software
+ * (outside some specific IEEE754 tests). It is disabled on WASM by default for now.
+ *
  * NOTE: RISC-V THead CPUs also lack FPU exceptions, but I'm hesitant to enable such workaround
  * on RISC-V in general as this case is a single non-conforming hardware implementation.
  *
@@ -119,7 +122,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #elif !defined(USE_FPU_WORKAROUNDS) && defined(GNU_EXTS) && defined(__x86_64__) /**/                                   \
     && defined(__SSE2__) && defined(__SSE2_MATH__)
 #define FENV_SSE2_IMPL 1
-#elif defined(__wasm__) || defined(__SOFTFP__)                                           /**/                          \
+#elif defined(__SOFTFP__)                                                                /**/                          \
     || defined(__m68k__) || defined(__sh__) || defined(__hppa__) || defined(__hexagon__) /**/                          \
     || defined(__alpha__) || defined(__alpha) || defined(_M_ALPHA)                       /**/                          \
     || defined(__mips__) || defined(__mips) || defined(__mips64__) || defined(__mips64)  /**/                          \
