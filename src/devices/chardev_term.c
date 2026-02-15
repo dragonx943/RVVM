@@ -27,6 +27,11 @@ PUSH_OPTIMIZATION_SIZE
 #include <termios.h>  // For tcgetattr(), tcsetattr(), etc
 #include <unistd.h>   // For read(), write(), close()
 
+#if defined(HOST_TARGET_EMSCRIPTEN)
+#include "mem_ops.h"
+#include "threading.h"
+#endif
+
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
 #endif
@@ -46,6 +51,10 @@ PUSH_OPTIMIZATION_SIZE
 
 static bool posix_fd_ready(int fd, bool write)
 {
+#if defined(HOST_TARGET_EMSCRIPTEN)
+    UNUSED(fd);
+    return write;
+#else
     struct timeval tv = {0};
     if (fd >= 0 && fd < FD_SETSIZE) {
         fd_set  fds  = {0};
@@ -56,6 +65,7 @@ static bool posix_fd_ready(int fd, bool write)
     }
     DO_ONCE(rvvm_warn("Invalid terminal fd!"));
     return false;
+#endif
 }
 
 #define POSIX_TERM_IMPL 1
@@ -120,9 +130,45 @@ static DWORD orig_output_mode = 0;
 
 #endif
 
+#if defined(HOST_TARGET_EMSCRIPTEN)
+
+/*
+ * Workaround the usual Emscripten bullshit (select is now apparently broken)
+ */
+
+static char     input_buffer[1024];
+static uint32_t input_amount = 0;
+
+static void* input_worker(void* arg)
+{
+    int fd = (size_t)arg;
+    while (true) {
+        uint32_t tmp = atomic_load_uint32(&input_amount);
+        if (tmp) {
+            thread_futex_wait(&input_amount, tmp, -1);
+        } else {
+            tmp = read(fd, input_buffer, sizeof(input_buffer));
+            atomic_store_uint32(&input_amount, EVAL_MAX(tmp, 0));
+        }
+    }
+    return arg;
+}
+
+#endif
+
 static size_t term_read_raw(chardev_term_t* term, char* buffer, size_t size)
 {
-#if defined(POSIX_TERM_IMPL)
+#if defined(HOST_TARGET_EMSCRIPTEN)
+    DO_ONCE(thread_create(input_worker, (void*)(size_t)term->rfd));
+    uint32_t ret = EVAL_MIN(atomic_load_uint32(&input_amount), size);
+    if (ret) {
+        memcpy(buffer, input_buffer, ret);
+        if (atomic_sub_uint32(&input_amount, ret) == ret) {
+            thread_futex_wake(&input_amount, 1);
+        }
+    }
+    return ret;
+#elif defined(POSIX_TERM_IMPL)
     if (posix_fd_ready(term->rfd, false)) {
         int ret = read(term->rfd, buffer, size);
         return EVAL_MAX(ret, 0);
