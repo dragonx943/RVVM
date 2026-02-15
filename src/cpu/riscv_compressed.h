@@ -491,7 +491,7 @@ static forceinline void riscv_emulate_c_c2(rvvm_hart_t* vm, const uint32_t insn)
         case 0x0B: // c.fsdsp
             if (likely(riscv_fpu_is_enabled(vm))) {
                 const xlen_t off = decode_c_sdsp_off(insn);
-                riscv_store_double(vm, riscv_read_reg(vm, RISCV_REG_X2) + off, rds);
+                riscv_store_double(vm, riscv_read_reg(vm, RISCV_REG_X2) + off, rs2);
                 return;
             }
             break;
