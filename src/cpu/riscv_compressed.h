@@ -271,20 +271,19 @@ static forceinline void riscv_emulate_c_c1(rvvm_hart_t* vm, const uint32_t insn)
         }
         case 0x03: {
             const size_t rds = bit_ext_u32(insn, 7, 5);
-            if (rds == RISCV_REG_X2) { // c.addi16sp (rds == X2)
-                const int32_t imm = decode_c_addi16sp_off(insn);
-                if (likely(imm)) {
+            if (likely(insn & 0x107C)) {   // imm != 0
+                if (rds == RISCV_REG_X2) { // c.addi16sp (rds == X2)
+                    const int32_t imm = decode_c_addi16sp_off(insn);
                     rvjit_trace_addi(RISCV_REG_X2, RISCV_REG_X2, imm, 2);
                     riscv_write_reg(vm, RISCV_REG_X2, riscv_read_reg(vm, RISCV_REG_X2) + imm);
-                    return;
-                }
-            } else { // c.lui (rds != X2); imm != 0
-                const int32_t imm = decode_c_lui_imm(insn);
-                if (likely(imm)) {
+                } else { // c.lui
+                    const int32_t imm = decode_c_lui_imm(insn);
                     rvjit_trace_li(rds, imm, 2);
                     riscv_write_reg(vm, rds, imm);
-                    return;
                 }
+                return;
+            } else if ((rds & 0x01) && !(rds & 0x10)) { // c.mop.{1,15}
+                return;
             }
             break;
         }
