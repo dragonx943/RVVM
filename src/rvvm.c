@@ -119,8 +119,8 @@ void rvvm_append_isa_string(rvvm_machine_t* machine, const char* str)
 #if defined(USE_FDT)
 
 static const char* riscv_exts = "c_zic64b_zicbom_zicbop_zicboz_ziccamoa_ziccif_zicclsm_ziccrse_zicntr_zicsr_zifencei_"
-                                "zihintntl_zihintpause_zmmul_za64rs_zaamo_zalrsc_zacas_zabha_zca_zcd_zba_zbb_zbc_zbs_"
-                                "ssccptr_sscounterenw_ssstrict_sstc_sstvala_sstvecd_ssu64xl_svadu_svvptc";
+                                "zihintntl_zihintpause_zmmul_za64rs_zaamo_zalrsc_zacas_zabha_zawrs_zfa_zca_zcd_zba_zbb_"
+                                "zbc_zbs_ssccptr_sscounterenw_ssstrict_sstc_sstvala_sstvecd_ssu64xl_svadu_svvptc";
 
 static void rvvm_init_fdt(rvvm_machine_t* machine)
 {
