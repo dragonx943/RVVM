@@ -22,6 +22,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define RISCV_INSN_SRET   0x10200073UL
 #define RISCV_INSN_MRET   0x30200073UL
 #define RISCV_INSN_WFI    0x10500073UL
+#define RISCV_INSN_WRS_NT 0x00D00073UL
+#define RISCV_INSN_WRS_ST 0x01D00073UL
 
 // Privileged FENCE instructions mask and decoding
 #define RISCV_SFENCE_MASK 0xFE007FFFUL
@@ -103,6 +105,10 @@ slow_path void riscv_emulate_opc_system(rvvm_hart_t* vm, const uint32_t insn)
                 return;
             }
             break;
+        case RISCV_INSN_WRS_NT: // wrs.nto (Zawrs)
+        case RISCV_INSN_WRS_ST: // wrs.sto (Zawrs)
+            thread_sched_yield();
+            return;
     }
 
     const size_t   rds    = bit_ext_u32(insn, 7, 5);
