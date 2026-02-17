@@ -415,6 +415,7 @@ void riscv_hart_run(rvvm_hart_t* vm)
 {
     rvvm_info("Hart %p started", vm);
 
+    riscv_csr_sync_fpu(vm);
     while (true) {
         // Allow hart to run
         atomic_store_uint32_ex(&vm->running, true, ATOMIC_RELAXED);
@@ -424,7 +425,7 @@ void riscv_hart_run(rvvm_hart_t* vm)
         if (unlikely(events)) {
             if (events & HART_EVENT_PAUSE) {
                 rvvm_info("Hart %p stopped", vm);
-                return;
+                break;
             }
             if (events & HART_EVENT_PREEMPT) {
                 sleep_ms(atomic_swap_uint32(&vm->preempt_ms, 0));
@@ -440,6 +441,7 @@ void riscv_hart_run(rvvm_hart_t* vm)
             vm->trap                    = false;
         }
     }
+    riscv_csr_sync_fpu(vm);
 }
 
 static void* riscv_hart_run_thread(void* ptr)
@@ -448,9 +450,7 @@ static void* riscv_hart_run_thread(void* ptr)
     if (!rvvm_has_arg("noisolation")) {
         rvvm_restrict_this_thread();
     }
-    riscv_csr_sync_fpu(vm);
     riscv_hart_run(vm);
-    riscv_csr_sync_fpu(vm);
     return NULL;
 }
 
@@ -470,9 +470,7 @@ void riscv_hart_queue_pause(rvvm_hart_t* vm)
 
 void riscv_hart_pause(rvvm_hart_t* vm)
 {
-    if (vm->thread) {
-        riscv_hart_queue_pause(vm);
-        thread_join(vm->thread);
-        vm->thread = NULL;
-    }
+    riscv_hart_queue_pause(vm);
+    thread_join(vm->thread);
+    vm->thread = NULL;
 }
