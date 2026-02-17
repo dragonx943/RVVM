@@ -43,6 +43,10 @@ static rvvm_mmio_type_t simplefb_dev_type = {
 
 PUBLIC rvvm_mmio_dev_t* rvvm_simplefb_init(rvvm_machine_t* machine, rvvm_addr_t addr, rvvm_fbdev_t* fbdev)
 {
+    if (!fbdev) {
+        return NULL;
+    }
+
     rvvm_fb_t fb = ZERO_INIT;
     rvvm_fbdev_get_scanout(fbdev, &fb);
 
