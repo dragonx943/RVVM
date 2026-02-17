@@ -918,10 +918,13 @@ static bool thread_futex_is_native(void)
 
 uint32_t thread_futex_wait(void* ptr, uint32_t val, uint64_t timeout_ns)
 {
-    UNUSED(ptr && val && timeout_ns);
-#if !defined(USE_THREAD_EMU)
     if (likely(ptr && timeout_ns)) {
-#if defined(NATIVE_FUTEX_IMPL)
+#if defined(USE_THREAD_EMU)
+        if (atomic_load_uint32(ptr) != val) {
+            return THREAD_FUTEX_MISMATCH;
+        }
+        sleep_ns(timeout_ns);
+#elif defined(NATIVE_FUTEX_IMPL)
         return thread_futex_native_wait(ptr, val, timeout_ns);
 #else
 #if defined(HYBRID_FUTEX_IMPL)
@@ -932,8 +935,7 @@ uint32_t thread_futex_wait(void* ptr, uint32_t val, uint64_t timeout_ns)
         return thread_futex_emu_wait(ptr, val, timeout_ns);
 #endif
     }
-#endif
-    return 0;
+    return THREAD_FUTEX_TIMEOUT;
 }
 
 void thread_futex_wake(void* ptr, uint32_t num)
