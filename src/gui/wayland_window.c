@@ -906,7 +906,7 @@ static bool wayland_global_init(void)
     // Launch the event thread
     wl_thread = thread_create(wl_event_worker, NULL);
 
-    return true;
+    return !!wl_thread;
 }
 
 // Perform global Wayland deinitialization
@@ -1200,6 +1200,7 @@ bool wayland_window_init(gui_window_t* win)
 
     if (!atomic_add_uint32(&wl_windows, 1) && !wayland_global_init()) {
         // Wayland global init failed
+        wayland_global_free();
         return false;
     }
 
