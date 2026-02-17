@@ -39,20 +39,6 @@ static spinlock_t    eventloop_lock   = ZERO_INIT;
 static cond_var_t*   eventloop_cond   = NULL;
 static thread_ctx_t* eventloop_thread = NULL;
 
-static char* rvvm_merge_strings_internal(const char* str1, const char* str2)
-{
-    size_t str1_len = str1 ? rvvm_strlen(str1) : 0;
-    size_t str2_len = str2 ? rvvm_strlen(str2) : 0;
-    char*  ret      = safe_new_arr(char, str1_len + str2_len + 1);
-    if (str1) {
-        memcpy(ret, str1, str1_len);
-    }
-    if (str2) {
-        memcpy(ret + str1_len, str2, str2_len);
-    }
-    return ret;
-}
-
 void rvvm_append_isa_string(rvvm_machine_t* machine, const char* str)
 {
 #if defined(USE_FDT)
@@ -121,6 +107,20 @@ void rvvm_append_isa_string(rvvm_machine_t* machine, const char* str)
 static const char* riscv_exts = "c_zic64b_zicbom_zicbop_zicboz_ziccamoa_ziccif_zicclsm_ziccrse_zicntr_zicsr_zifencei_"
                                 "zihintntl_zihintpause_zmmul_za64rs_zaamo_zalrsc_zacas_zabha_zawrs_zfa_zca_zcd_zba_zbb_"
                                 "zbc_zbs_ssccptr_sscounterenw_ssstrict_sstc_sstvala_sstvecd_ssu64xl_svadu_svvptc";
+
+static char* rvvm_merge_strings_internal(const char* str1, const char* str2)
+{
+    size_t str1_len = str1 ? rvvm_strlen(str1) : 0;
+    size_t str2_len = str2 ? rvvm_strlen(str2) : 0;
+    char*  ret      = safe_new_arr(char, str1_len + str2_len + 1);
+    if (str1) {
+        memcpy(ret, str1, str1_len);
+    }
+    if (str2) {
+        memcpy(ret + str1_len, str2, str2_len);
+    }
+    return ret;
+}
 
 static void rvvm_init_fdt(rvvm_machine_t* machine)
 {
@@ -313,8 +313,7 @@ static void rvvm_reset_machine_state(rvvm_machine_t* machine)
     atomic_store_uint32(&machine->power_state, RVVM_POWER_ON);
 }
 
-// NOTE: Must be called under global_lock!
-static bool rvvm_eventloop_tick(bool manual)
+bool rvvm_eventloop_tick(bool manual)
 {
     bool ret = false;
     if (vector_size(global_machines) == 0 || global_manual == !manual) {
@@ -714,6 +713,9 @@ PUBLIC bool rvvm_start_machine(rvvm_machine_t* machine)
             vector_push_back(global_machines, machine);
         }
         rvvm_reconfigure_eventloop();
+#if defined(USE_THREAD_EMU)
+        riscv_hart_run(vector_at(machine->harts, 0));
+#endif
         return true;
     }
     return false;
