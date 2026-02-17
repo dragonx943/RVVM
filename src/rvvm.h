@@ -316,6 +316,4 @@ struct randomize_layout rvvm_machine_t {
 
 void rvvm_append_isa_string(rvvm_machine_t* machine, const char* str);
 
-bool rvvm_eventloop_tick(bool manual);
-
 #endif

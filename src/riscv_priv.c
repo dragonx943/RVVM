@@ -85,6 +85,9 @@ slow_path void riscv_emulate_opc_system(rvvm_hart_t* vm, const uint32_t insn)
         case RISCV_INSN_WFI:
             // Executing wfi should trap in S-mode when mstatus.TSR is enabled, and in U-mode
             if (likely(riscv_mstatus_allowed(vm, CSR_STATUS_TW))) {
+#if defined(USE_THREAD_EMU)
+                riscv_hart_pause(vm);
+#else
                 // Resume execution for locally enabled interrupts pending at any privilege level
                 if (!riscv_interrupts_pending(vm)) {
                     while (atomic_load_uint32_ex(&vm->running, ATOMIC_RELAXED)) {
@@ -96,23 +99,23 @@ slow_path void riscv_emulate_opc_system(rvvm_hart_t* vm, const uint32_t insn)
                         if (vm->csr.ie & (1U << RISCV_INTERRUPT_STIMER)) {
                             delay = EVAL_MIN(delay, rvtimecmp_delay_ns(&vm->stimecmp));
                         }
-#if defined(USE_THREAD_EMU)
-                        sleep_ms(16);
-                        rvvm_eventloop_tick(false);
-#else
                         condvar_wait_ns(vm->wfi_cond, delay);
-#endif
 
                         // Check timer expiration
                         riscv_hart_check_timer(vm);
                     }
                 }
+#endif
                 return;
             }
             break;
         case RISCV_INSN_WRS_NT: // wrs.nto (Zawrs)
         case RISCV_INSN_WRS_ST: // wrs.sto (Zawrs)
+#if defined(USE_THREAD_EMU)
+            riscv_hart_pause(vm);
+#else
             thread_sched_yield();
+#endif
             return;
     }
 
@@ -210,7 +213,11 @@ slow_path void riscv_emulate_opc_misc_mem(rvvm_hart_t* vm, const uint32_t insn)
         case 0x00: // fence
             if (unlikely(insn == RISCV_INSN_PAUSE)) {
                 // Pause hint, yield the vCPU thread
+#if defined(USE_THREAD_EMU)
+                riscv_hart_pause(vm);
+#else
                 thread_sched_yield();
+#endif
             } else if (unlikely((insn & 0x05000000UL) && (insn & 0x00A00000UL))) {
                 // StoreLoad fence needed (SEQ_CST)
                 atomic_fence_ex(ATOMIC_SEQ_CST);

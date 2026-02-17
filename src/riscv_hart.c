@@ -413,10 +413,13 @@ static void riscv_handle_irqs(rvvm_hart_t* vm)
 
 void riscv_hart_run(rvvm_hart_t* vm)
 {
-    rvvm_info("Hart %p started", vm);
+#if defined(USE_THREAD_EMU)
+    rvtimer_t timer = ZERO_INIT;
+    rvtimer_init(&timer, 1000000000ULL);
+#endif
 
     riscv_csr_sync_fpu(vm);
-    while (true) {
+    do {
         // Allow hart to run
         atomic_store_uint32_ex(&vm->running, true, ATOMIC_RELAXED);
 
@@ -424,7 +427,6 @@ void riscv_hart_run(rvvm_hart_t* vm)
         uint32_t events = atomic_swap_uint32(&vm->pending_events, 0);
         if (unlikely(events)) {
             if (events & HART_EVENT_PAUSE) {
-                rvvm_info("Hart %p stopped", vm);
                 break;
             }
             if (events & HART_EVENT_PREEMPT) {
@@ -440,7 +442,11 @@ void riscv_hart_run(rvvm_hart_t* vm)
             vm->registers[RISCV_REG_PC] = vm->trap_pc;
             vm->trap                    = false;
         }
-    }
+#if defined(USE_THREAD_EMU)
+    } while (rvtimer_get(&timer) < 16666666ULL);
+#else
+    } while (true);
+#endif
     riscv_csr_sync_fpu(vm);
 }
 

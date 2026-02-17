@@ -313,7 +313,7 @@ static void rvvm_reset_machine_state(rvvm_machine_t* machine)
     atomic_store_uint32(&machine->power_state, RVVM_POWER_ON);
 }
 
-bool rvvm_eventloop_tick(bool manual)
+static bool rvvm_eventloop_tick(bool manual)
 {
     bool ret = false;
     if (vector_size(global_machines) == 0 || global_manual == !manual) {
@@ -328,6 +328,9 @@ bool rvvm_eventloop_tick(bool manual)
         if (power_state == RVVM_POWER_ON) {
             vector_foreach (machine->harts, i) {
                 rvvm_hart_t* vm = vector_at(machine->harts, i);
+#if defined(USE_THREAD_EMU)
+                riscv_hart_run(vector_at(machine->harts, i));
+#endif
                 // Сheck hart timer interrupts
                 riscv_hart_check_timer(vector_at(machine->harts, i));
                 if (rvvm_get_opt(machine, RVVM_OPT_MAX_CPU_CENT) < 100) {
@@ -401,7 +404,11 @@ static void* rvvm_eventloop(void* manual)
     }
 
     while (running) {
-        if (rvtimecmp_pending(&cmp) || condvar_wait_ns(eventloop_cond, rvtimecmp_delay_ns(&cmp))) {
+        bool tick = rvtimecmp_pending(&cmp);
+        if (!tick) {
+            tick = condvar_wait_ns(eventloop_cond, rvtimecmp_delay_ns(&cmp));
+        }
+        if (tick) {
             uint64_t next = rvtimecmp_get(&cmp) + delay;
             uint64_t time = rvtimer_get(&timer);
             rvtimecmp_set(&cmp, EVAL_MAX(time, next));
@@ -713,9 +720,6 @@ PUBLIC bool rvvm_start_machine(rvvm_machine_t* machine)
             vector_push_back(global_machines, machine);
         }
         rvvm_reconfigure_eventloop();
-#if defined(USE_THREAD_EMU)
-        riscv_hart_run(vector_at(machine->harts, 0));
-#endif
         return true;
     }
     return false;
