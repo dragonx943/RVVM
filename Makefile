@@ -477,8 +477,11 @@ endif
 ifeq ($(OS),dos)
 override BIN_EXT := .com
 override CFLAGS  := $(CFLAGS) -Os -Wno-format -Wno-attributes
+ifeq ($(ARCH),i386)
+override CFLAGS := $(CFLAGS) -march=i386
+endif
 ifeq ($(ARCH),ia16)
-override CFLAGS  := $(CFLAGS) -mcmodel=medium -D__SIZE_TYPE__=__UINT32_TYPE__ -Wno-pointer-to-int-cast -Wno-int-to-pointer-cast
+override CFLAGS := $(CFLAGS) -mcmodel=medium -D__SIZE_TYPE__=__UINT32_TYPE__ -Wno-pointer-to-int-cast -Wno-int-to-pointer-cast
 endif
 USE_LIB ?= 0
 USE_NET ?= 0
