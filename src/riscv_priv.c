@@ -96,7 +96,12 @@ slow_path void riscv_emulate_opc_system(rvvm_hart_t* vm, const uint32_t insn)
                         if (vm->csr.ie & (1U << RISCV_INTERRUPT_STIMER)) {
                             delay = EVAL_MIN(delay, rvtimecmp_delay_ns(&vm->stimecmp));
                         }
+#if defined(USE_THREAD_EMU)
+                        sleep_ms(16);
+                        rvvm_eventloop_tick(false);
+#else
                         condvar_wait_ns(vm->wfi_cond, delay);
+#endif
 
                         // Check timer expiration
                         riscv_hart_check_timer(vm);
