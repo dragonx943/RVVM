@@ -107,6 +107,10 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #undef ATOMIC_ACQ_REL
 #undef ATOMIC_SEQ_CST
 
+#if defined(USE_THREAD_EMU)
+#define USE_ATOMIC_EMU 1
+#endif
+
 #if (GCC_CHECK_VER(4, 7) || CLANG_CHECK_VER(3, 1)) && !defined(USE_ATOMIC_EMU)
 
 /*
@@ -302,8 +306,15 @@ void atomic_thread_fence(int memorder);
 #endif
 
 #if defined(ATOMIC_EMU32_IMPL) || defined(ATOMIC_EMU64_IMPL) || defined(ATOMIC_EMU128_IMPL)
+#if defined(USE_THREAD_EMU)
+#define atomic_emu_lock(ptr)                                                                                           \
+    do {                                                                                                               \
+    } while (0)
+#define atomic_emu_unlock(ptr) atomic_emu_lock(ptr)
+#else
 slow_path void atomic_emu_lock(const void* ptr);
 slow_path void atomic_emu_unlock(const void* ptr);
+#endif
 #endif
 
 static forceinline bool atomic_ordering_is_natural(int memorder)

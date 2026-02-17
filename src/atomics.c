@@ -12,7 +12,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "atomics.h" // IWYU pragma: keep
 #include "utils.h"   // IWYU pragma: keep
 
-#if defined(ATOMIC_EMU32_IMPL) || defined(ATOMIC_EMU64_IMPL) || defined(ATOMIC_EMU128_IMPL)
+#if !defined(USE_THREAD_EMU)                                                                                           \
+    && (defined(ATOMIC_EMU32_IMPL) || defined(ATOMIC_EMU64_IMPL) || defined(ATOMIC_EMU128_IMPL))
 
 #if !defined(ATOMIC_EMU32_IMPL)
 
