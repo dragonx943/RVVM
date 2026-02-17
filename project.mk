@@ -48,6 +48,14 @@ ifneq (,$(filter emscripten,$(OS)))
 # Enable SDL2 on Emscripten by default
 USE_SDL ?= 2
 endif
+ifneq (,$(filter dos,$(OS)))
+# Disable JIT/network/sound, emulate threads/atomics in DOS
+USE_JIT        ?= 0
+USE_NET        ?= 0
+USE_SOUND      ?= 0
+USE_ATOMIC_EMU ?= 1
+USE_THREAD_EMU ?= 1
+endif
 
 # Only allow dynamic linking to librvvm in released versions
 ifneq (,$(findstring -,$(VERSION)))
@@ -96,6 +104,10 @@ USE_SELECT        ?= 0 # Use select() event interface fallback for networking (I
 USE_SOFT_FPU_WRAP ?= 0 # Wrap native floating-point types into bitcasted representation (Fixes 8087 FPU)
 USE_SOFT_FPU_FENV ?= 0 # Emulate FPU exceptions (Note this isn't soft-fp, and still fairly fast)
 
+USE_FUTEX_EMU  ?= 0 # Emulate futexes via pthread_cond / Win32 Event / etc
+USE_ATOMIC_EMU ?= 0 # Emulate atomics via host mutex
+USE_THREAD_EMU ?= 0 # Emulate threads via guest CPU preemption
+
 USE_NO_THREAD_LOCAL ?= 0 # Disable and undefine THREAD_LOCAL attribute
 USE_NO_BUILD_ASSERT ?= 0 # Disable build-time assertions
 USE_NO_RANDSTRUCT   ?= 0 # Disable struct randomization via randomize_layout
@@ -107,12 +119,6 @@ USE_NO_FORCEINLINE  ?= 0 # Disable force inlining
 USE_NO_NOINLINE     ?= 0 # Disable force un-inlining
 USE_NO_SLOW_PATH    ?= 0 # Disable slow_path attribute
 USE_NO_FLATTEN      ?= 0 # Disable flatten_calls attribute
-
-USE_NO_C11_ATOMICS   ?= 0 # Disable C11 <stdatomic.h>, even if determined to be supported
-USE_NO_GNU_ATOMICS   ?= 0 # Disable GNU __atomic, even if determined to be supported
-USE_NO_SYNC_ATOMICS  ?= 0 # Disable GNU __sync, even if determined to be supported
-USE_NO_WIN32_ATOMICS ?= 0 # Disable Win32 Interlocked atomics, even if determined to be supported
-USE_NO_LIBATOMIC     ?= 0 # Disable libatomic fallback, falling back to global-lock atomics then...
 
 ifneq (,$(call var_use,USE_TAP_LINUX))
 $(call log_warn,Linux TAP is deprecated in favor of USE_NET due to checksum issues)

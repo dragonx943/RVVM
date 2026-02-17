@@ -480,9 +480,8 @@ override CFLAGS  := $(CFLAGS) -Os -Wno-format -Wno-attributes
 ifeq ($(ARCH),ia16)
 override CFLAGS  := $(CFLAGS) -mcmodel=medium -D__SIZE_TYPE__=__UINT32_TYPE__ -Wno-pointer-to-int-cast -Wno-int-to-pointer-cast
 endif
-USE_LIB        ?= 0
-USE_NET        ?= 0
-USE_ATOMIC_EMU ?= 1
+USE_LIB ?= 0
+USE_NET ?= 0
 endif
 
 # AmigaOS: Disable USE_LTO, USE_LIB, USE_NET
