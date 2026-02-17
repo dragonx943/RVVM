@@ -237,6 +237,10 @@ static const rvvm_mmio_type_t bochs_display_type = {
 
 pci_dev_t* rvvm_bochs_display_init(pci_bus_t* pci_bus, rvvm_fbdev_t* fbdev)
 {
+    if (!fbdev) {
+        return NULL;
+    }
+
     bochs_display_t* disp = safe_new_obj(bochs_display_t);
 
     size_t vram_size = RVVM_BOCHS_DISPLAY_VRAM;
