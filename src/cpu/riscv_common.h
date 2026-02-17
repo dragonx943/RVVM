@@ -35,6 +35,26 @@ typedef uint64_t xaddr_t;
 
 #endif
 
+#if defined(USE_THREAD_EMU)
+
+static uint32_t preempt_count = 0;
+
+static forceinline void riscv_voluntary_preempt(void)
+{
+    if (++preempt_count >= 100000) {
+        preempt_count = 0;
+        rvvm_eventloop_tick(false);
+    }
+}
+
+#else
+
+#define riscv_voluntary_preempt()                                                                                   \
+    do {                                                                                                               \
+    } while (0)
+
+#endif
+
 static forceinline xlen_t riscv_read_reg(rvvm_hart_t* vm, size_t reg)
 {
     return vm->registers[reg];
