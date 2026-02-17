@@ -107,6 +107,15 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #endif
 
+#if defined(USE_THREAD_EMU)
+#undef RVVM_RVJIT_TRACE_JAL
+#undef RVVM_RVJIT_TRACE_JALR
+#undef RVVM_RVJIT_TRACE_BRANCH
+#define RVVM_RVJIT_TRACE_JAL(intrinsic, imm, insn_size)
+#define RVVM_RVJIT_TRACE_JALR(intrinsic)
+#define RVVM_RVJIT_TRACE_BRANCH(intrinsic, target_off, fallthrough_off, insn_size)
+#endif
+
 /*
  * Bitmanip helpers
  */

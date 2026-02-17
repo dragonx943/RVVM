@@ -764,7 +764,7 @@ static forceinline void riscv_emulate_i_opc_branch(rvvm_hart_t* vm, const uint32
                 const xlen_t pc = riscv_read_reg(vm, RISCV_REG_PC);
                 rvjit_trace_beq(rs1, rs2, off, 4, 4);
                 riscv_write_reg(vm, RISCV_REG_PC, pc + off - 4);
-                riscv_voluntary_preempt();
+                riscv_voluntary_preempt(vm);
             } else {
                 rvjit_trace_bne(rs1, rs2, 4, off, 4);
             }
@@ -774,7 +774,7 @@ static forceinline void riscv_emulate_i_opc_branch(rvvm_hart_t* vm, const uint32
                 const xlen_t pc = riscv_read_reg(vm, RISCV_REG_PC);
                 rvjit_trace_bne(rs1, rs2, off, 4, 4);
                 riscv_write_reg(vm, RISCV_REG_PC, pc + off - 4);
-                riscv_voluntary_preempt();
+                riscv_voluntary_preempt(vm);
             } else {
                 rvjit_trace_beq(rs1, rs2, 4, off, 4);
             }
@@ -784,7 +784,7 @@ static forceinline void riscv_emulate_i_opc_branch(rvvm_hart_t* vm, const uint32
                 const xlen_t pc = riscv_read_reg(vm, RISCV_REG_PC);
                 rvjit_trace_blt(rs1, rs2, off, 4, 4);
                 riscv_write_reg(vm, RISCV_REG_PC, pc + off - 4);
-                riscv_voluntary_preempt();
+                riscv_voluntary_preempt(vm);
             } else {
                 rvjit_trace_bge(rs1, rs2, 4, off, 4);
             }
@@ -794,7 +794,7 @@ static forceinline void riscv_emulate_i_opc_branch(rvvm_hart_t* vm, const uint32
                 const xlen_t pc = riscv_read_reg(vm, RISCV_REG_PC);
                 rvjit_trace_bge(rs1, rs2, off, 4, 4);
                 riscv_write_reg(vm, RISCV_REG_PC, pc + off - 4);
-                riscv_voluntary_preempt();
+                riscv_voluntary_preempt(vm);
             } else {
                 rvjit_trace_blt(rs1, rs2, 4, off, 4);
             }
@@ -804,7 +804,7 @@ static forceinline void riscv_emulate_i_opc_branch(rvvm_hart_t* vm, const uint32
                 const xlen_t pc = riscv_read_reg(vm, RISCV_REG_PC);
                 rvjit_trace_bltu(rs1, rs2, off, 4, 4);
                 riscv_write_reg(vm, RISCV_REG_PC, pc + off - 4);
-                riscv_voluntary_preempt();
+                riscv_voluntary_preempt(vm);
             } else {
                 rvjit_trace_bgeu(rs1, rs2, 4, off, 4);
             }
@@ -814,7 +814,7 @@ static forceinline void riscv_emulate_i_opc_branch(rvvm_hart_t* vm, const uint32
                 const xlen_t pc = riscv_read_reg(vm, RISCV_REG_PC);
                 rvjit_trace_bgeu(rs1, rs2, off, 4, 4);
                 riscv_write_reg(vm, RISCV_REG_PC, pc + off - 4);
-                riscv_voluntary_preempt();
+                riscv_voluntary_preempt(vm);
             } else {
                 rvjit_trace_bltu(rs1, rs2, 4, off, 4);
             }
@@ -835,7 +835,7 @@ static forceinline void riscv_emulate_i_jalr(rvvm_hart_t* vm, const uint32_t ins
         rvjit_trace_jalr(rds, rs1, off, 4);
         riscv_write_reg(vm, rds, pc + 4);
         riscv_write_reg(vm, RISCV_REG_PC, ((jmp_addr + off) & (~(xlen_t)1)) - 4);
-        riscv_voluntary_preempt();
+        riscv_voluntary_preempt(vm);
     } else {
         riscv_illegal_insn(vm, insn);
     }
@@ -850,7 +850,7 @@ static forceinline void riscv_emulate_i_jal(rvvm_hart_t* vm, const uint32_t insn
     rvjit_trace_jal(rds, off, 4);
     riscv_write_reg(vm, rds, pc + 4);
     riscv_write_reg(vm, RISCV_REG_PC, pc + off - 4);
-    riscv_voluntary_preempt();
+    riscv_voluntary_preempt(vm);
 }
 
 static forceinline void riscv_emulate_i(rvvm_hart_t* vm, const uint32_t insn)

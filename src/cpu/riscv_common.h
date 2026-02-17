@@ -7,8 +7,8 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#ifndef RISCV_COMMON_H
-#define RISCV_COMMON_H
+#ifndef RVVM_RISCV_COMMON_H
+#define RVVM_RISCV_COMMON_H
 
 #include "bit_ops.h"    // IWYU pragma: keep
 #include "compiler.h"   // IWYU pragma: keep
@@ -39,17 +39,17 @@ typedef uint64_t xaddr_t;
 
 static uint32_t preempt_count = 0;
 
-static forceinline void riscv_voluntary_preempt(void)
+static forceinline void riscv_voluntary_preempt(rvvm_hart_t* vm)
 {
     if (++preempt_count >= 100000) {
         preempt_count = 0;
-        rvvm_eventloop_tick(false);
+        riscv_restart_dispatch(vm);
     }
 }
 
 #else
 
-#define riscv_voluntary_preempt()                                                                                   \
+#define riscv_voluntary_preempt(...)                                                                                   \
     do {                                                                                                               \
     } while (0)
 

@@ -259,7 +259,7 @@ static forceinline void riscv_emulate_c_c1(rvvm_hart_t* vm, const uint32_t insn)
             rvjit_trace_jal(RISCV_REG_X1, off, 2);
             riscv_write_reg(vm, RISCV_REG_X1, pc + 2);
             riscv_write_reg(vm, RISCV_REG_PC, pc + off - 2);
-            riscv_voluntary_preempt();
+            riscv_voluntary_preempt(vm);
             return;
 #endif
         }
@@ -292,7 +292,7 @@ static forceinline void riscv_emulate_c_c1(rvvm_hart_t* vm, const uint32_t insn)
             const int32_t off = decode_c_jal_imm(insn);
             rvjit_trace_jal(RISCV_REG_ZERO, off, 2);
             riscv_write_reg(vm, RISCV_REG_PC, riscv_read_reg(vm, RISCV_REG_PC) + off - 2);
-            riscv_voluntary_preempt();
+            riscv_voluntary_preempt(vm);
             return;
         }
         case 0x06: { // c.beqz
@@ -303,7 +303,7 @@ static forceinline void riscv_emulate_c_c1(rvvm_hart_t* vm, const uint32_t insn)
             } else {
                 rvjit_trace_beq(rs1, RISCV_REG_ZERO, off, 2, 2);
                 riscv_write_reg(vm, RISCV_REG_PC, riscv_read_reg(vm, RISCV_REG_PC) + off - 2);
-                riscv_voluntary_preempt();
+                riscv_voluntary_preempt(vm);
             }
             return;
         }
@@ -315,7 +315,7 @@ static forceinline void riscv_emulate_c_c1(rvvm_hart_t* vm, const uint32_t insn)
             } else {
                 rvjit_trace_bne(rs1, RISCV_REG_ZERO, off, 2, 2);
                 riscv_write_reg(vm, RISCV_REG_PC, riscv_read_reg(vm, RISCV_REG_PC) + off - 2);
-                riscv_voluntary_preempt();
+                riscv_voluntary_preempt(vm);
             }
             return;
         }
@@ -474,7 +474,7 @@ static forceinline void riscv_emulate_c_c2(rvvm_hart_t* vm, const uint32_t insn)
             } else if (likely(rds)) { // c.jr
                 rvjit_trace_jalr(RISCV_REG_ZERO, rds, 0, 2);
                 riscv_write_reg(vm, RISCV_REG_PC, riscv_read_reg(vm, rds) - 2);
-                riscv_voluntary_preempt();
+                riscv_voluntary_preempt(vm);
                 return;
             }
             break;
@@ -486,7 +486,7 @@ static forceinline void riscv_emulate_c_c2(rvvm_hart_t* vm, const uint32_t insn)
                 rvjit_trace_jalr(RISCV_REG_X1, rds, 0, 2);
                 riscv_write_reg(vm, RISCV_REG_X1, riscv_read_reg(vm, RISCV_REG_PC) + 2);
                 riscv_write_reg(vm, RISCV_REG_PC, riscv_read_reg(vm, rds) - 2);
-                riscv_voluntary_preempt();
+                riscv_voluntary_preempt(vm);
             } else { // c.ebreak
                 riscv_breakpoint(vm);
             }
