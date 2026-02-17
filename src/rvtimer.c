@@ -13,10 +13,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "atomics.h"
 #include "rvtimer.h"
 
-#include "dlib.h"      // IWYU pragma: keep
-#include "spinlock.h"  // IWYU pragma: keep
-#include "threading.h" // IWYU pragma: keep
-#include "utils.h"     // IWYU pragma: keep
+#include "dlib.h"     // IWYU pragma: keep
+#include "spinlock.h" // IWYU pragma: keep
+#include "utils.h"    // IWYU pragma: keep
 
 // For nanosleep(), clock_gettime(), CLOCK_MONOTONIC, etc
 #include <time.h>
@@ -274,6 +273,7 @@ void sleep_low_latency(bool enable)
 
 void sleep_ns(uint64_t ns)
 {
+    UNUSED(ns);
 #if defined(HOST_TARGET_WIN32)
     HANDLE timer = thread_local_waitable_timer(ns);
     if (likely(timer)) {
@@ -289,9 +289,6 @@ void sleep_ns(uint64_t ns)
     sleep_low_latency(true);
     while (nanosleep(&ts, &ts) < 0) {
     }
-#else
-    uint32_t tmp = 0;
-    thread_futex_wait(&tmp, 0, ns);
 #endif
 }
 
