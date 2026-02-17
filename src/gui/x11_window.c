@@ -741,9 +741,9 @@ static bool x11_global_init(void)
 }
 
 // Perform global X11 deinitialization if needed
+// NOTE: Must be called under x11_lock when vector_size(x11_windows) == 0
 static void x11_global_free(void)
 {
-    spin_lock(&x11_lock);
     if (!vector_size(x11_windows)) {
         if (!x11_catch_error()) {
             XFlush(x11_display);
@@ -763,7 +763,6 @@ static void x11_global_free(void)
             x11_keycodemap = NULL;
         }
     }
-    spin_unlock(&x11_lock);
 }
 
 /*
@@ -857,14 +856,9 @@ static bool x11_vram_init(gui_window_t* win)
 static void x11_vram_free(gui_window_t* win)
 {
 #if defined(USE_XSHM)
-    x11_window_t* x11 = gui_backend_get_data(win);
     x11_xshm_free(win);
-    if (gui_backend_get_vram(win) == x11->xshm.shmaddr) {
-        gui_backend_set_vram(win, NULL, 0);
-    }
 #endif
     vma_free(gui_backend_get_vram(win), gui_backend_get_vram_size(win));
-    gui_backend_set_vram(win, NULL, 0);
 }
 
 /*
@@ -1054,8 +1048,8 @@ static void x11_window_free(gui_window_t* win)
             }
             x11_vram_free(win);
             safe_free(x11);
+            x11_global_free();
         }
-        x11_global_free();
     }
     gui_backend_set_data(win, NULL);
 }
