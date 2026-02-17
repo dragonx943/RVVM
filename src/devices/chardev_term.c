@@ -98,6 +98,12 @@ static bool win32_console_busy(void)
 
 #define WIN32_TERM_IMPL 1
 
+#elif defined(HOST_TARGET_DOS) && CHECK_INCLUDE(conio.h, 1)
+
+#include <conio.h>
+
+#define DOS_TERM_IMPL 1
+
 #else
 
 // Fallback to stdio
@@ -158,6 +164,7 @@ static void* input_worker(void* arg)
 
 static size_t term_read_raw(chardev_term_t* term, char* buffer, size_t size)
 {
+    UNUSED(term && buffer && size);
 #if defined(HOST_TARGET_EMSCRIPTEN)
     DO_ONCE(thread_create(input_worker, (void*)(size_t)term->rfd));
     uint32_t ret = EVAL_MIN(atomic_load_uint32(&input_amount), size);
@@ -173,6 +180,7 @@ static size_t term_read_raw(chardev_term_t* term, char* buffer, size_t size)
         int ret = read(term->rfd, buffer, size);
         return EVAL_MAX(ret, 0);
     }
+    return 0;
 #elif defined(WIN32_TERM_IMPL)
     HANDLE console = GetStdHandle(STD_INPUT_HANDLE);
     if (size && console && console != INVALID_HANDLE_VALUE) {
@@ -211,12 +219,17 @@ static size_t term_read_raw(chardev_term_t* term, char* buffer, size_t size)
             return ret;
         }
     }
-#endif
-    // No way to implement non-blocking input using stdio
-    UNUSED(term);
-    UNUSED(buffer);
-    UNUSED(size);
     return 0;
+#elif defined(DOS_TERM_IMPL)
+    size_t ret = 0;
+    while (ret < size && kbhit()) {
+        buffer[ret++] = getch();
+    }
+    return ret;
+#else
+    // No way to implement non-blocking input using stdio
+    return 0;
+#endif
 }
 
 static size_t term_write_raw(chardev_term_t* term, const char* buffer, size_t size)
