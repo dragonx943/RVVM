@@ -104,9 +104,10 @@ void rvvm_append_isa_string(rvvm_machine_t* machine, const char* str)
 
 #if defined(USE_FDT)
 
-static const char* riscv_exts = "c_zic64b_zicbom_zicbop_zicboz_ziccamoa_ziccif_zicclsm_ziccrse_zicntr_zicsr_zifencei_"
-                                "zihintntl_zihintpause_zmmul_za64rs_zaamo_zalrsc_zacas_zabha_zawrs_zfa_zca_zcd_zba_zbb_"
-                                "zbc_zbs_ssccptr_sscounterenw_ssstrict_sstc_sstvala_sstvecd_ssu64xl_svadu_svvptc";
+static const char* riscv_exts
+    = "c_zic64b_zicbom_zicbop_zicboz_ziccamoa_ziccif_zicclsm_ziccrse_zicntr_zicond_zicsr_zifencei_zihintntl_"
+      "zihintpause_zimop_zmmul_za64rs_zaamo_zabha_zacas_zalrsc_zawrs_zfa_zca_zcb_zcd_zcmop_zba_zbb_zbc_zbs_zkr_"
+      "smcsrind_ssccptr_sscounterenw_sscsrind_sstc_sstvala_sstvecd_ssstrict_ssu64xl_svpbmt_svvptc_svadu_svbare";
 
 static char* rvvm_merge_strings_internal(const char* str1, const char* str2)
 {
