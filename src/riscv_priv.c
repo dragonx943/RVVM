@@ -85,10 +85,13 @@ slow_path void riscv_emulate_opc_system(rvvm_hart_t* vm, const uint32_t insn)
         case RISCV_INSN_WFI:
             // Executing wfi should trap in S-mode when mstatus.TSR is enabled, and in U-mode
             if (likely(riscv_mstatus_allowed(vm, CSR_STATUS_TW))) {
-#if defined(USE_THREAD_EMU)
-                riscv_hart_pause(vm);
-#else
                 // Resume execution for locally enabled interrupts pending at any privilege level
+#if defined(USE_THREAD_EMU)
+                riscv_hart_check_timer(vm);
+                if (!riscv_interrupts_pending(vm)) {
+                    riscv_hart_pause(vm);
+                }
+#else
                 if (!riscv_interrupts_pending(vm)) {
                     while (atomic_load_uint32_ex(&vm->running, ATOMIC_RELAXED)) {
                         // Stall the hart until an interrupt might need servicing
@@ -111,11 +114,7 @@ slow_path void riscv_emulate_opc_system(rvvm_hart_t* vm, const uint32_t insn)
             break;
         case RISCV_INSN_WRS_NT: // wrs.nto (Zawrs)
         case RISCV_INSN_WRS_ST: // wrs.sto (Zawrs)
-#if defined(USE_THREAD_EMU)
-            riscv_hart_pause(vm);
-#else
             thread_sched_yield();
-#endif
             return;
     }
 
@@ -213,11 +212,7 @@ slow_path void riscv_emulate_opc_misc_mem(rvvm_hart_t* vm, const uint32_t insn)
         case 0x00: // fence
             if (unlikely(insn == RISCV_INSN_PAUSE)) {
                 // Pause hint, yield the vCPU thread
-#if defined(USE_THREAD_EMU)
-                riscv_hart_pause(vm);
-#else
                 thread_sched_yield();
-#endif
             } else if (unlikely((insn & 0x05000000UL) && (insn & 0x00A00000UL))) {
                 // StoreLoad fence needed (SEQ_CST)
                 atomic_fence_ex(ATOMIC_SEQ_CST);
