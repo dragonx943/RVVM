@@ -290,10 +290,19 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #endif
 
 // Optimize function with specific optimization argument (GCC only)
+#undef func_gcc_optimize
 #if !defined(USE_NO_FUNC_OPT) && GCC_CHECK_VER(4, 4)
-#define func_opt_gcc(arg) __attribute__((__optimize__(arg)))
+#define func_gcc_optimize(arg) __attribute__((__optimize__(arg)))
 #else
-#define func_opt_gcc(arg) GNU_DUMMY_ATTRIBUTE
+#define func_gcc_optimize(arg) GNU_DUMMY_ATTRIBUTE
+#endif
+
+// Optimize inline function for size (Clang only)
+#undef func_clang_minsize
+#if !defined(USE_NO_FUNC_OPT) && GNU_ATTRIBUTE(__minsize__)
+#define func_clang_minsize __attribute__((__minsize__))
+#else
+#define func_clang_minsize GNU_DUMMY_ATTRIBUTE
 #endif
 
 // Optimize hot function for performance with -O3
@@ -306,16 +315,14 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define func_opt_hot GNU_DUMMY_ATTRIBUTE
 #endif
 
-// Optimize function for size (-Oz or -Os)
+// Optimize non-inline function for size (-Oz or -Os)
 #undef func_opt_size
 #if !defined(USE_NO_FUNC_OPT) && GCC_CHECK_VER(12, 1)
 #define func_opt_size __attribute__((__optimize__("Oz")))
 #elif !defined(USE_NO_FUNC_OPT) && GCC_CHECK_VER(4, 4)
 #define func_opt_size __attribute__((__optimize__("Os")))
-#elif !defined(USE_NO_FUNC_OPT) && GNU_ATTRIBUTE(__minsize__)
-#define func_opt_size __attribute__((__minsize__))
 #else
-#define func_opt_size GNU_DUMMY_ATTRIBUTE
+#define func_opt_size func_clang_minsize
 #endif
 
 // Hint cold function, minimize call site intrusion if possible
