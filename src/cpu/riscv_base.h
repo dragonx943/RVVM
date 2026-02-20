@@ -554,7 +554,7 @@ static forceinline void riscv_emulate_i_opc_op(rvvm_hart_t* vm, const uint32_t i
          */
         case 0x08004000UL: // pack (Zbkb)
 #if defined(RISCV64)
-            riscv_write_reg(vm, rds, ((uint32_t)reg1) | (reg2 << 32));
+            riscv_write_reg(vm, rds, ((uint32_t)reg1) | (((uint64_t)reg2) << 32));
 #else
             if (!rs2) { // zext.h (Zbb), RV32 encoding
                 rvjit_trace_andi(rds, rs1, 0xFFFF, 4);
