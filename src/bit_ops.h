@@ -141,7 +141,7 @@ static inline uint32_t bit_clz32(uint32_t val)
         val |= (val >> 4);
         val |= (val >> 8);
         val |= (val >> 16);
-        return lut[((val + 1) * 0x077CB531U) >> 27];
+        return lut[((uint32_t)((val + 1) * 0x077CB531UL)) >> 27];
 #endif
     }
     return 32;
@@ -180,7 +180,7 @@ static inline uint32_t bit_ctz32(uint32_t val)
             0,  1,  28, 2,  29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4,  8,
             31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18, 6,  11, 5,  10, 9,
         };
-        return lut[((val & -val) * 0x077CB531U) >> 27];
+        return lut[((uint32_t)((val & -val) * 0x077CB531UL)) >> 27];
 #endif
     }
     return 32;
@@ -268,9 +268,9 @@ static inline uint32_t bit_popcnt32(uint32_t val)
 #if GCC_CHECK_VER(3, 4) || GNU_BUILTIN(__builtin_popcount)
     return __builtin_popcount(val);
 #else
-    val -= (val >> 1) & 0x55555555;
-    val  = (val & 0x33333333) + ((val >> 2) & 0x33333333);
-    val  = (val + (val >> 4)) & 0x0F0F0F0F;
+    val -= (val >> 1) & 0x55555555UL;
+    val  = (val & 0x33333333UL) + ((val >> 2) & 0x33333333UL);
+    val  = (val + (val >> 4)) & 0x0F0F0F0FUL;
     val += val >> 8;
     return (val + (val >> 16)) & 0x3F;
 #endif
@@ -307,6 +307,48 @@ static inline uint64_t bit_orc_b(uint64_t val)
     val = (val << 8) - val;
 #endif
     return val;
+}
+
+// Reverse bits in each source byte
+static inline uint64_t bit_brev8(uint64_t val)
+{
+    val = ((val >> 1) & 0x5555555555555555ULL) | ((val & 0x5555555555555555ULL) << 1);
+    val = ((val >> 2) & 0x3333333333333333ULL) | ((val & 0x3333333333333333ULL) << 2);
+    val = ((val >> 4) & 0x0F0F0F0F0F0F0F0FULL) | ((val & 0x0F0F0F0F0F0F0F0FULL) << 4);
+    return val;
+}
+
+// Interlace 16 input bits into even output bits, e.g. 0x2F -> 0x0455
+static inline uint32_t bit_interlace16(uint32_t val)
+{
+    val = (uint16_t)val;
+    val = (val | (val << 8)) & 0x00FF00FFUL;
+    val = (val | (val << 4)) & 0x0F0F0F0FUL;
+    val = (val | (val << 2)) & 0x33333333UL;
+    val = (val | (val << 1)) & 0x55555555UL;
+    return val;
+}
+
+// Merge even input bits, e.g. 0x2F -> 0x0455
+static inline uint32_t bit_deinterlace16(uint32_t val)
+{
+    val = val & 0x55555555UL;
+    val = (val | (val >> 1)) & 0x33333333UL;
+    val = (val | (val >> 2)) & 0x0F0F0F0FUL;
+    val = (val | (val >> 4)) & 0x00FF00FFUL;
+    return (uint16_t)(val | (val >> 8));
+}
+
+// Interleave bits of upper/higher value halves
+static inline uint32_t bit_zip32(uint32_t val)
+{
+    return bit_interlace16(val) | (bit_interlace16(val >> 16) << 1);
+}
+
+// Deinterleave bits into upper/higher value halves
+static inline uint32_t bit_unzip32(uint32_t val)
+{
+    return bit_deinterlace16(val) | (bit_deinterlace16(val >> 1) << 16);
 }
 
 /*
@@ -410,10 +452,8 @@ static inline uint32_t byteswap_uint32(uint32_t val)
 #elif defined(_MSC_VER)
     return _byteswap_ulong(val);
 #else
-    return ((val & 0xFF000000) >> 24) //
-         | ((val & 0x00FF0000) >> 8)  //
-         | ((val & 0x0000FF00) << 8)  //
-         | ((val & 0x000000FF) << 24);
+    val = ((val >> 8) & 0x00FF00FFUL) | ((val & 0x00FF00FFUL) << 8);
+    return (val >> 16) | (val << 16);
 #endif
 }
 
@@ -425,10 +465,9 @@ static inline uint64_t byteswap_uint64(uint64_t val)
 #elif defined(_MSC_VER)
     return _byteswap_uint64(val);
 #else
-    val = ((val >> 8) & 0x00FF00FF00FF00FF) | ((val & 0x00FF00FF00FF00FF) << 8);
-    val = ((val >> 16) & 0x0000FFFF0000FFFF) | ((val & 0x0000FFFF0000FFFF) << 16);
-    val = ((val >> 32) & 0x00000000FFFFFFFF) | ((val & 0x00000000FFFFFFFF) << 32);
-    return val;
+    val = ((val >> 8) & 0x00FF00FF00FF00FFULL) | ((val & 0x00FF00FF00FF00FFULL) << 8);
+    val = ((val >> 16) & 0x0000FFFF0000FFFFULL) | ((val & 0x0000FFFF0000FFFFULL) << 16);
+    return (val >> 32) | (val << 32);
 #endif
 }
 
@@ -440,12 +479,12 @@ static inline uint64_t mulh_uint64(int64_t a, int64_t b)
 #elif defined(HOST_64BIT) && defined(_MSC_VER)
     return __mulh(a, b);
 #else
-    uint64_t lo_lo = (a & 0xFFFFFFFF) * (b & 0xFFFFFFFF);
-    uint64_t hi_lo = (a >> 32) * (b & 0xFFFFFFFF);
-    uint64_t lo_hi = (a & 0xFFFFFFFF) * (b >> 32);
+    uint64_t lo_lo = ((uint64_t)(uint32_t)a) * ((uint64_t)(uint32_t)b);
+    uint64_t hi_lo = (a >> 32) * ((uint64_t)(uint32_t)b);
+    uint64_t lo_hi = ((uint64_t)(uint32_t)a) * (b >> 32);
     uint64_t hi_hi = (a >> 32) * (b >> 32);
-    uint64_t cross = (uint64_t)((int64_t)lo_lo >> 32) + (hi_lo & 0xFFFFFFFF) + lo_hi;
-    return (uint64_t)((int64_t)hi_lo >> 32) + (cross >> 32) + hi_hi;
+    uint64_t cross = ((uint64_t)((int64_t)lo_lo >> 32)) + ((uint32_t)hi_lo) + lo_hi;
+    return ((uint64_t)(((int64_t)hi_lo) >> 32)) + (cross >> 32) + hi_hi;
 #endif
 }
 
@@ -457,11 +496,11 @@ static inline uint64_t mulhu_uint64(uint64_t a, uint64_t b)
 #elif defined(HOST_64BIT) && defined(_MSC_VER)
     return __umulh(a, b);
 #else
-    uint64_t lo_lo = (a & 0xFFFFFFFF) * (b & 0xFFFFFFFF);
-    uint64_t hi_lo = (a >> 32) * (b & 0xFFFFFFFF);
-    uint64_t lo_hi = (a & 0xFFFFFFFF) * (b >> 32);
+    uint64_t lo_lo = ((uint64_t)(uint32_t)a) * ((uint64_t)(uint32_t)b);
+    uint64_t hi_lo = (a >> 32) * ((uint64_t)(uint32_t)b);
+    uint64_t lo_hi = ((uint64_t)(uint32_t)a) * (b >> 32);
     uint64_t hi_hi = (a >> 32) * (b >> 32);
-    uint64_t cross = (lo_lo >> 32) + (hi_lo & 0xFFFFFFFF) + lo_hi;
+    uint64_t cross = (lo_lo >> 32) + ((uint32_t)hi_lo) + lo_hi;
     return (hi_lo >> 32) + (cross >> 32) + hi_hi;
 #endif
 }
@@ -472,12 +511,12 @@ static inline uint64_t mulhsu_uint64(int64_t a, uint64_t b)
 #if defined(INT128_SUPPORT) || (defined(HOST_64BIT) && defined(_MSC_VER))
     return mulhu_uint64(a, b) - (a >= 0 ? 0 : b);
 #else
-    uint64_t lo_lo = (a & 0xFFFFFFFF) * (b & 0xFFFFFFFF);
-    uint64_t hi_lo = (a >> 32) * (b & 0xFFFFFFFF);
-    uint64_t lo_hi = (a & 0xFFFFFFFF) * (b >> 32);
+    uint64_t lo_lo = ((uint64_t)(uint32_t)a) * ((uint64_t)(uint32_t)b);
+    uint64_t hi_lo = (a >> 32) * ((uint64_t)(uint32_t)b);
+    uint64_t lo_hi = ((uint64_t)(uint32_t)a) * (b >> 32);
     uint64_t hi_hi = (a >> 32) * (b >> 32);
-    uint64_t cross = (uint64_t)((int64_t)lo_lo >> 32) + (hi_lo & 0xFFFFFFFF) + lo_hi;
-    return (uint64_t)((int64_t)hi_lo >> 32) + (cross >> 32) + hi_hi;
+    uint64_t cross = ((uint64_t)(((int64_t)lo_lo) >> 32)) + ((uint32_t)hi_lo) + lo_hi;
+    return ((uint64_t)(((int64_t)hi_lo) >> 32)) + (cross >> 32) + hi_hi;
 #endif
 }
 
