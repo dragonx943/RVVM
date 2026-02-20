@@ -26,7 +26,15 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include <windows.h>
 
 // Obtain a thread local waitable timer with a specified timeout
+#if defined(USE_THREAD_EMU)
+static inline HANDLE thread_local_waitable_timer(uint64_t ns)
+{
+    UNUSED(ns);
+    return NULL;
+}
+#else
 HANDLE thread_local_waitable_timer(uint64_t ns);
+#endif
 
 // Obtain imprecise monotonic time without time in suspend (NT 6.1+)
 static BOOL (*__stdcall query_uit)(PULONGLONG) = NULL;
