@@ -100,6 +100,27 @@ static forceinline int32_t decode_i_jal_off(const uint32_t insn)
          | ((insn >> 20) & 0x000007FEUL);
 }
 
+static inline func_clang_minsize uint64_t riscv_bit_xperm4(uint64_t val, uint64_t lut)
+{
+    uint64_t ret = 0;
+    for (size_t i = 0; i < 64; i += 4) {
+        ret |= bit_ext_u64(val, ((lut >> i) & 0x0F) << 2, 4) << i;
+    }
+    return ret;
+}
+
+static inline func_clang_minsize uint64_t riscv_bit_xperm8(uint64_t val, uint64_t lut)
+{
+    uint64_t ret = 0;
+    for (size_t i = 0; i < 64; i += 4) {
+        uint32_t idx = (lut >> i);
+        if (!(idx & 0xF8)) {
+            ret |= bit_ext_u64(val, (idx & 0x07) << 3, 8) << i;
+        }
+    }
+    return ret;
+}
+
 static forceinline void riscv_emulate_i_opc_load(rvvm_hart_t* vm, const uint32_t insn)
 {
     const size_t  rds  = bit_ext_u32(insn, 7, 5);
@@ -623,6 +644,15 @@ static forceinline void riscv_emulate_i_opc_op(rvvm_hart_t* vm, const uint32_t i
         case 0x20006000UL: // sh3add (Zba)
             rvjit_trace_shadd(rds, rs1, rs2, 3, 4);
             riscv_write_reg(vm, rds, reg2 + (reg1 << 3));
+            return;
+        /*
+         * Zbkx: Crossbar permutations
+         */
+        case 0x28002000UL: // xperm4 (Zbkx)
+            riscv_write_reg(vm, rds, riscv_bit_xperm4(reg1, reg2));
+            return;
+        case 0x28004000UL: // xperm8 (Zbkx)
+            riscv_write_reg(vm, rds, riscv_bit_xperm8(reg1, reg2));
             return;
         /*
          * Zbs: Bitset manipulation
