@@ -364,7 +364,7 @@ static inline uint32_t bit_unzip32(uint32_t val)
  */
 
 // Carry-less multiply
-static inline uint32_t bit_clmul32(uint32_t a, uint32_t b)
+static inline func_clang_minsize uint32_t bit_clmul32(uint32_t a, uint32_t b)
 {
     uint32_t ret = 0;
     do {
@@ -376,7 +376,7 @@ static inline uint32_t bit_clmul32(uint32_t a, uint32_t b)
     return ret;
 }
 
-static inline uint64_t bit_clmul64(uint64_t a, uint64_t b)
+static inline func_clang_minsize uint64_t bit_clmul64(uint64_t a, uint64_t b)
 {
     uint64_t ret = 0;
     do {
@@ -388,7 +388,7 @@ static inline uint64_t bit_clmul64(uint64_t a, uint64_t b)
     return ret;
 }
 
-static inline uint32_t bit_clmulh32(uint32_t a, uint32_t b)
+static inline func_clang_minsize uint32_t bit_clmulh32(uint32_t a, uint32_t b)
 {
     uint32_t ret = 0;
     uint32_t i   = 31;
@@ -402,7 +402,7 @@ static inline uint32_t bit_clmulh32(uint32_t a, uint32_t b)
     return ret;
 }
 
-static inline uint64_t bit_clmulh64(uint64_t a, uint64_t b)
+static inline func_clang_minsize uint64_t bit_clmulh64(uint64_t a, uint64_t b)
 {
     uint64_t ret = 0;
     uint32_t i   = 63;
@@ -416,7 +416,7 @@ static inline uint64_t bit_clmulh64(uint64_t a, uint64_t b)
     return ret;
 }
 
-static inline uint32_t bit_clmulr32(uint32_t a, uint32_t b)
+static inline func_clang_minsize uint32_t bit_clmulr32(uint32_t a, uint32_t b)
 {
     uint32_t ret = 0;
     uint32_t i   = 31;
@@ -430,7 +430,7 @@ static inline uint32_t bit_clmulr32(uint32_t a, uint32_t b)
     return ret;
 }
 
-static inline uint64_t bit_clmulr64(uint64_t a, uint64_t b)
+static inline func_clang_minsize uint64_t bit_clmulr64(uint64_t a, uint64_t b)
 {
     uint64_t ret = 0;
     uint32_t i   = 63;
