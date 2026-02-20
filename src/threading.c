@@ -843,7 +843,9 @@ static uint32_t thread_futex_native_wait(void* ptr, uint32_t val, uint64_t ns)
 #elif defined(DRAGONFLY_FUTEX_IMPL)
     FUTEX_RET(umtx_sleep(ptr, val, us), EBUSY)
 #elif defined(APPLE_FUTEX_IMPL)
-    FUTEX_RET(ulock_wait(ULOCK_CMP_WAIT, ptr, val, us), EAGAIN)
+    if (ulock_wait) {
+        FUTEX_RET(ulock_wait(ULOCK_CMP_WAIT, ptr, val, us), EAGAIN)
+    }
 #elif defined(WASM_FUTEX_IMPL)
     switch (__builtin_wasm_memory_atomic_wait32(ptr, val, ns)) {
         case 0:
@@ -867,7 +869,7 @@ static bool thread_futex_native_wake(void* ptr, uint32_t num)
 #elif defined(DRAGONFLY_FUTEX_IMPL)
     return umtx_wakeup(ptr, num) >= 0;
 #elif defined(APPLE_FUTEX_IMPL)
-    return ulock_wake((num > 1) ? ULOCK_WAKE_ALL : ULOCK_WAKE_ONE, ptr, 0) >= 0;
+    return ulock_wake && ulock_wake((num > 1) ? ULOCK_WAKE_ALL : ULOCK_WAKE_ONE, ptr, 0) >= 0;
 #elif defined(WASM_FUTEX_IMPL)
     return __builtin_wasm_memory_atomic_notify(ptr, num) >= 0;
 #else
