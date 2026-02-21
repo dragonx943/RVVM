@@ -661,6 +661,10 @@ static forceinline void riscv_emulate_i_opc_op(rvvm_hart_t* vm, const uint32_t i
             rvjit_trace_bset(rds, rs1, rs2, 4);
             riscv_write_reg(vm, rds, reg1 | (((xlen_t)1U) << (reg2 & bit_mask(SHAMT_BITS))));
             return;
+        case 0x48001000UL: // bclr (Zbs)
+            rvjit_trace_bclr(rds, rs1, rs2, 4);
+            riscv_write_reg(vm, rds, reg1 & ~(((xlen_t)1U) << (reg2 & bit_mask(SHAMT_BITS))));
+            return;
         case 0x48005000UL: // bext (Zbs)
             rvjit_trace_bext(rds, rs1, rs2, 4);
             riscv_write_reg(vm, rds, (reg1 >> (reg2 & bit_mask(SHAMT_BITS))) & 1);
