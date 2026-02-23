@@ -315,7 +315,7 @@ override println = $(if $(call shell_ex,printf $(call str_wrap,$1$(NEWLINE)) 1>&
 endif
 
 # Colorful logging attributes
-override VT_ESC  := $(if $(if $(call make_min_ver,4.1),$(call var_def,MAKE_TERMOUT),stdout),)
+override VT_ESC  := $(if $(if $(call make_min_ver,4.1),$(call var_def,MAKE_TERMOUT),stdout)$(filter true,$(call var_def,CI)),)
 override VT_BELL := $(if $(VT_ESC),)
 override RESET   := $(if $(VT_ESC),$(VT_ESC)[0m)
 override BOLD    := $(if $(VT_ESC),$(VT_ESC)[1m)
