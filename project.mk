@@ -4,14 +4,13 @@ override URL     := https://github.com/LekKit/RVVM
 override VERSION := v0.7-git
 
 override define LOGO
-$(BLUE)\
- 🭥█████🭐 ██  ██ ██  ██🭢█🭌🬿  🭊🭁█🭚
-  ██  🭨█🭬██  ██ ██  ██ ███🭏🭄███$(YELLOW)
-  █████🭪 $(BLUE)██  ██ ██  ██$(YELLOW) ██🭥🭒🭝🭚██
-  ██  🭖█🭀🭕█🭏🭄█🭠 🭕█🭏🭄█🭠 ██ 🭢🭗 ██
-  ██  🭦█🭛 🭥🭒🭝🭚   🭥🭒🭝🭚  █🭠    ██
-  █🭠   🭠🭗  🭢🭗     🭢🭗   🭠🭗    🭕█
-  🭠🭗                         🭢🭕
+$(BLUE) 🭥█████🭐 ██  ██ ██  ██🭢█🭌🬿  🭊🭁█🭚
+$(BLUE)  ██  🭨█🭬██  ██ ██  ██ ███🭏🭄███
+$(YELLOW)  █████🭪 $(BLUE)██  ██ ██  ██$(YELLOW) ██🭥🭒🭝🭚██
+$(YELLOW)  ██  🭖█🭀🭕█🭏🭄█🭠 🭕█🭏🭄█🭠 ██ 🭢🭗 ██
+$(YELLOW)  ██  🭦█🭛 🭥🭒🭝🭚   🭥🭒🭝🭚  █🭠    ██
+$(YELLOW)  █🭠   🭠🭗  🭢🭗     🭢🭗   🭠🭗    🭕█
+$(YELLOW)  🭠🭗                         🭢🭕
 endef
 
 #
