@@ -353,7 +353,9 @@ static hid_key_t x11_keysym_to_hid(KeySym keysym)
         case XK_Shift_R:      return HID_KEY_RIGHTSHIFT;
         case XK_Alt_R:        return HID_KEY_RIGHTALT;
         case XK_Super_R:      return HID_KEY_RIGHTMETA;
-        case 0x1008ff2b:      return HID_KEY_NONE; // Fn key, ignore for now
+
+        // Reported by Fn key on T480s, maps to XF86WakeUp
+        case 0x1008ff2b:      return HID_KEY_NONE;
     }
     // clang-format on
     rvvm_warn("Unmapped X11 keycode %#x", (uint32_t)keysym);
