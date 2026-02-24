@@ -34,6 +34,12 @@ PUSH_OPTIMIZATION_SIZE
 #include <sys/param.h> // For __NetBSD_Version__
 #endif
 
+#ifndef O_RDONLY
+#define O_RDONLY O_RDWR
+#endif
+#ifndef O_WRONLY
+#define O_WRONLY O_RDWR
+#endif
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
 #endif
@@ -206,7 +212,7 @@ rvfile_t* rvopen(const char* filepath, uint32_t filemode)
 #endif
 
 #if defined(POSIX_FILE_IMPL)
-    int open_flags = O_CLOEXEC | O_NOATIME | O_NONBLOCK;
+    int open_flags = O_CLOEXEC | O_NONBLOCK;
     if (filemode & RVFILE_WRITE) {
         if (filemode & RVFILE_READ) {
             open_flags |= O_RDWR;
