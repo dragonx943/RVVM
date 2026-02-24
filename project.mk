@@ -6,11 +6,11 @@ override VERSION := v0.7-git
 override define LOGO
 $(BLUE) 🭥█████🭐 ██  ██ ██  ██🭢█🭌🬿  🭊🭁█🭚
 $(BLUE)  ██  🭨█🭬██  ██ ██  ██ ███🭏🭄███
-$(YELLOW)  █████🭪 $(BLUE)██  ██ ██  ██$(YELLOW) ██🭥🭒🭝🭚██
-$(YELLOW)  ██  🭖█🭀🭕█🭏🭄█🭠 🭕█🭏🭄█🭠 ██ 🭢🭗 ██
-$(YELLOW)  ██  🭦█🭛 🭥🭒🭝🭚   🭥🭒🭝🭚  █🭠    ██
-$(YELLOW)  █🭠   🭠🭗  🭢🭗     🭢🭗   🭠🭗    🭕█
-$(YELLOW)  🭠🭗                         🭢🭕
+$(ORANGE)  █████🭪 $(BLUE)██  ██ ██  ██$(ORANGE) ██🭥🭒🭝🭚██
+$(ORANGE)  ██  🭖█🭀🭕█🭏🭄█🭠 🭕█🭏🭄█🭠 ██ 🭢🭗 ██
+$(ORANGE)  ██  🭦█🭛 🭥🭒🭝🭚   🭥🭒🭝🭚  █🭠    ██
+$(ORANGE)  █🭠   🭠🭗  🭢🭗     🭢🭗   🭠🭗    🭕█
+$(ORANGE)  🭠🭗                         🭢🭕
 endef
 
 #

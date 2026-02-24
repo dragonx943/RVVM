@@ -322,8 +322,9 @@ override BOLD    := $(if $(VT_ESC),$(VT_ESC)[1m)
 override RED     := $(if $(VT_ESC),$(VT_ESC)[31m)
 override GREEN   := $(if $(VT_ESC),$(VT_ESC)[32m)
 override YELLOW  := $(if $(VT_ESC),$(VT_ESC)[33m)
-override BLUE    := $(if $(VT_ESC),$(VT_ESC)[34m)
 override WHITE   := $(if $(VT_ESC),$(VT_ESC)[37m)
+override BLUE    := $(if $(VT_ESC),$(VT_ESC)[34m$(VT_ESC)[38;5;38m)
+override ORANGE  := $(if $(VT_ESC),$(VT_ESC)[33m$(VT_ESC)[38;5;202m)
 override TEXT    := $(if $(VT_ESC),$(VT_ESC)[0;1m)
 
 # Logger prefixes
