@@ -367,6 +367,9 @@ static hid_key_t wayland_keysym_to_hid(int32_t keysym)
         case XKB_KEY_Shift_R:              return HID_KEY_RIGHTSHIFT;
         case XKB_KEY_Alt_R:                return HID_KEY_RIGHTALT;
         case XKB_KEY_Super_R:              return HID_KEY_RIGHTMETA;
+
+        // Reported by Fn key on T480s, maps to XF86WakeUp
+        case 0x1008ff2b:                   return HID_KEY_NONE;
     }
     // clang-format on
     if (keysym) {
