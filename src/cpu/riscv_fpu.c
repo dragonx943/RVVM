@@ -349,7 +349,7 @@ slow_path func_opt_size void riscv_emulate_f_opc_op(rvvm_hart_t* vm, const uint3
                                 // Minimum normal exponent differs for fp64
                                 riscv_emit_d(vm, rds, fpu_bit_u64_to_f64(0x0010000000000000ULL));
                             } else {
-                                riscv_emit_d(vm, rds, fpu_fcvt_f32_to_f64(fpu_bit_u32_to_f32(riscv_read_reg(vm, rs1))));
+                                riscv_emit_d(vm, rds, fpu_fcvt_f32_to_f64(fpu_bit_u32_to_f32(riscv_fli_table[rs1])));
                             }
                             return;
                     }
