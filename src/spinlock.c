@@ -7,6 +7,8 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
+#if !defined(USE_THREAD_EMU)
+
 #include "spinlock.h"
 #include "rvtimer.h"
 #include "stacktrace.h"
@@ -210,3 +212,5 @@ slow_path void spin_read_lock_wake(spinlock_t* lock, uint32_t prev)
 }
 
 POP_OPTIMIZATION_SIZE
+
+#endif
