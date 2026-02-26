@@ -15,78 +15,117 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /*
  * Threads
+ *
+ * Note: Detaching a thread is unsafe in unloadable libraries.
+ * Note: Use rvvm_interrupt_syscall() to interrupt a syscall
+ *       currently blocking the thread, if possible.
  */
 
-typedef struct thread_ctx thread_ctx_t;
+typedef struct rvvm_thread_intrnl rvvm_thread_t;
 
-typedef void* (*thread_func_t)(void*);
+typedef void* (*rvvm_thread_func_t)(void*);
 
-thread_ctx_t* thread_create_ex(thread_func_t func, void* arg, uint32_t stack_size);
-thread_ctx_t* thread_create(thread_func_t func, void* arg);
-bool          thread_join(thread_ctx_t* thread);
+rvvm_thread_t* rvvm_thread_create_ex(rvvm_thread_func_t func, void* arg, uint32_t stack_size);
+rvvm_thread_t* rvvm_thread_create(rvvm_thread_func_t func, void* arg);
+void           rvvm_thread_join(rvvm_thread_t* thread);
+void           rvvm_thread_detach(rvvm_thread_t* thread);
+void           rvvm_interrupt_syscall(rvvm_thread_t* thread);
 
 /*
- * Thread yielding, CPU relax hints
+ * Yielding, CPU relax hints
  */
 
-void thread_sched_yield(void);
-void thread_cpu_relax(void);
+void rvvm_sched_yield(void);
+void rvvm_cpu_relax(void);
 
 /*
  * Futexes
  */
 
-#define THREAD_FUTEX_INFINITE ((uint64_t)-1)
+#define RVVM_FUTEX_INFINITE ((uint64_t)-1)
 
-#define THREAD_FUTEX_TIMEOUT  0
-#define THREAD_FUTEX_WAKEUP   1
-#define THREAD_FUTEX_MISMATCH 2
+#define RVVM_FUTEX_TIMEOUT  0x00
+#define RVVM_FUTEX_WAKEUP   0x01
+#define RVVM_FUTEX_MISMATCH 0x02
 
-uint32_t thread_futex_wait(void* ptr, uint32_t val, uint64_t timeout_ns);
-void     thread_futex_wake(void* ptr, uint32_t num);
+uint32_t rvvm_futex_wait(void* ptr, uint32_t val, uint64_t timeout_ns);
+void     rvvm_futex_wake(void* ptr, uint32_t num);
 
 /*
  * Events
  *
- * The thread_event_t structure initializes to zero.
+ * Note: The sync_event_t structure initializes to zero.
  */
 
-#define THREAD_EVENT_INFINITE ((uint64_t)-1)
+#define RVVM_EVENT_INFINITE RVVM_FUTEX_INFINITE
+
+#define RVVM_EVENT_INIT     {0}
 
 typedef struct {
     uint32_t flag;
     uint32_t waiters;
-} thread_event_t;
+} rvvm_event_t;
 
-void     thread_event_init(thread_event_t* event);
-bool     thread_event_wait(thread_event_t* event, uint64_t timeout_ns);
-bool     thread_event_wake(thread_event_t* event);
-uint32_t thread_event_waiters(thread_event_t* event);
+void     rvvm_event_init(rvvm_event_t* event);
+bool     rvvm_event_wait(rvvm_event_t* event, uint64_t timeout_ns);
+bool     rvvm_event_wake(rvvm_event_t* event);
+uint32_t rvvm_event_waiters(rvvm_event_t* event);
 
 /*
- * Condvar (TODO: Legacy interface, switch to events)
+ * Threaded tasks (Similar to threaded interrupts)
  */
 
-#define CONDVAR_INFINITE ((uint64_t)-1)
+typedef void (*rvvm_task_cb_intrnl_t)(void*);
 
-typedef thread_event_t cond_var_t;
+typedef struct rvvm_task_intrnl rvvm_task_t;
 
-cond_var_t* condvar_create(void);
-bool        condvar_wait_ns(cond_var_t* cond, uint64_t timeout_ns);
-bool        condvar_wait(cond_var_t* cond, uint64_t timeout_ms);
-bool        condvar_wake(cond_var_t* cond);
-uint32_t    condvar_waiters(cond_var_t* cond);
-void        condvar_free(cond_var_t* cond);
+rvvm_task_t* rvvm_task_init(rvvm_task_cb_intrnl_t cb, void* data);
+void         rvvm_task_wake(rvvm_task_t* task);
+void         rvvm_task_free(rvvm_task_t* task);
 
 /*
- * Task offloading threadpool
+ * Legacy interfaces
+ * TODO: Cleanup
+ */
+
+#define thread_ctx_t          rvvm_thread_t
+#define thread_create         rvvm_thread_create
+#define thread_join           rvvm_thread_join
+#define thread_detach         rvvm_thread_detach
+
+#define thread_sched_yield    rvvm_sched_yield
+#define thread_cpu_relax      rvvm_cpu_relax
+
+#define THREAD_FUTEX_INFINITE RVVM_FUTEX_INFINITE
+#define THREAD_FUTEX_TIMEOUT  RVVM_FUTEX_TIMEOUT
+#define THREAD_FUTEX_WAKEUP   RVVM_FUTEX_WAKEUP
+#define THREAD_FUTEX_MISMATCH RVVM_FUTEX_MISMATCH
+
+#define thread_futex_wait     rvvm_futex_wait
+#define thread_futex_wake     rvvm_futex_wake
+
+#define CONDVAR_INFINITE      RVVM_EVENT_INFINITE
+
+#define cond_var_t            rvvm_event_t
+#define condvar_create()      safe_new_obj(cond_var_t)
+#define condvar_wait_ns       rvvm_event_wait
+#define condvar_wait(cond, timeout_ms)                                                                                 \
+    condvar_wait_ns(cond, (timeout_ms == (uint64_t)-1) ? (uint64_t)-1 : timeout_ms * 1000000ULL)
+#define condvar_wake       rvvm_event_wake
+#define condvar_waiters    rvvm_event_waiters
+#define condvar_free       safe_free
+
+/*
+ * Threadpool
+ *
+ * TODO: Replace with threaded tasks
  */
 
 #define THREAD_MAX_VA_ARGS 8
 
-typedef void* (*thread_func_va_t)(void**);
+typedef void* (*rvvm_thread_func_va_t)(void**);
 
-void thread_create_task(thread_func_t func, void* arg);
-void thread_create_task_va(thread_func_va_t func, void** args, unsigned arg_count);
+void thread_create_task(rvvm_thread_func_t func, void* arg);
+void thread_create_task_va(rvvm_thread_func_va_t func, void** args, unsigned arg_count);
 
 #endif

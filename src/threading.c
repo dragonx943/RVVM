@@ -17,11 +17,10 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "dlib.h"     // IWYU pragma: keep
 #include "rvtimer.h"  // IWYU pragma: keep
 #include "spinlock.h" // IWYU pragma: keep
-#include "vector.h"   // IWYU pragma: keep
 
 PUSH_OPTIMIZATION_SIZE
 
-#if defined(_MSC_VER)
+#if defined(COMPILER_IS_MSVC)
 #include <intrin.h> // For _mm_pause()
 #endif
 
@@ -38,6 +37,7 @@ PUSH_OPTIMIZATION_SIZE
 #elif defined(HOST_TARGET_POSIX) && HOST_TARGET_POSIX >= 199506L
 // Use pthreads
 #include <pthread.h>
+#include <signal.h>
 #include <time.h>
 #define POSIX_THREADS_IMPL 1
 #elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112LL && !defined(__STDC_NO_THREADS__) /**/                  \
@@ -49,7 +49,7 @@ PUSH_OPTIMIZATION_SIZE
 #elif CHECK_INCLUDE(SDL.h, 1)
 // Use SDL threads
 #include <SDL.h>
-#define SDL_THREADS_IMPL 1
+#define SDL_THREADS_IMPL SDL_MAJOR_VERSION
 #else
 #error No threading implementation found, please rebuild with USE_THREAD_EMU=1
 #endif
@@ -155,7 +155,7 @@ static int (*ulock_wake)(uint32_t op, void* ptr, uint64_t unused)           = NU
  * Threads
  */
 
-struct thread_ctx {
+struct rvvm_thread_intrnl {
 #if defined(WIN32_THREADS_IMPL)
     HANDLE handle;
 #elif defined(POSIX_THREADS_IMPL)
@@ -177,11 +177,11 @@ struct thread_ctx {
 
 #if defined(THREAD_RET)
 typedef struct {
-    thread_func_t func;
-    void*         arg;
+    rvvm_thread_func_t func;
+    void*              arg;
 } func_wrap_t;
 
-static void* func_wrap(thread_func_t func, void* arg)
+static void* func_wrap(rvvm_thread_func_t func, void* arg)
 {
     func_wrap_t* wrap = safe_new_obj(func_wrap_t);
     // Wrap our thread function call to bridge ABIs
@@ -198,13 +198,13 @@ static THREAD_RET THREAD_ABI func_unwrap(void* arg)
 }
 #endif
 
-thread_ctx_t* thread_create_ex(thread_func_t func, void* arg, uint32_t stack_size)
+rvvm_thread_t* rvvm_thread_create_ex(rvvm_thread_func_t func, void* arg, uint32_t stack_size)
 {
 #if defined(USE_THREAD_EMU)
     UNUSED(func && arg && stack_size);
 #else
-    thread_ctx_t* thread = safe_new_obj(thread_ctx_t);
-    bool          result = false;
+    rvvm_thread_t* thread = safe_new_obj(rvvm_thread_t);
+    bool           result = false;
 #if defined(SANITIZERS_ENABLED)
     // Sanitizers consume a lot of extra stack space, use default stack size
     stack_size = 0;
@@ -228,6 +228,9 @@ thread_ctx_t* thread_create_ex(thread_func_t func, void* arg, uint32_t stack_siz
     }
 #elif defined(C11_THREADS_IMPL)
     result = thrd_create(&thread->thrd, func_unwrap, func_wrap(func, arg)) == thrd_success;
+#elif defined(SDL_THREADS_IMPL) && SDL_THREADS_IMPL >= 2
+    thread->thread = SDL_CreateThread(func_unwrap, "", func_wrap(func, arg));
+    result         = !!thread->thread;
 #elif defined(SDL_THREADS_IMPL)
     thread->thread = SDL_CreateThread(func_unwrap, func_wrap(func, arg));
     result         = !!thread->thread;
@@ -242,18 +245,18 @@ thread_ctx_t* thread_create_ex(thread_func_t func, void* arg, uint32_t stack_siz
     return NULL;
 }
 
-thread_ctx_t* thread_create(thread_func_t func, void* arg)
+rvvm_thread_t* rvvm_thread_create(rvvm_thread_func_t func, void* arg)
 {
-    return thread_create_ex(func, arg, 0x10000);
+    return rvvm_thread_create_ex(func, arg, 0x10000);
 }
 
-bool thread_join(thread_ctx_t* thread)
+void rvvm_thread_join(rvvm_thread_t* thread)
 {
-    bool result = false;
 #if defined(USE_THREAD_EMU)
     UNUSED(thread);
 #else
     if (thread) {
+        bool result = true;
 #if defined(WIN32_THREADS_IMPL)
         result = !WaitForSingleObject(thread->handle, INFINITE) && CloseHandle(thread->handle);
 #elif defined(POSIX_THREADS_IMPL)
@@ -265,7 +268,6 @@ bool thread_join(thread_ctx_t* thread)
 #elif defined(SDL_THREADS_IMPL)
         int tmp = 0;
         SDL_WaitThread(thread->thread, &tmp);
-        result = true;
 #endif
         safe_free(thread);
         if (!result) {
@@ -273,14 +275,65 @@ bool thread_join(thread_ctx_t* thread)
         }
     }
 #endif
-    return result;
+}
+
+void rvvm_thread_detach(rvvm_thread_t* thread)
+{
+    if (thread) {
+#if defined(WIN32_THREADS_IMPL)
+        CloseHandle(thread->handle);
+#elif defined(POSIX_THREADS_IMPL)
+        pthread_detach(thread->pthread);
+#elif defined(C11_THREADS_IMPL)
+        thrd_detach(thread->thrd);
+#elif defined(SDL_THREADS_IMPL) && SDL_THREADS_IMPL == 2
+        SDL_DetachThread(thread->thread);
+#endif
+        safe_free(thread);
+    }
+}
+
+#if defined(WIN32_THREADS_IMPL) && defined(HOST_TARGET_WINNT)
+// Probe CancelSynchronousIo() (NT 6.0+)
+static BOOL (*__stdcall cancel_sync_io)(HANDLE) = NULL;
+#elif defined(POSIX_THREADS_IMPL) && defined(SIGCONT) && defined(SA_RESTART) && defined(SIG_DFL)
+// Install signal handler for SIGCONT without SA_RESTART
+static struct sigaction sa_old = ZERO_INIT;
+
+static void sigcont_handler(int sig)
+{
+    struct sigaction tmp = ZERO_INIT;
+    sigaction(SIGCONT, &sa_old, &tmp);
+    UNUSED(sig);
+}
+#endif
+
+void rvvm_interrupt_syscall(rvvm_thread_t* thread)
+{
+#if defined(WIN32_THREADS_IMPL) && defined(HOST_TARGET_WINNT)
+    if (!cancel_sync_io) {
+        DO_ONCE_SCOPED {
+            cancel_sync_io = dlib_get_symbol("kernel32.dll", "CancelSynchronousIo");
+        }
+    }
+    if (cancel_sync_io) {
+        cancel_sync_io(thread->handle);
+    }
+#elif defined(POSIX_THREADS_IMPL) && defined(SIGCONT) && defined(SA_RESTART) && defined(SIG_DFL)
+    struct sigaction sa_new = {
+        .sa_handler = sigcont_handler,
+    };
+    sigaction(SIGCONT, &sa_new, &sa_old);
+    pthread_kill(thread->pthread, SIGCONT);
+#endif
+    UNUSED(thread);
 }
 
 /*
- * Thread yielding, CPU relax hints
+ * Yielding, CPU relax hints
  */
 
-void thread_sched_yield(void)
+void rvvm_sched_yield(void)
 {
 #if defined(WIN32_THREADS_IMPL)
     Sleep(0);
@@ -291,7 +344,7 @@ void thread_sched_yield(void)
 #endif
 }
 
-void thread_cpu_relax(void)
+void rvvm_cpu_relax(void)
 {
 #if defined(GNU_EXTS) && (defined(__i386__) || defined(__x86_64__))
     __asm__ __volatile__("pause" : : : "memory");
@@ -299,7 +352,7 @@ void thread_cpu_relax(void)
     __asm__ __volatile__("isb sy" : : : "memory");
 #elif defined(GNU_EXTS) && defined(__riscv)
     __asm__ __volatile__(".4byte 0x100000F" : : : "memory");
-#elif defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64))
+#elif defined(COMPILER_IS_MSVC) && (defined(_M_IX86) || defined(_M_X64))
     _mm_pause();
 #else
     atomic_fence_ex(ATOMIC_SEQ_CST);
@@ -309,7 +362,7 @@ void thread_cpu_relax(void)
 #if !defined(NATIVE_FUTEX_IMPL) && !defined(USE_THREAD_EMU)
 
 /*
- * Host-specific futex emulation helpers
+ * Host-specific helpers
  */
 
 #if defined(WIN32_THREADS_IMPL)
@@ -533,8 +586,16 @@ static int pcond_timedwait_ns(pthread_cond_t* cond, pthread_mutex_t* mtx, uint64
  * Futex emulation glue
  */
 
-typedef struct {
+typedef struct futex_emu_waiter futex_emu_waiter_t;
+
+struct futex_emu_waiter {
+    futex_emu_waiter_t* prev;
+    futex_emu_waiter_t* next;
+
+    // Futex wait address
     void* ptr;
+
+    // Platform-dependent waiting primitive
 #if defined(WIN32_THREADS_IMPL)
     HANDLE event;
 #elif defined(USE_FUTEX_OVER_PIPE)
@@ -546,10 +607,13 @@ typedef struct {
 #elif defined(SDL_THREADS_IMPL)
     SDL_cond* cond;
 #endif
-} futex_entry_t;
+};
 
 typedef struct {
-    vector_t(futex_entry_t*) waiters;
+    // Linked list of waiters
+    futex_emu_waiter_t* waiters;
+
+    // Platform-dependent locking primitive
 #if defined(POSIX_THREADS_IMPL)
     pthread_mutex_t mutex;
 #elif defined(C11_THREADS_IMPL)
@@ -559,15 +623,15 @@ typedef struct {
 #else
     spinlock_t lock;
 #endif
-} futex_queue_t;
+} futex_emu_queue_t;
 
 #if defined(POSIX_THREADS_IMPL)
-#define FUTEX_EMU_ENTRY_INIT {ZERO_INIT, PTHREAD_MUTEX_INITIALIZER}
+#define FUTEX_EMU_ENTRY_INIT {NULL, PTHREAD_MUTEX_INITIALIZER}
 #else
 #define FUTEX_EMU_ENTRY_INIT ZERO_INIT
 #endif
 
-static futex_queue_t futex_emu_table[8] = {
+static futex_emu_queue_t futex_emu_table[8] = {
     FUTEX_EMU_ENTRY_INIT, FUTEX_EMU_ENTRY_INIT, FUTEX_EMU_ENTRY_INIT, FUTEX_EMU_ENTRY_INIT,
     FUTEX_EMU_ENTRY_INIT, FUTEX_EMU_ENTRY_INIT, FUTEX_EMU_ENTRY_INIT, FUTEX_EMU_ENTRY_INIT,
 };
@@ -587,7 +651,7 @@ static void futex_emu_init(void)
 #endif
 }
 
-static inline void futex_queue_lock(futex_queue_t* queue)
+static inline void futex_emu_lock(futex_emu_queue_t* queue)
 {
 #if defined(POSIX_THREADS_IMPL)
     pthread_mutex_lock(&queue->mutex);
@@ -600,7 +664,7 @@ static inline void futex_queue_lock(futex_queue_t* queue)
 #endif
 }
 
-static inline void futex_queue_unlock(futex_queue_t* queue)
+static inline void futex_emu_unlock(futex_emu_queue_t* queue)
 {
 #if defined(POSIX_THREADS_IMPL)
     pthread_mutex_unlock(&queue->mutex);
@@ -613,9 +677,9 @@ static inline void futex_queue_unlock(futex_queue_t* queue)
 #endif
 }
 
-static inline futex_entry_t* futex_entry_init(void* ptr)
+static inline futex_emu_waiter_t* futex_emu_waiter_prepare(void* ptr)
 {
-    futex_entry_t* waiter = safe_new_obj(futex_entry_t);
+    futex_emu_waiter_t* waiter = safe_new_obj(futex_emu_waiter_t);
 #if defined(WIN32_THREADS_IMPL)
     waiter->event = thread_local_event();
 #elif defined(USE_FUTEX_OVER_PIPE)
@@ -631,10 +695,10 @@ static inline futex_entry_t* futex_entry_init(void* ptr)
     return waiter;
 }
 
-static inline void futex_entry_wait(futex_queue_t* queue, futex_entry_t* waiter, uint64_t ns)
+static inline void futex_emu_waiter_wait(futex_emu_queue_t* queue, futex_emu_waiter_t* waiter, uint64_t ns)
 {
 #if defined(WIN32_THREADS_IMPL)
-    futex_queue_unlock(queue);
+    futex_emu_unlock(queue);
     if (ns == ((uint64_t)-1) && waiter->event) {
         // Wait infinitely
         WaitForSingleObject(waiter->event, INFINITE);
@@ -651,9 +715,9 @@ static inline void futex_entry_wait(futex_queue_t* queue, futex_entry_t* waiter,
             WaitForSingleObject(waiter->event, EVAL_MAX(ns / 1000000ULL, 1));
         }
     }
-    futex_queue_lock(queue);
+    futex_emu_lock(queue);
 #elif defined(USE_FUTEX_OVER_PIPE)
-    futex_queue_unlock(queue);
+    futex_emu_unlock(queue);
     if (waiter->pipe[0]) {
         struct timeval* tp = NULL;
         struct timeval  tv = ZERO_INIT;
@@ -667,7 +731,7 @@ static inline void futex_entry_wait(futex_queue_t* queue, futex_entry_t* waiter,
         FD_SET(waiter->pipe[0], &fds);
         select(waiter->pipe[0] + 1, &fds, NULL, NULL, tp);
     }
-    futex_queue_lock(queue);
+    futex_emu_lock(queue);
 #elif defined(POSIX_THREADS_IMPL)
     pcond_timedwait_ns(&waiter->cond, &queue->mutex, ns);
 #elif defined(C11_THREADS_IMPL)
@@ -690,7 +754,7 @@ static inline void futex_entry_wait(futex_queue_t* queue, futex_entry_t* waiter,
 #endif
 }
 
-static inline void futex_entry_wake(futex_entry_t* waiter)
+static inline void futex_emu_waiter_wake(futex_emu_waiter_t* waiter)
 {
 #if defined(WIN32_THREADS_IMPL)
     if (waiter->event) {
@@ -710,7 +774,7 @@ static inline void futex_entry_wake(futex_entry_t* waiter)
 #endif
 }
 
-static inline void futex_entry_free(futex_entry_t* waiter)
+static inline void futex_emu_waiter_free(futex_emu_waiter_t* waiter)
 {
 #if defined(WIN32_THREADS_IMPL)
     thread_local_event_dispose(waiter->event);
@@ -735,7 +799,7 @@ static inline void futex_entry_free(futex_entry_t* waiter)
  * Futex emulation core
  */
 
-static inline futex_queue_t* futex_get_queue(void* ptr)
+static inline futex_emu_queue_t* futex_emu_get_queue(void* ptr)
 {
     size_t k  = (size_t)ptr;
     k        ^= k >> 21;
@@ -743,55 +807,66 @@ static inline futex_queue_t* futex_get_queue(void* ptr)
     return &futex_emu_table[k & (STATIC_ARRAY_SIZE(futex_emu_table) - 1)];
 }
 
-static uint32_t thread_futex_emu_wait(void* ptr, uint32_t val, uint64_t ns)
+static inline void futex_emu_erase(futex_emu_queue_t* queue, futex_emu_waiter_t* waiter)
 {
-    futex_queue_t* queue = futex_get_queue(ptr);
-    futex_entry_t* self  = futex_entry_init(ptr);
-    uint32_t       wake  = THREAD_FUTEX_MISMATCH;
+    if (queue->waiters == waiter) {
+        queue->waiters = waiter->next;
+    }
+    if (waiter->prev) {
+        waiter->prev->next = waiter->next;
+    }
+    if (waiter->next) {
+        waiter->next->prev = waiter->prev;
+    }
+}
+
+static uint32_t futex_emu_wait(void* ptr, uint32_t val, uint64_t ns)
+{
+    futex_emu_queue_t*  queue = futex_emu_get_queue(ptr);
+    futex_emu_waiter_t* self  = futex_emu_waiter_prepare(ptr);
+    uint32_t            wake  = RVVM_FUTEX_MISMATCH;
 
     futex_emu_init();
-    futex_queue_lock(queue);
+    futex_emu_lock(queue);
     if (atomic_load_uint32_relax(ptr) == val) {
-        vector_push_back(queue->waiters, self);
-        futex_entry_wait(queue, self, ns);
+        self->next     = queue->waiters;
+        queue->waiters = self;
+        if (self->next) {
+            self->next->prev = self;
+        }
+        futex_emu_waiter_wait(queue, self, ns);
         if (!self->ptr) {
-            wake = THREAD_FUTEX_WAKEUP;
+            wake = RVVM_FUTEX_WAKEUP;
         } else {
-            wake = THREAD_FUTEX_TIMEOUT;
-            vector_foreach_back (queue->waiters, i) {
-                if (vector_at(queue->waiters, i) == self) {
-                    vector_erase(queue->waiters, i);
-                    break;
-                }
-            }
+            wake = RVVM_FUTEX_TIMEOUT;
+            futex_emu_erase(queue, self);
         }
     }
-    futex_queue_unlock(queue);
-    futex_entry_free(self);
+    futex_emu_unlock(queue);
+    futex_emu_waiter_free(self);
 
     return wake;
 }
 
-static uint32_t thread_futex_emu_wake(void* ptr, uint32_t num)
+static uint32_t futex_emu_wake(void* ptr, uint32_t num)
 {
-    futex_queue_t* queue = futex_get_queue(ptr);
-    uint32_t       wake  = 0;
+    futex_emu_queue_t* queue = futex_emu_get_queue(ptr);
+    uint32_t           wake  = 0;
 
     futex_emu_init();
-    futex_queue_lock(queue);
-    vector_foreach_back (queue->waiters, i) {
-        futex_entry_t* waiter = vector_at(queue->waiters, i);
+    futex_emu_lock(queue);
+    for (futex_emu_waiter_t* waiter = queue->waiters; waiter; waiter = waiter->next) {
         if (wake >= num) {
             break;
         }
         if (waiter->ptr == ptr) {
             waiter->ptr = NULL;
-            vector_erase(queue->waiters, i);
-            futex_entry_wake(waiter);
             wake++;
+            futex_emu_erase(queue, waiter);
+            futex_emu_waiter_wake(waiter);
         }
     }
-    futex_queue_unlock(queue);
+    futex_emu_unlock(queue);
 
     return wake;
 }
@@ -806,12 +881,12 @@ static uint32_t thread_futex_emu_wake(void* ptr, uint32_t num)
 
 #define FUTEX_RET(syscall, error)                                                                                      \
     if ((syscall) >= 0) {                                                                                              \
-        return THREAD_FUTEX_WAKEUP;                                                                                    \
+        return RVVM_FUTEX_WAKEUP;                                                                                      \
     } else if (errno == error) {                                                                                       \
-        return THREAD_FUTEX_MISMATCH;                                                                                  \
+        return RVVM_FUTEX_MISMATCH;                                                                                    \
     }
 
-static uint32_t thread_futex_native_wait(void* ptr, uint32_t val, uint64_t ns)
+static uint32_t futex_native_wait(void* ptr, uint32_t val, uint64_t ns)
 {
 #if defined(LINUX_FUTEX_IMPL) || defined(FREEBSD_FUTEX_IMPL) || defined(OPENBSD_FUTEX_IMPL)
     // Prepare timespec structure
@@ -855,10 +930,10 @@ static uint32_t thread_futex_native_wait(void* ptr, uint32_t val, uint64_t ns)
     }
 #endif
     UNUSED(ptr && val && ns);
-    return THREAD_FUTEX_TIMEOUT;
+    return RVVM_FUTEX_TIMEOUT;
 }
 
-static bool thread_futex_native_wake(void* ptr, uint32_t num)
+static bool futex_native_wake(void* ptr, uint32_t num)
 {
 #if defined(LINUX_FUTEX_IMPL)
     return syscall(__NR_futex_time64, ptr, FUTEX_WAKE_PRIVATE, num, NULL, NULL, 0) >= 0;
@@ -886,7 +961,9 @@ static bool thread_futex_native_wake(void* ptr, uint32_t num)
 
 #if defined(HYBRID_FUTEX_IMPL)
 
-static slow_path bool thread_futex_init_once(void)
+static uint32_t futex_native_flag = 0;
+
+static slow_path bool futex_init_once(void)
 {
     uint32_t tmp = 0;
     if (rvvm_has_arg("no_futex")) {
@@ -898,18 +975,20 @@ static slow_path bool thread_futex_init_once(void)
     if (!ulock_wait || !ulock_wake) {
         ulock_wait = NULL;
         ulock_wake = NULL;
+        return false;
     }
 #endif
-    return thread_futex_native_wake(&tmp, 1);
+    return futex_native_wake(&tmp, 1);
 }
 
-static bool thread_futex_is_native(void)
+static bool futex_is_native(void)
 {
-    static bool futex_native = false;
-    DO_ONCE_SCOPED {
-        futex_native = thread_futex_init_once();
+    uint32_t tmp = atomic_load_uint32_relax(&futex_native_flag);
+    if (!tmp) {
+        tmp = 0x02 | (futex_init_once() ? 0x01 : 0x00);
+        atomic_store_uint32_relax(&futex_native_flag, tmp);
     }
-    return futex_native;
+    return !!(tmp & 0x01);
 }
 
 #endif
@@ -918,7 +997,7 @@ static bool thread_futex_is_native(void)
  * Futexes
  */
 
-uint32_t thread_futex_wait(void* ptr, uint32_t val, uint64_t timeout_ns)
+uint32_t rvvm_futex_wait(void* ptr, uint32_t val, uint64_t timeout_ns)
 {
     if (likely(ptr && timeout_ns)) {
 #if defined(USE_THREAD_EMU)
@@ -927,34 +1006,34 @@ uint32_t thread_futex_wait(void* ptr, uint32_t val, uint64_t timeout_ns)
         }
         sleep_ns(timeout_ns);
 #elif defined(NATIVE_FUTEX_IMPL)
-        return thread_futex_native_wait(ptr, val, timeout_ns);
+        return futex_native_wait(ptr, val, timeout_ns);
 #else
 #if defined(HYBRID_FUTEX_IMPL)
-        if (likely(thread_futex_is_native())) {
-            return thread_futex_native_wait(ptr, val, timeout_ns);
+        if (likely(futex_is_native())) {
+            return futex_native_wait(ptr, val, timeout_ns);
         }
 #endif
-        return thread_futex_emu_wait(ptr, val, timeout_ns);
+        return futex_emu_wait(ptr, val, timeout_ns);
 #endif
     }
-    return THREAD_FUTEX_TIMEOUT;
+    return RVVM_FUTEX_TIMEOUT;
 }
 
-void thread_futex_wake(void* ptr, uint32_t num)
+void rvvm_futex_wake(void* ptr, uint32_t num)
 {
     UNUSED(ptr && num);
 #if !defined(USE_THREAD_EMU)
     if (likely(ptr && num)) {
 #if defined(NATIVE_FUTEX_IMPL)
-        thread_futex_native_wake(ptr, num);
+        futex_native_wake(ptr, num);
 #else
 #if defined(HYBRID_FUTEX_IMPL)
-        if (likely(thread_futex_is_native())) {
-            thread_futex_native_wake(ptr, num);
+        if (likely(futex_is_native())) {
+            futex_native_wake(ptr, num);
             return;
         }
 #endif
-        thread_futex_emu_wake(ptr, num);
+        futex_emu_wake(ptr, num);
 #endif
     }
 #endif
@@ -964,7 +1043,7 @@ void thread_futex_wake(void* ptr, uint32_t num)
  * Events
  */
 
-static inline bool event_update_flag(thread_event_t* event, uint32_t flag)
+static inline bool event_update_flag(rvvm_event_t* event, uint32_t flag)
 {
     if (atomic_load_uint32_relax(&event->flag) != flag) {
         return atomic_swap_uint32(&event->flag, flag) != flag;
@@ -972,7 +1051,7 @@ static inline bool event_update_flag(thread_event_t* event, uint32_t flag)
     return false;
 }
 
-void thread_event_init(thread_event_t* event)
+void rvvm_event_init(rvvm_event_t* event)
 {
     if (likely(event)) {
         atomic_store_uint32_relax(&event->flag, 0);
@@ -980,7 +1059,7 @@ void thread_event_init(thread_event_t* event)
     }
 }
 
-bool thread_event_wait(thread_event_t* event, uint64_t timeout_ns)
+bool rvvm_event_wait(rvvm_event_t* event, uint64_t timeout_ns)
 {
     bool woken = false;
     if (likely(event)) {
@@ -996,7 +1075,7 @@ bool thread_event_wait(thread_event_t* event, uint64_t timeout_ns)
         atomic_add_uint32(&event->waiters, 1);
         if (!event_update_flag(event, 0)) {
             // Perform waiting on a kernel primitive
-            woken = !!thread_futex_wait(&event->flag, 0, timeout_ns);
+            woken = !!rvvm_futex_wait(&event->flag, 0, timeout_ns);
 
             // Clear possibly danging signaled flag
             woken = event_update_flag(event, 0) || woken;
@@ -1006,12 +1085,12 @@ bool thread_event_wait(thread_event_t* event, uint64_t timeout_ns)
     return woken;
 }
 
-bool thread_event_wake(thread_event_t* event)
+bool rvvm_event_wake(rvvm_event_t* event)
 {
     if (likely(event)) {
         if (event_update_flag(event, 1)) {
-            if (thread_event_waiters(event)) {
-                thread_futex_wake(&event->flag, 1);
+            if (rvvm_event_waiters(event)) {
+                rvvm_futex_wake(&event->flag, 1);
             }
             return true;
         }
@@ -1019,7 +1098,7 @@ bool thread_event_wake(thread_event_t* event)
     return false;
 }
 
-uint32_t thread_event_waiters(thread_event_t* event)
+uint32_t rvvm_event_waiters(rvvm_event_t* event)
 {
     if (likely(event)) {
         return atomic_load_uint32_relax(&event->waiters);
@@ -1028,47 +1107,37 @@ uint32_t thread_event_waiters(thread_event_t* event)
 }
 
 /*
- * Condvars (Legacy)
+ * Tasklets
  */
 
-cond_var_t* condvar_create(void)
+struct rvvm_task_intrnl {
+    rvvm_task_cb_intrnl_t cb;
+
+    void* data;
+
+    void* next;
+};
+
+rvvm_task_t* rvvm_task_init(rvvm_task_cb_intrnl_t cb, void* data)
 {
-    return safe_new_obj(cond_var_t);
+    rvvm_task_t* task = safe_new_obj(rvvm_task_t);
+    task->cb          = cb;
+    task->data        = data;
+    return task;
 }
 
-bool condvar_wait_ns(cond_var_t* cond, uint64_t timeout_ns)
+void rvvm_task_wake(rvvm_task_t* task)
 {
-    return thread_event_wait(cond, timeout_ns);
-}
-
-bool condvar_wait(cond_var_t* cond, uint64_t timeout_ms)
-{
-    uint64_t timeout_ns = CONDVAR_INFINITE;
-    if (timeout_ms != CONDVAR_INFINITE) {
-        timeout_ns = timeout_ms * 1000000ULL;
+    if (likely(task)) {
+#if defined(USE_THREAD_EMU) || 1
+        task->cb(task->data);
+#endif
     }
-    return condvar_wait_ns(cond, timeout_ns);
 }
 
-bool condvar_wake(cond_var_t* cond)
+void rvvm_task_free(rvvm_task_t* task)
 {
-    return thread_event_wake(cond);
-}
-
-uint32_t condvar_waiters(cond_var_t* cond)
-{
-    return thread_event_waiters(cond);
-}
-
-void condvar_free(cond_var_t* cond)
-{
-    if (likely(cond)) {
-        uint32_t waiters = condvar_waiters(cond);
-        if (waiters) {
-            rvvm_warn("Destroying a condvar with %u waiters!", waiters);
-        }
-        safe_free(cond);
-    }
+    safe_free(task);
 }
 
 /*
@@ -1077,12 +1146,12 @@ void condvar_free(cond_var_t* cond)
 
 #if defined(USE_THREAD_EMU)
 
-void thread_create_task(thread_func_t func, void* arg)
+void thread_create_task(rvvm_thread_func_t func, void* arg)
 {
     func(arg);
 }
 
-void thread_create_task_va(thread_func_va_t func, void** args, unsigned arg_count)
+void thread_create_task_va(rvvm_thread_func_va_t func, void** args, unsigned arg_count)
 {
     UNUSED(arg_count);
     func(args);
@@ -1097,10 +1166,10 @@ void thread_create_task_va(thread_func_va_t func, void** args, unsigned arg_coun
 BUILD_ASSERT(!(WORKQUEUE_SIZE & WORKQUEUE_MASK));
 
 typedef struct {
-    uint32_t      seq;
-    uint32_t      flags;
-    thread_func_t func;
-    void*         arg[THREAD_MAX_VA_ARGS];
+    uint32_t           seq;
+    uint32_t           flags;
+    rvvm_thread_func_t func;
+    void*              arg[THREAD_MAX_VA_ARGS];
 } task_item_t;
 
 typedef struct {
@@ -1140,7 +1209,7 @@ static bool workqueue_try_perform(work_queue_t* wq)
 
                 // Run the task
                 if (task.flags & 2) {
-                    ((thread_func_va_t)(void*)task.func)((void**)task.arg);
+                    ((rvvm_thread_func_va_t)(void*)task.func)((void**)task.arg);
                 } else {
                     task.func(task.arg[0]);
                 }
@@ -1158,7 +1227,7 @@ static bool workqueue_try_perform(work_queue_t* wq)
     }
 }
 
-static bool workqueue_submit(work_queue_t* wq, thread_func_t func, void** arg, unsigned arg_count, bool va)
+static bool workqueue_submit(work_queue_t* wq, rvvm_thread_func_t func, void** arg, unsigned arg_count, bool va)
 {
     uint32_t head = atomic_load_uint32_ex(&wq->head, ATOMIC_RELAXED);
     while (true) {
@@ -1230,7 +1299,7 @@ static void threadpool_init(void)
     call_at_deinit(thread_workers_terminate);
 }
 
-static bool thread_queue_task(thread_func_t func, void** arg, unsigned arg_count, bool va)
+static bool thread_queue_task(rvvm_thread_func_t func, void** arg, unsigned arg_count, bool va)
 {
     DO_ONCE(threadpool_init());
 
@@ -1245,20 +1314,20 @@ static bool thread_queue_task(thread_func_t func, void** arg, unsigned arg_count
     return false;
 }
 
-void thread_create_task(thread_func_t func, void* arg)
+void thread_create_task(rvvm_thread_func_t func, void* arg)
 {
     if (!thread_queue_task(func, &arg, 1, false)) {
         func(arg);
     }
 }
 
-void thread_create_task_va(thread_func_va_t func, void** args, unsigned arg_count)
+void thread_create_task_va(rvvm_thread_func_va_t func, void** args, unsigned arg_count)
 {
     if (arg_count == 0 || arg_count > THREAD_MAX_VA_ARGS) {
         rvvm_warn("Invalid arg count in thread_create_task_va()!");
         return;
     }
-    if (!thread_queue_task((thread_func_t)(void*)func, args, arg_count, true)) {
+    if (!thread_queue_task((rvvm_thread_func_t)(void*)func, args, arg_count, true)) {
         func(args);
     }
 }
