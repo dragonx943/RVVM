@@ -125,7 +125,7 @@ jobs:
     - name: Download Cosmopolitan Toolchain
       if: matrix.os == 'cosmo'
       run: |
-        COSMOCC_URL="https://justine.lol/cosmopolitan/cosmocc-4.0.2.zip"
+        COSMOCC_URL="https://github.com/jart/cosmopolitan/releases/download/4.0.2/cosmocc-4.0.2.zip"
 
         mkdir cosmocc
         wget ${COSMOCC_URL} -qLO cosmocc.zip
