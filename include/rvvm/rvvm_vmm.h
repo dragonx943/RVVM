@@ -33,7 +33,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  * - Create vCPU attached to a VMM
  * - Get/Set vCPU registers
  * - Run vCPU from current thread
- * - Signal running vCPU to pause from another thread
+ * - Kick running vCPU to pause it from another thread
  * - Handle vCPU exits (MMIO/PMIO access, halt, signal)
  *
  * The various backends may support additional sets of features:
@@ -57,16 +57,18 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 /*
  * Exit reasons for rvvm_vmm_vcpu_run()
  */
-#define RVVM_VMM_EXIT_SIGNAL     0x00 /**< Interrupted by signal */
-#define RVVM_VMM_EXIT_MMIO_R     0x01 /**< MMIO read */
-#define RVVM_VMM_EXIT_MMIO_W     0x02 /**< MMIO write */
-#define RVVM_VMM_EXIT_PORT_R     0x03 /**< IO Port read */
-#define RVVM_VMM_EXIT_PORT_W     0x04 /**< IO Port write */
-#define RVVM_VMM_EXIT_VCALL      0x05 /**< Hypercall */
-#define RVVM_VMM_EXIT_DEBUG      0x06 /**< Hit a breakpoint in debug mode */
-#define RVVM_VMM_EXIT_FATAL      0x07 /**< Fatal error reported by backend */
-#define RVVM_VMM_EXIT_TRAP       0x08 /**< Caught exception */
-#define RVVM_VMM_EXIT_HALT       0x09 /**< Wait for interrupt */
+#define RVVM_VMM_EXIT_KICKED     0x00 /**< Kicked out from vCPU execution */
+#define RVVM_VMM_EXIT_PORT_R     0x01 /**< IO Port read */
+#define RVVM_VMM_EXIT_PORT_W     0x02 /**< IO Port write */
+#define RVVM_VMM_EXIT_MMIO_R     0x03 /**< MMIO read */
+#define RVVM_VMM_EXIT_MMIO_W     0x04 /**< MMIO write */
+#define RVVM_VMM_EXIT_RDMSR      0x05 /**< x86 MSR read */
+#define RVVM_VMM_EXIT_WRMSR      0x06 /**< x86 MSR write */
+#define RVVM_VMM_EXIT_VCALL      0x07 /**< Hypercall */
+#define RVVM_VMM_EXIT_DEBUG      0x08 /**< Hit a breakpoint in debug mode */
+#define RVVM_VMM_EXIT_FATAL      0x09 /**< Fatal error reported by backend */
+#define RVVM_VMM_EXIT_TRAP       0x0A /**< Caught exception */
+#define RVVM_VMM_EXIT_HALT       0x0B /**< Wait for interrupt */
 
 /*
  * Device types for rvvm_vmm_dev_init()
@@ -81,81 +83,113 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
 #if defined(RVVM_VMM_X86)
-#define RVVM_VMM_REG_X86_GPR_BASE  0x00000000UL
-#define RVVM_VMM_REG_X86_GPR_SIZE  0x00000010UL
-#define RVVM_VMM_REG_X86_GPR_RAX   0x00000000UL
-#define RVVM_VMM_REG_X86_GPR_RCX   0x00000001UL
-#define RVVM_VMM_REG_X86_GPR_RDX   0x00000002UL
-#define RVVM_VMM_REG_X86_GPR_RBX   0x00000003UL
-#define RVVM_VMM_REG_X86_GPR_RSP   0x00000004UL
-#define RVVM_VMM_REG_X86_GPR_RBP   0x00000005UL
-#define RVVM_VMM_REG_X86_GPR_RSI   0x00000006UL
-#define RVVM_VMM_REG_X86_GPR_RDI   0x00000007UL
-#define RVVM_VMM_REG_X86_GPR_R8    0x00000008UL
-#define RVVM_VMM_REG_X86_GPR_R9    0x00000009UL
-#define RVVM_VMM_REG_X86_GPR_R10   0x0000000AUL
-#define RVVM_VMM_REG_X86_GPR_R11   0x0000000BUL
-#define RVVM_VMM_REG_X86_GPR_R12   0x0000000CUL
-#define RVVM_VMM_REG_X86_GPR_R13   0x0000000DUL
-#define RVVM_VMM_REG_X86_GPR_R14   0x0000000EUL
-#define RVVM_VMM_REG_X86_GPR_R15   0x0000000FUL
-#define RVVM_VMM_REG_X86_GPR_RIP   0x00000080UL /* Instruction pointer */
-#define RVVM_VMM_REG_X86_GPR_RFL   0x00000081UL /* Flags */
 
-#define RVVM_VMM_REG_X86_FPU_BASE  0x10000000UL
-#define RVVM_VMM_REG_X86_FPU_SIZE  0x00000008UL
-#define RVVM_VMM_REG_X86_FPU_FCW   0x10000080UL
-#define RVVM_VMM_REG_X86_FPU_FSW   0x10000081UL
+#define RVVM_VMM_REG_X86_GPR_BASE   0x00000000UL
+#define RVVM_VMM_REG_X86_GPR_SIZE   0x00000012UL
+#define RVVM_VMM_REG_X86_GPR_RAX    0x00000000UL
+#define RVVM_VMM_REG_X86_GPR_RCX    0x00000001UL
+#define RVVM_VMM_REG_X86_GPR_RDX    0x00000002UL
+#define RVVM_VMM_REG_X86_GPR_RBX    0x00000003UL
+#define RVVM_VMM_REG_X86_GPR_RSP    0x00000004UL
+#define RVVM_VMM_REG_X86_GPR_RBP    0x00000005UL
+#define RVVM_VMM_REG_X86_GPR_RSI    0x00000006UL
+#define RVVM_VMM_REG_X86_GPR_RDI    0x00000007UL
+#define RVVM_VMM_REG_X86_GPR_R8     0x00000008UL
+#define RVVM_VMM_REG_X86_GPR_R9     0x00000009UL
+#define RVVM_VMM_REG_X86_GPR_R10    0x0000000AUL
+#define RVVM_VMM_REG_X86_GPR_R11    0x0000000BUL
+#define RVVM_VMM_REG_X86_GPR_R12    0x0000000CUL
+#define RVVM_VMM_REG_X86_GPR_R13    0x0000000DUL
+#define RVVM_VMM_REG_X86_GPR_R14    0x0000000EUL
+#define RVVM_VMM_REG_X86_GPR_R15    0x0000000FUL
+/* Instruction pointer */
+#define RVVM_VMM_REG_X86_GPR_RIP    0x00000010UL
+/* Flags */
+#define RVVM_VMM_REG_X86_GPR_RFL    0x00000011UL
 
-#define RVVM_VMM_REG_X86_XMM_BASE  0x20000000UL
-#define RVVM_VMM_REG_X86_XMM_SIZE  0x00000020UL
-#define RVVM_VMM_REG_X86_XMM_MXCSR 0x20000080UL
+#define RVVM_VMM_REG_X86_FPU_BASE   0x10000000UL
+#define RVVM_VMM_REG_X86_FPU_SIZE   0x00000014UL
+/* FPU Control [0:15], Status [16:31], Last Opcode [32:47], Tag Word [48:63] (XSAVE format) */
+#define RVVM_VMM_REG_X86_FPU_FCSW   0x10000011UL
+/* Last FPU Instruction Pointer */
+#define RVVM_VMM_REG_X86_FPU_LSIP   0x10000012UL
+/* Last FPU Data Pointer */
+#define RVVM_VMM_REG_X86_FPU_LSDP   0x10000013UL
 
-#define RVVM_VMM_REG_X86_SEG_BASE  0x50000000UL
-#define RVVM_VMM_REG_X86_SEG_SIZE  0x00000014UL
-#define RVVM_VMM_REG_X86_SEG_ES_B  0x50000000UL /* Base */
-#define RVVM_VMM_REG_X86_SEG_ES_L  0x50000001UL /* Limit, Selector, Type.. */
-#define RVVM_VMM_REG_X86_SEG_CS_B  0x50000002UL
-#define RVVM_VMM_REG_X86_SEG_CS_L  0x50000003UL
-#define RVVM_VMM_REG_X86_SEG_SS_B  0x50000004UL
-#define RVVM_VMM_REG_X86_SEG_SS_L  0x50000005UL
-#define RVVM_VMM_REG_X86_SEG_DS_B  0x50000006UL
-#define RVVM_VMM_REG_X86_SEG_DS_L  0x50000007UL
-#define RVVM_VMM_REG_X86_SEG_FS_B  0x50000008UL
-#define RVVM_VMM_REG_X86_SEG_FS_L  0x50000009UL
-#define RVVM_VMM_REG_X86_SEG_GS_B  0x5000000AUL
-#define RVVM_VMM_REG_X86_SEG_GS_L  0x5000000BUL
-#define RVVM_VMM_REG_X86_SEG_GDT_B 0x5000000CUL
-#define RVVM_VMM_REG_X86_SEG_GDT_L 0x5000000DUL
-#define RVVM_VMM_REG_X86_SEG_IDT_B 0x5000000EUL
-#define RVVM_VMM_REG_X86_SEG_IDT_L 0x5000000FUL
-#define RVVM_VMM_REG_X86_SEG_LDT_B 0x50000010UL
-#define RVVM_VMM_REG_X86_SEG_LDT_L 0x50000011UL
-#define RVVM_VMM_REG_X86_SEG_TR_B  0x50000012UL
-#define RVVM_VMM_REG_X86_SEG_TR_L  0x50000013UL
+#define RVVM_VMM_REG_X86_XMM_BASE   0x20000000UL
+#define RVVM_VMM_REG_X86_XMM_SIZE   0x00000020UL
+#define RVVM_VMM_REG_X86_XMM_MXCSR  0x20000080UL
 
-#define RVVM_VMM_REG_X86_CR_BASE   0x60000000UL
-#define RVVM_VMM_REG_X86_CR_SIZE   0x00000006UL
-#define RVVM_VMM_REG_X86_CR_CR0    0x60000000UL
-#define RVVM_VMM_REG_X86_CR_CR2    0x60000001UL
-#define RVVM_VMM_REG_X86_CR_CR3    0x60000002UL
-#define RVVM_VMM_REG_X86_CR_CR4    0x60000003UL
-#define RVVM_VMM_REG_X86_CR_CR8    0x60000004UL
-#define RVVM_VMM_REG_X86_CR_XCR0   0x60000005UL
+#define RVVM_VMM_REG_X86_SEG_BASE   0x50000000UL
+#define RVVM_VMM_REG_X86_SEG_SIZE   0x00000014UL
+/* Limit [0:15][48:51], Base[15:39][56:63], Type[40:43], S[44], DPL[45:46], P[47], AVL[52], L[53], DB[54], G[55] */
+#define RVVM_VMM_REG_X86_SEG_ES     0x50000000UL
+/* Selector[0:15], High Base [16:47] */
+#define RVVM_VMM_REG_X86_SEG_ES_H   0x50000001UL
+#define RVVM_VMM_REG_X86_SEG_CS     0x50000002UL
+#define RVVM_VMM_REG_X86_SEG_CS_H   0x50000003UL
+#define RVVM_VMM_REG_X86_SEG_SS     0x50000004UL
+#define RVVM_VMM_REG_X86_SEG_SS_H   0x50000005UL
+#define RVVM_VMM_REG_X86_SEG_DS     0x50000006UL
+#define RVVM_VMM_REG_X86_SEG_DS_H   0x50000007UL
+#define RVVM_VMM_REG_X86_SEG_FS     0x50000008UL
+#define RVVM_VMM_REG_X86_SEG_FS_H   0x50000009UL
+#define RVVM_VMM_REG_X86_SEG_GS     0x5000000AUL
+#define RVVM_VMM_REG_X86_SEG_GS_H   0x5000000BUL
+#define RVVM_VMM_REG_X86_SEG_GDT    0x5000000CUL
+#define RVVM_VMM_REG_X86_SEG_GDT_H  0x5000000DUL
+#define RVVM_VMM_REG_X86_SEG_IDT    0x5000000EUL
+#define RVVM_VMM_REG_X86_SEG_IDT_H  0x5000000FUL
+#define RVVM_VMM_REG_X86_SEG_LDT    0x50000010UL
+#define RVVM_VMM_REG_X86_SEG_LDT_H  0x50000011UL
+#define RVVM_VMM_REG_X86_SEG_TR     0x50000012UL
+#define RVVM_VMM_REG_X86_SEG_TR_H   0x50000013UL
 
-#define RVVM_VMM_REG_X86_DR_BASE   0x70000000UL
-#define RVVM_VMM_REG_X86_DR_SIZE   0x00000006UL
-#define RVVM_VMM_REG_X86_DR_DR0    0x70000000UL
-#define RVVM_VMM_REG_X86_DR_DR1    0x70000001UL
-#define RVVM_VMM_REG_X86_DR_DR2    0x70000002UL
-#define RVVM_VMM_REG_X86_DR_DR3    0x70000003UL
-#define RVVM_VMM_REG_X86_DR_DR6    0x70000004UL
-#define RVVM_VMM_REG_X86_DR_DR7    0x70000005UL
+#define RVVM_VMM_REG_X86_CR_BASE    0x60000000UL
+#define RVVM_VMM_REG_X86_CR_SIZE    0x00000006UL
+#define RVVM_VMM_REG_X86_CR_CR0     0x60000000UL
+#define RVVM_VMM_REG_X86_CR_CR2     0x60000001UL
+#define RVVM_VMM_REG_X86_CR_CR3     0x60000002UL
+#define RVVM_VMM_REG_X86_CR_CR4     0x60000003UL
+#define RVVM_VMM_REG_X86_CR_CR8     0x60000004UL
+#define RVVM_VMM_REG_X86_CR_XCR0    0x60000005UL
 
-#define RVVM_VMM_REG_X86_MSR_BASE  0x80000000UL
-#define RVVM_VMM_REG_X86_MSR_SIZE  0x00000001UL
-#define RVVM_VMM_REG_X86_MSR_EFER  0x80000000UL
+#define RVVM_VMM_REG_X86_DR_BASE    0x70000000UL
+#define RVVM_VMM_REG_X86_DR_SIZE    0x00000006UL
+#define RVVM_VMM_REG_X86_DR_DR0     0x70000000UL
+#define RVVM_VMM_REG_X86_DR_DR1     0x70000001UL
+#define RVVM_VMM_REG_X86_DR_DR2     0x70000002UL
+#define RVVM_VMM_REG_X86_DR_DR3     0x70000003UL
+#define RVVM_VMM_REG_X86_DR_DR6     0x70000004UL
+#define RVVM_VMM_REG_X86_DR_DR7     0x70000005UL
+
+#define RVVM_VMM_REG_X86_MSR_BASE   0x80000000UL
+#define RVVM_VMM_REG_X86_MSR_SIZE   0x0000000BUL
+/* Extended features */
+#define RVVM_VMM_REG_X86_MSR_EFER   0x80000000UL
+/* Legacy mode SYSCALL target */
+#define RVVM_VMM_REG_X86_MSR_STAR   0x80000001UL
+/* Long mode SYSCALL target */
+#define RVVM_VMM_REG_X86_MSR_LSTAR  0x80000002UL
+/* Compat mode SYSCALL target */
+#define RVVM_VMM_REG_X86_MSR_CSTAR  0x80000003UL
+/* Syscall flags mask */
+#define RVVM_VMM_REG_X86_MSR_SFMASK 0x80000004UL
+/* SWAPGS GS shadow */
+#define RVVM_VMM_REG_X86_MSR_SWAPGS 0x80000005UL
+/* Ring 0 code segment */
+#define RVVM_VMM_REG_X86_MSR_SYSCS  0x80000006UL
+/* Ring 0 stack pointer */
+#define RVVM_VMM_REG_X86_MSR_SYSESP 0x80000007UL
+/* Ring 0 instruction pointer */
+#define RVVM_VMM_REG_X86_MSR_SYSEIP 0x80000008UL
+/* Page attribute table */
+#define RVVM_VMM_REG_X86_MSR_PAT    0x80000009UL
+/* TSC offset */
+#define RVVM_VMM_REG_X86_MSR_TSC    0x8000000AUL
+
 #elif defined(RVVM_VMM_ARM64)
+
 #define RVVM_VMM_REG_ARM64_GPR_BASE   0x00000000UL
 #define RVVM_VMM_REG_ARM64_GPR_SIZE   0x00000020UL
 #define RVVM_VMM_REG_ARM64_GPR_PC     0x00000080UL
@@ -178,16 +212,19 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define RVVM_VMM_REG_ARM64_SPSR_UND   0x80000002UL
 #define RVVM_VMM_REG_ARM64_SPSR_IRQ   0x80000003UL
 #define RVVM_VMM_REG_ARM64_SPSR_FIQ   0x80000004UL
+
 #elif defined(RVVM_VMM_RISCV)
-#define RVVM_VMM_REG_RISCV_GPR_BASE   0x00000000UL
-#define RVVM_VMM_REG_RISCV_GPR_SIZE   0x00000020UL
-#define RVVM_VMM_REG_RISCV_GPR_PC     0x00000080UL
 
-#define RVVM_VMM_REG_RISCV_FPU_BASE   0x10000000UL
-#define RVVM_VMM_REG_RISCV_FPU_SIZE   0x00000020UL
+#define RVVM_VMM_REG_RISCV_GPR_BASE 0x00000000UL
+#define RVVM_VMM_REG_RISCV_GPR_SIZE 0x00000020UL
+#define RVVM_VMM_REG_RISCV_GPR_PC   0x00000080UL
 
-#define RVVM_VMM_REG_RISCV_RVV_BASE   0x20000000UL
-#define RVVM_VMM_REG_RISCV_RVV_SIZE   0x00000080UL
+#define RVVM_VMM_REG_RISCV_FPU_BASE 0x10000000UL
+#define RVVM_VMM_REG_RISCV_FPU_SIZE 0x00000020UL
+
+#define RVVM_VMM_REG_RISCV_RVV_BASE 0x20000000UL
+#define RVVM_VMM_REG_RISCV_RVV_SIZE 0x00000080UL
+
 #endif
 
 /**
@@ -250,9 +287,9 @@ void rvvm_vmm_vcpu_free(rvvm_vmm_vcpu_t* vcpu);
 uint32_t rvvm_vmm_vcpu_run(rvvm_vmm_vcpu_t* vcpu);
 
 /**
- * Signal vCPU to return from rvvm_vmm_vcpu_run() as soon as possible
+ * Kick vCPU to return from rvvm_vmm_vcpu_run() as soon as possible
  */
-void rvvm_vmm_vcpu_signal(rvvm_vmm_vcpu_t* vcpu);
+void rvvm_vmm_vcpu_kick(rvvm_vmm_vcpu_t* vcpu);
 
 /**
  * Get vCPU register value
