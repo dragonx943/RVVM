@@ -287,6 +287,11 @@ void rvvm_vmm_vcpu_free(rvvm_vmm_vcpu_t* vcpu);
 uint32_t rvvm_vmm_vcpu_run(rvvm_vmm_vcpu_t* vcpu);
 
 /**
+ * Register vCPU thread once for rvvm_vmm_vcpu_kick() to work
+ */
+void rvvm_vmm_vcpu_register(rvvm_vmm_vcpu_t* vcpu);
+
+/**
  * Kick vCPU to return from rvvm_vmm_vcpu_run() as soon as possible
  */
 void rvvm_vmm_vcpu_kick(rvvm_vmm_vcpu_t* vcpu);
