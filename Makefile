@@ -1033,7 +1033,7 @@ $(call path_shell,$(BIN_TARGETS): $(BIN_OBJ) $(BIN_LIBS) $(CC_TRIGGER) $(LD_TRIG
 
 
 # Set -Wl,-soname,<libname.so> for an ELF target, set -Wl,--out-implib,$@.a for Windows libraries
-override shared_extra = $(if $(filter .so,$(LIB_EXT)),-Wl$(COMMA)-soname$(COMMA)$(notdir $1)) $(if $(filter windows,$(OS)),-Wl$(COMMA)--out-implib$(COMMA)$(patsubst %$(LIB_EXT),%.a,$1))
+override shared_extra = $(if $(filter .so,$(LIB_EXT)),-Wl$(COMMA)-soname$(COMMA)$(notdir $1).0) $(if $(filter windows,$(OS)),-Wl$(COMMA)--out-implib$(COMMA)$(patsubst %$(LIB_EXT),%.a,$1))
 
 # Shared libraries
 $(call path_shell,$(LIB_TARGETS): $(LIB_OBJ) $(CC_TRIGGER) $(LD_TRIGGER))
@@ -1179,8 +1179,16 @@ install: all
 	$(foreach bin,$(BIN_TARGETS),$(call install_file,$(bin),$(DESTDIR)$(bindir)/$(call bin_base,$(bin))$(BIN_EXT),0755))
 # Install headers
 	$(if $(INCDIR),$(if $(call var_use,USE_LIB)$(call var_use,USE_LIB_STATIC),$(foreach header,$(call recursive_match,$(INCDIR),*.h *.hpp *.hh *.hxx),$(call install_file,$(header),$(DESTDIR)$(includedir)/$(patsubst $(INCDIR)/%,%,$(header)),0644))))
-# Install shared libraries
+ifeq ($(LIB_EXT),.so)
+# Install shared libraries with soname suffix
+	$(foreach lib,$(if $(call var_use,USE_LIB),$(LIB_TARGETS)),\
+		$(call install_file,$(lib),$(DESTDIR)$(libdir)/lib$(call lib_base,$(lib))$(LIB_EXT).0.0,0755) \
+		$(call shell_ex,ln -sf lib$(call lib_base,$(lib))$(LIB_EXT).0.0 $(DESTDIR)$(libdir)/lib$(call lib_base,$(lib))$(LIB_EXT).0) \
+		$(call shell_ex,ln -sf lib$(call lib_base,$(lib))$(LIB_EXT).0 $(DESTDIR)$(libdir)/lib$(call lib_base,$(lib))$(LIB_EXT)) \
+	)
+else
 	$(foreach lib,$(if $(call var_use,USE_LIB),$(LIB_TARGETS)),$(call install_file,$(lib),$(DESTDIR)$(libdir)/lib$(call lib_base,$(lib))$(LIB_EXT),0755))
+endif
 # Install pkg-config pc files for shared libraries
 	$(foreach lib,$(if $(call var_use,USE_LIB),$(LIB_TARGETS)),$(call install_string,$(call gen_pkg_config,$(call lib_base,$(lib)),),$(DESTDIR)$(libdir)/pkgconfig/$(call lib_base,$(lib)).pc))
 # Install static libraries
