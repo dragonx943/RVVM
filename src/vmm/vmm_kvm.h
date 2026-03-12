@@ -237,6 +237,14 @@ rvvm_vmm_vcpu_t* rvvm_vmm_vcpu_init(rvvm_vmm_mach_t* vmm)
             rvvm_vmm_vcpu_free(vcpu);
             return NULL;
         }
+#if defined(RVVM_VMM_X86)
+        // Passthrough host cpuid
+        uint32_t* cpuid = safe_new_arr(uint32_t, 2 + (256 * 40));
+        cpuid[0]        = 256;
+        ioctl(rvvm_kvm_systemfd, KVM_GET_SUPPORTED_CPUID, cpuid);
+        ioctl(vcpu->fd, KVM_SET_CPUID, cpuid);
+        free(cpuid);
+#endif
         return vcpu;
     }
     return NULL;
@@ -410,13 +418,13 @@ static void kvm_prepare_debug(rvvm_vmm_vcpu_t* vcpu, bool dirty)
 static void kvm_prepare_msr(rvvm_vmm_vcpu_t* vcpu, bool dirty)
 {
     if (!vcpu->msr) {
-        size_t bmsr = RVVM_VMM_REG_X86_MSR_BASE;
-        size_t nmsr = RVVM_VMM_REG_X86_MSR_SIZE;
+        // Skip EFER as it's part of kvm_sregs
+        size_t bmsr = RVVM_VMM_REG_X86_MSR_BASE + 1;
+        size_t nmsr = RVVM_VMM_REG_X86_MSR_SIZE - 1;
         // Allocate MSR list
         vcpu->msr = safe_calloc(sizeof(struct kvm_msrs) + (sizeof(struct kvm_msr_entry) * nmsr), 1);
         // Map MSRs
         vcpu->msr->nmsrs                                             = nmsr;
-        vcpu->msr->entries[RVVM_VMM_REG_X86_MSR_EFER - bmsr].index   = 0xC0000080UL;
         vcpu->msr->entries[RVVM_VMM_REG_X86_MSR_STAR - bmsr].index   = 0xC0000081UL;
         vcpu->msr->entries[RVVM_VMM_REG_X86_MSR_LSTAR - bmsr].index  = 0xC0000082UL;
         vcpu->msr->entries[RVVM_VMM_REG_X86_MSR_CSTAR - bmsr].index  = 0xC0000083UL;
@@ -710,7 +718,7 @@ void rvvm_vmm_vcpu_set_reg(rvvm_vmm_vcpu_t* vcpu, size_t reg_id, uint64_t val)
             vcpu->sregs->efer = val;
         } else if (reg_id - RVVM_VMM_REG_X86_MSR_BASE < RVVM_VMM_REG_X86_MSR_SIZE) {
             kvm_prepare_msr(vcpu, true);
-            vcpu->msr->entries[reg_id - RVVM_VMM_REG_X86_MSR_BASE].data = val;
+            vcpu->msr->entries[reg_id - RVVM_VMM_REG_X86_MSR_STAR].data = val;
         }
 #endif
     }
