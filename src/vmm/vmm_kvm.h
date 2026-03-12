@@ -15,6 +15,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "atomics.h"
 #include "mem_ops.h"
 #include "utils.h"
+#include "vma_ops.h"
 
 #include <pthread.h>
 #include <signal.h>
@@ -126,7 +127,25 @@ void rvvm_vmm_free(rvvm_vmm_mach_t* vmm)
     }
 }
 
-bool rvvm_vmm_map_phys(rvvm_vmm_mach_t* vmm, uint64_t phys, void* data, size_t size)
+void* rvvm_vmm_map_phys(rvvm_vmm_mach_t* vmm, uint64_t phys, size_t size)
+{
+    if (vmm) {
+        void* vma = vma_alloc(NULL, size, VMA_RDWR);
+        if (vma && rvvm_vmm_attach_phys(vmm, phys, vma, size)) {
+            return vma;
+        }
+        vma_free(vma, size);
+    }
+    return NULL;
+}
+
+void rvvm_vmm_unmap_phys(rvvm_vmm_mach_t* vmm, void* data, size_t size)
+{
+    UNUSED(vmm);
+    vma_free(data, size);
+}
+
+bool rvvm_vmm_attach_phys(rvvm_vmm_mach_t* vmm, uint64_t phys, void* data, size_t size)
 {
     if (vmm && size) {
         // Search for overlapping regions
@@ -165,6 +184,11 @@ bool rvvm_vmm_map_phys(rvvm_vmm_mach_t* vmm, uint64_t phys, void* data, size_t s
         }
     }
     return false;
+}
+
+void rvvm_vmm_detach_phys(rvvm_vmm_mach_t* vmm, uint64_t phys, size_t size)
+{
+    rvvm_vmm_attach_phys(vmm, phys, NULL, size);
 }
 
 bool rvvm_vmm_dev_init(rvvm_vmm_mach_t* vmm, uint32_t type)
