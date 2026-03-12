@@ -7,12 +7,12 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#ifndef RVVM_VMM_INTERFACE_H
-#define RVVM_VMM_INTERFACE_H
+#ifndef _RVVM_VMM_API_H
+#define _RVVM_VMM_API_H
 
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
+#include <rvvm/rvvm.h>
+
+RVVM_EXTERN_C_BEGIN
 
 /**
  * @defgroup rvvm_vmm_api Hardware Virtualization (Virtual Machine Monitor)
@@ -164,29 +164,31 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define RVVM_VMM_REG_X86_DR_DR7     0x70000005UL
 
 #define RVVM_VMM_REG_X86_MSR_BASE   0x80000000UL
-#define RVVM_VMM_REG_X86_MSR_SIZE   0x0000000BUL
+#define RVVM_VMM_REG_X86_MSR_SIZE   0x0000000CUL
 /* Extended features */
 #define RVVM_VMM_REG_X86_MSR_EFER   0x80000000UL
+/* APIC Base (Only for an in-kernel APIC) */
+#define RVVM_VMM_REG_X86_MSR_APICB  0x80000001UL
 /* Legacy mode SYSCALL target */
-#define RVVM_VMM_REG_X86_MSR_STAR   0x80000001UL
+#define RVVM_VMM_REG_X86_MSR_STAR   0x80000002UL
 /* Long mode SYSCALL target */
-#define RVVM_VMM_REG_X86_MSR_LSTAR  0x80000002UL
+#define RVVM_VMM_REG_X86_MSR_LSTAR  0x80000003UL
 /* Compat mode SYSCALL target */
-#define RVVM_VMM_REG_X86_MSR_CSTAR  0x80000003UL
+#define RVVM_VMM_REG_X86_MSR_CSTAR  0x80000004UL
 /* Syscall flags mask */
-#define RVVM_VMM_REG_X86_MSR_SFMASK 0x80000004UL
+#define RVVM_VMM_REG_X86_MSR_SFMASK 0x80000005UL
 /* SWAPGS GS shadow */
-#define RVVM_VMM_REG_X86_MSR_SWAPGS 0x80000005UL
+#define RVVM_VMM_REG_X86_MSR_SWAPGS 0x80000006UL
 /* Ring 0 code segment */
-#define RVVM_VMM_REG_X86_MSR_SYSCS  0x80000006UL
+#define RVVM_VMM_REG_X86_MSR_SYSCS  0x80000007UL
 /* Ring 0 stack pointer */
-#define RVVM_VMM_REG_X86_MSR_SYSESP 0x80000007UL
+#define RVVM_VMM_REG_X86_MSR_SYSESP 0x80000008UL
 /* Ring 0 instruction pointer */
-#define RVVM_VMM_REG_X86_MSR_SYSEIP 0x80000008UL
+#define RVVM_VMM_REG_X86_MSR_SYSEIP 0x80000009UL
 /* Page attribute table */
-#define RVVM_VMM_REG_X86_MSR_PAT    0x80000009UL
+#define RVVM_VMM_REG_X86_MSR_PAT    0x8000000AUL
 /* TSC offset */
-#define RVVM_VMM_REG_X86_MSR_TSC    0x8000000AUL
+#define RVVM_VMM_REG_X86_MSR_TSC    0x8000000BUL
 
 #elif defined(RVVM_VMM_ARM64)
 
@@ -274,7 +276,7 @@ void rvvm_vmm_irq_msi(rvvm_vmm_mach_t* vmm, uint64_t addr, uint32_t data);
 /**
  * Create vCPU attached to a VMM
  */
-rvvm_vmm_vcpu_t* rvvm_vmm_vcpu_init(rvvm_vmm_mach_t* vmm);
+rvvm_vmm_vcpu_t* rvvm_vmm_vcpu_init(rvvm_vmm_mach_t* vmm, uint32_t cpu_id);
 
 /**
  * Free vCPU
@@ -299,12 +301,12 @@ void rvvm_vmm_vcpu_kick(rvvm_vmm_vcpu_t* vcpu);
 /**
  * Get vCPU register value
  */
-uint64_t rvvm_vmm_vcpu_get_reg(rvvm_vmm_vcpu_t* vcpu, size_t reg_id);
+uint64_t rvvm_vmm_vcpu_get_reg(rvvm_vmm_vcpu_t* vcpu, uint32_t reg_id);
 
 /**
  * Set vCPU register value. Pure state manipulation, do NOT expect any side effects to happen.
  */
-void rvvm_vmm_vcpu_set_reg(rvvm_vmm_vcpu_t* vcpu, size_t reg_id, uint64_t val);
+void rvvm_vmm_vcpu_set_reg(rvvm_vmm_vcpu_t* vcpu, uint32_t reg_id, uint64_t val);
 
 /**
  * Get MMIO / Port IO operation address
@@ -314,7 +316,7 @@ uint64_t rvvm_vmm_vcpu_op_addr(rvvm_vmm_vcpu_t* vcpu);
 /**
  * Get MMIO / Port IO operation size
  */
-size_t rvvm_vmm_vcpu_op_size(rvvm_vmm_vcpu_t* vcpu);
+uint32_t rvvm_vmm_vcpu_op_size(rvvm_vmm_vcpu_t* vcpu);
 
 /**
  * Access MMIO / Port IO operation data
@@ -332,5 +334,7 @@ bool rvvm_vmm_vcpu_interrupt(rvvm_vmm_vcpu_t* vcpu, uint32_t vec, bool set);
 bool rvvm_vmm_vcpu_debug_mode(rvvm_vmm_vcpu_t* vcpu, bool enable);
 
 /** @}*/
+
+RVVM_EXTERN_C_END
 
 #endif
