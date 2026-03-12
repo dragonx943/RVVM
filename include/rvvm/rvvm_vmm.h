@@ -250,10 +250,25 @@ rvvm_vmm_mach_t* rvvm_vmm_init(void);
 void rvvm_vmm_free(rvvm_vmm_mach_t* vmm);
 
 /**
- * Map process memory as VMM physical memory region
- * \note MAY destroy contents of passed memory region (NVMM quirk)
+ * Create VMM physical memory region, map into process memory
  */
-bool rvvm_vmm_map_phys(rvvm_vmm_mach_t* vmm, uint64_t phys, void* data, size_t size);
+void* rvvm_vmm_map_phys(rvvm_vmm_mach_t* vmm, uint64_t phys, size_t size);
+
+/**
+ * Unmap VMM physical memory region from process memory
+ */
+void* rvvm_vmm_unmap_phys(rvvm_vmm_mach_t* vmm, void* data, size_t size);
+
+/**
+ * Attach existing process memory as VMM physical memory region (For framebuffers, etc)
+ * \note May fail or destroy contents of memory region (NVMM, bhyve quirks)
+ */
+bool rvvm_vmm_attach_phys(rvvm_vmm_mach_t* vmm, uint64_t phys, void* data, size_t size);
+
+/**
+ * Detach physical memory region from VMM
+ */
+void rvvm_vmm_detach_phys(rvvm_vmm_mach_t* vmm, uint64_t phys, size_t size);
 
 /**
  * Initialize interrupt controllers on VMM backend side, if supported
