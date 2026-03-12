@@ -1032,8 +1032,8 @@ $(call path_shell,$(BIN_TARGETS): $(BIN_OBJ) $(BIN_LIBS) $(CC_TRIGGER) $(LD_TRIG
 
 
 
-# Set -Wl,--out-implib,$@.a for Windows libraries
-override shared_extra = $(if $(filter windows,$(OS)),-Wl$(COMMA)--out-implib$(COMMA)$(patsubst %$(LIB_EXT),%.a,$1))
+# Set -Wl,-soname,<libname.so> for an ELF target, set -Wl,--out-implib,$@.a for Windows libraries
+override shared_extra = $(if $(filter .so,$(LIB_EXT)),-Wl$(COMMA)-soname$(COMMA)$(notdir $1)) $(if $(filter windows,$(OS)),-Wl$(COMMA)--out-implib$(COMMA)$(patsubst %$(LIB_EXT),%.a,$1))
 
 # Shared libraries
 $(call path_shell,$(LIB_TARGETS): $(LIB_OBJ) $(CC_TRIGGER) $(LD_TRIGGER))
