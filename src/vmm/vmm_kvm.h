@@ -216,12 +216,12 @@ void rvvm_vmm_irq_msi(rvvm_vmm_mach_t* vmm, uint64_t addr, uint32_t data)
     }
 }
 
-rvvm_vmm_vcpu_t* rvvm_vmm_vcpu_init(rvvm_vmm_mach_t* vmm)
+rvvm_vmm_vcpu_t* rvvm_vmm_vcpu_init(rvvm_vmm_mach_t* vmm, uint32_t cpu_id)
 {
     if (vmm) {
         rvvm_vmm_vcpu_t* vcpu = safe_new_obj(rvvm_vmm_vcpu_t);
         // Create new vCPU FD
-        vcpu->fd = ioctl(vmm->fd, KVM_CREATE_VCPU, 0);
+        vcpu->fd = ioctl(vmm->fd, KVM_CREATE_VCPU, cpu_id);
         if (vcpu->fd < 0) {
             rvvm_error("Failed to create KVM vCPU!");
             rvvm_vmm_vcpu_free(vcpu);
@@ -419,7 +419,7 @@ static void kvm_prepare_msr(rvvm_vmm_vcpu_t* vcpu, bool dirty)
 {
     if (!vcpu->msr) {
         // Skip EFER as it's part of kvm_sregs
-        size_t bmsr = RVVM_VMM_REG_X86_MSR_BASE + 1;
+        size_t bmsr = RVVM_VMM_REG_X86_MSR_STAR;
         size_t nmsr = RVVM_VMM_REG_X86_MSR_SIZE - 1;
         // Allocate MSR list
         vcpu->msr = safe_calloc(sizeof(struct kvm_msrs) + (sizeof(struct kvm_msr_entry) * nmsr), 1);
@@ -548,7 +548,7 @@ static void* kvm_access_x86_dr(rvvm_vmm_vcpu_t* vcpu, size_t reg_id)
 
 #endif
 
-uint64_t rvvm_vmm_vcpu_get_reg(rvvm_vmm_vcpu_t* vcpu, size_t reg_id)
+uint64_t rvvm_vmm_vcpu_get_reg(rvvm_vmm_vcpu_t* vcpu, uint32_t reg_id)
 {
     if (vcpu) {
         UNUSED(reg_id);
@@ -629,6 +629,9 @@ uint64_t rvvm_vmm_vcpu_get_reg(rvvm_vmm_vcpu_t* vcpu, size_t reg_id)
         } else if (reg_id == RVVM_VMM_REG_X86_MSR_EFER) {
             kvm_prepare_sregs(vcpu, false);
             return vcpu->sregs->efer;
+        } else if (reg_id == RVVM_VMM_REG_X86_MSR_APICB) {
+            kvm_prepare_sregs(vcpu, false);
+            return vcpu->sregs->apic_base;
         } else if (reg_id - RVVM_VMM_REG_X86_MSR_BASE < RVVM_VMM_REG_X86_MSR_SIZE) {
             kvm_prepare_msr(vcpu, false);
             return vcpu->msr->entries[reg_id - RVVM_VMM_REG_X86_MSR_STAR].data;
@@ -638,7 +641,7 @@ uint64_t rvvm_vmm_vcpu_get_reg(rvvm_vmm_vcpu_t* vcpu, size_t reg_id)
     return 0;
 }
 
-void rvvm_vmm_vcpu_set_reg(rvvm_vmm_vcpu_t* vcpu, size_t reg_id, uint64_t val)
+void rvvm_vmm_vcpu_set_reg(rvvm_vmm_vcpu_t* vcpu, uint32_t reg_id, uint64_t val)
 {
     if (vcpu) {
         UNUSED(reg_id && val);
@@ -716,6 +719,9 @@ void rvvm_vmm_vcpu_set_reg(rvvm_vmm_vcpu_t* vcpu, size_t reg_id, uint64_t val)
         } else if (reg_id == RVVM_VMM_REG_X86_MSR_EFER) {
             kvm_prepare_sregs(vcpu, true);
             vcpu->sregs->efer = val;
+        } else if (reg_id == RVVM_VMM_REG_X86_MSR_APICB) {
+            kvm_prepare_sregs(vcpu, true);
+            vcpu->sregs->apic_base = val;
         } else if (reg_id - RVVM_VMM_REG_X86_MSR_BASE < RVVM_VMM_REG_X86_MSR_SIZE) {
             kvm_prepare_msr(vcpu, true);
             vcpu->msr->entries[reg_id - RVVM_VMM_REG_X86_MSR_STAR].data = val;
@@ -740,7 +746,7 @@ uint64_t rvvm_vmm_vcpu_op_addr(rvvm_vmm_vcpu_t* vcpu)
     return 0;
 }
 
-size_t rvvm_vmm_vcpu_op_size(rvvm_vmm_vcpu_t* vcpu)
+uint32_t rvvm_vmm_vcpu_op_size(rvvm_vmm_vcpu_t* vcpu)
 {
     if (vcpu) {
         if (vcpu->run->exit_reason == KVM_EXIT_MMIO) {
