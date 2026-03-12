@@ -555,8 +555,8 @@ uint64_t rvvm_vmm_vcpu_get_reg(rvvm_vmm_vcpu_t* vcpu, size_t reg_id)
 #if defined(RVVM_VMM_X86)
         if (reg_id - RVVM_VMM_REG_X86_GPR_BASE < RVVM_VMM_REG_X86_GPR_SIZE) {
             // Reag general-purpose register
-            uint64_t* gpr = (uint64_t*)kvm_access_x86_gpr(vcpu, reg_id);
             kvm_prepare_gpr(vcpu, false);
+            uint64_t* gpr = (uint64_t*)kvm_access_x86_gpr(vcpu, reg_id);
             if (gpr) {
                 return *gpr;
             }
@@ -582,14 +582,14 @@ uint64_t rvvm_vmm_vcpu_get_reg(rvvm_vmm_vcpu_t* vcpu, size_t reg_id)
             return vcpu->fpu->mxcsr;
         } else if (reg_id - RVVM_VMM_REG_X86_XMM_BASE < RVVM_VMM_REG_X86_XMM_SIZE) {
             // Reag XMM register
-            size_t xmm = (reg_id - RVVM_VMM_REG_X86_XMM_BASE) >> 1;
             kvm_prepare_fpu(vcpu, false);
+            size_t xmm = (reg_id - RVVM_VMM_REG_X86_XMM_BASE) >> 1;
             return read_uint64_le(&vcpu->fpu->xmm[xmm][(reg_id & 1) << 3]);
         } else if (reg_id - RVVM_VMM_REG_X86_SEG_BASE < RVVM_VMM_REG_X86_SEG_SIZE) {
             // Reag segment or descriptor table
+            kvm_prepare_sregs(vcpu, false);
             struct kvm_segment* seg = kvm_access_x86_segment(vcpu, reg_id);
             struct kvm_dtable*  tbl = kvm_access_x86_dtable(vcpu, reg_id);
-            kvm_prepare_sregs(vcpu, false);
             if (seg && !(reg_id & 1)) {
                 return ((uint16_t)seg->limit)                          // Limit (low)
                      | (((uint64_t)(seg->base & 0x00FFFFFFUL)) << 16)  // Base (low)
@@ -615,14 +615,14 @@ uint64_t rvvm_vmm_vcpu_get_reg(rvvm_vmm_vcpu_t* vcpu, size_t reg_id)
                 return (tbl->base >> 32) << 16;
             }
         } else if (reg_id - RVVM_VMM_REG_X86_CR_BASE < RVVM_VMM_REG_X86_CR_SIZE) {
-            uint64_t* cr = (uint64_t*)kvm_access_x86_cr(vcpu, reg_id);
             kvm_prepare_sregs(vcpu, false);
+            uint64_t* cr = (uint64_t*)kvm_access_x86_cr(vcpu, reg_id);
             if (cr) {
                 return *cr;
             }
         } else if (reg_id - RVVM_VMM_REG_X86_DR_BASE < RVVM_VMM_REG_X86_DR_SIZE) {
-            uint64_t* dr = (uint64_t*)kvm_access_x86_dr(vcpu, reg_id);
             kvm_prepare_debug(vcpu, false);
+            uint64_t* dr = (uint64_t*)kvm_access_x86_dr(vcpu, reg_id);
             if (dr) {
                 return *dr;
             }
@@ -631,7 +631,7 @@ uint64_t rvvm_vmm_vcpu_get_reg(rvvm_vmm_vcpu_t* vcpu, size_t reg_id)
             return vcpu->sregs->efer;
         } else if (reg_id - RVVM_VMM_REG_X86_MSR_BASE < RVVM_VMM_REG_X86_MSR_SIZE) {
             kvm_prepare_msr(vcpu, false);
-            return vcpu->msr->entries[reg_id - RVVM_VMM_REG_X86_MSR_BASE].data;
+            return vcpu->msr->entries[reg_id - RVVM_VMM_REG_X86_MSR_STAR].data;
         }
 #endif
     }
@@ -645,8 +645,8 @@ void rvvm_vmm_vcpu_set_reg(rvvm_vmm_vcpu_t* vcpu, size_t reg_id, uint64_t val)
 #if defined(RVVM_VMM_X86)
         if (reg_id - RVVM_VMM_REG_X86_GPR_BASE < RVVM_VMM_REG_X86_GPR_SIZE) {
             // Write general-purpose register
-            uint64_t* gpr = (uint64_t*)kvm_access_x86_gpr(vcpu, reg_id);
             kvm_prepare_gpr(vcpu, true);
+            uint64_t* gpr = (uint64_t*)kvm_access_x86_gpr(vcpu, reg_id);
             if (gpr) {
                 *gpr = val;
             }
@@ -672,14 +672,14 @@ void rvvm_vmm_vcpu_set_reg(rvvm_vmm_vcpu_t* vcpu, size_t reg_id, uint64_t val)
             vcpu->fpu->mxcsr = val;
         } else if (reg_id - RVVM_VMM_REG_X86_XMM_BASE < RVVM_VMM_REG_X86_XMM_SIZE) {
             // Write XMM register
-            size_t xmm = (reg_id - RVVM_VMM_REG_X86_XMM_BASE) >> 1;
             kvm_prepare_fpu(vcpu, true);
+            size_t xmm = (reg_id - RVVM_VMM_REG_X86_XMM_BASE) >> 1;
             write_uint64_le(&vcpu->fpu->xmm[xmm][(reg_id & 1) << 3], val);
         } else if (reg_id - RVVM_VMM_REG_X86_SEG_BASE < RVVM_VMM_REG_X86_SEG_SIZE) {
             // Write segment or descriptor table
+            kvm_prepare_sregs(vcpu, true);
             struct kvm_segment* seg = kvm_access_x86_segment(vcpu, reg_id);
             struct kvm_dtable*  tbl = kvm_access_x86_dtable(vcpu, reg_id);
-            kvm_prepare_sregs(vcpu, true);
             if (seg && !(reg_id & 1)) {
                 seg->limit = ((uint16_t)val) | ((val >> 32) & 0x000F0000UL); // Limit
                 seg->base  = ((seg->base >> 32) << 32)                       // Base
@@ -696,20 +696,20 @@ void rvvm_vmm_vcpu_set_reg(rvvm_vmm_vcpu_t* vcpu, size_t reg_id, uint64_t val)
                 seg->base     = ((uint32_t)seg->base) | ((val >> 16) << 32); // Base (high)
             } else if (tbl && !(reg_id & 1)) {
                 tbl->limit = ((uint16_t)val) | ((val >> 32) & 0x000F0000UL); // Limit
-                tbl->base  = ((seg->base >> 32) << 32)                       // Base
+                tbl->base  = ((tbl->base >> 32) << 32)                       // Base
                           | ((val >> 16) & 0x00FFFFFFUL) | ((val >> 31) & 0xFF000000UL);
             } else if (tbl && (reg_id & 1)) {
-                tbl->base = ((uint32_t)seg->base) | ((val >> 16) << 32); // Base (high)
+                tbl->base = ((uint32_t)tbl->base) | ((val >> 16) << 32); // Base (high)
             }
         } else if (reg_id - RVVM_VMM_REG_X86_CR_BASE < RVVM_VMM_REG_X86_CR_SIZE) {
-            uint64_t* cr = (uint64_t*)kvm_access_x86_cr(vcpu, reg_id);
             kvm_prepare_sregs(vcpu, true);
+            uint64_t* cr = (uint64_t*)kvm_access_x86_cr(vcpu, reg_id);
             if (cr) {
                 *cr = val;
             }
         } else if (reg_id - RVVM_VMM_REG_X86_DR_BASE < RVVM_VMM_REG_X86_DR_SIZE) {
-            uint64_t* dr = (uint64_t*)kvm_access_x86_dr(vcpu, reg_id);
             kvm_prepare_debug(vcpu, true);
+            uint64_t* dr = (uint64_t*)kvm_access_x86_dr(vcpu, reg_id);
             if (dr) {
                 *dr = val;
             }
