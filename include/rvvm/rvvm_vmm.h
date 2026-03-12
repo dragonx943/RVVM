@@ -257,7 +257,7 @@ void* rvvm_vmm_map_phys(rvvm_vmm_mach_t* vmm, uint64_t phys, size_t size);
 /**
  * Unmap VMM physical memory region from process memory
  */
-void* rvvm_vmm_unmap_phys(rvvm_vmm_mach_t* vmm, void* data, size_t size);
+void rvvm_vmm_unmap_phys(rvvm_vmm_mach_t* vmm, void* data, size_t size);
 
 /**
  * Attach existing process memory as VMM physical memory region (For framebuffers, etc)
