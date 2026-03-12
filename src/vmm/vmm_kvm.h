@@ -626,7 +626,7 @@ uint64_t rvvm_vmm_vcpu_get_reg(rvvm_vmm_vcpu_t* vcpu, uint32_t reg_id)
                      | (((uint64_t)(seg->l & 0x01)) << 53)             // Long
                      | (((uint64_t)(seg->db & 0x01)) << 54)            // D/B (Size)
                      | (((uint64_t)(seg->g & 0x01)) << 55)             // Granularity
-                     | (((uint64_t)(uint8_t)(seg->base >> 24)) << 55); // Base (high)
+                     | (((uint64_t)(uint8_t)(seg->base >> 24)) << 56); // Base (high)
             } else if (seg && (reg_id & 1)) {
                 return seg->selector              // Selector
                      | ((seg->base >> 32) << 16); // Base (high)
@@ -634,7 +634,7 @@ uint64_t rvvm_vmm_vcpu_get_reg(rvvm_vmm_vcpu_t* vcpu, uint32_t reg_id)
                 return ((uint16_t)tbl->limit)                          // Limit (low)
                      | (((uint64_t)(tbl->base & 0x00FFFFFFUL)) << 16)  // Base (low)
                      | (((uint64_t)((tbl->limit >> 16) & 0x0F)) << 48) // Limit (high)
-                     | (((uint64_t)(uint8_t)(tbl->base >> 24)) << 55); // Base (high)
+                     | (((uint64_t)(uint8_t)(tbl->base >> 24)) << 56); // Base (high)
             } else if (tbl && (reg_id & 1)) {
                 return (tbl->base >> 32) << 16;
             }
@@ -710,7 +710,7 @@ void rvvm_vmm_vcpu_set_reg(rvvm_vmm_vcpu_t* vcpu, uint32_t reg_id, uint64_t val)
             if (seg && !(reg_id & 1)) {
                 seg->limit = ((uint16_t)val) | ((val >> 32) & 0x000F0000UL); // Limit
                 seg->base  = ((seg->base >> 32) << 32)                       // Base
-                          | ((val >> 16) & 0x00FFFFFFUL) | ((val >> 31) & 0xFF000000UL);
+                          | ((val >> 16) & 0x00FFFFFFUL) | ((val >> 32) & 0xFF000000UL);
                 seg->type    = (val >> 40) & 0x0F; // Type
                 seg->s       = (val >> 44) & 0x01; // System
                 seg->dpl     = (val >> 45) & 0x03; // DPL
@@ -724,7 +724,7 @@ void rvvm_vmm_vcpu_set_reg(rvvm_vmm_vcpu_t* vcpu, uint32_t reg_id, uint64_t val)
             } else if (tbl && !(reg_id & 1)) {
                 tbl->limit = ((uint16_t)val) | ((val >> 32) & 0x000F0000UL); // Limit
                 tbl->base  = ((tbl->base >> 32) << 32)                       // Base
-                          | ((val >> 16) & 0x00FFFFFFUL) | ((val >> 31) & 0xFF000000UL);
+                          | ((val >> 16) & 0x00FFFFFFUL) | ((val >> 32) & 0xFF000000UL);
             } else if (tbl && (reg_id & 1)) {
                 tbl->base = ((uint32_t)tbl->base) | ((val >> 16) << 32); // Base (high)
             }
