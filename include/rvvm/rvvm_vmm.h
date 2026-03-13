@@ -122,7 +122,7 @@ RVVM_EXTERN_C_BEGIN
 
 #define RVVM_VMM_REG_X86_SEG_BASE   0x50000000UL
 #define RVVM_VMM_REG_X86_SEG_SIZE   0x00000014UL
-/* Limit [0:15][48:51], Base[15:39][56:63], Type[40:43], S[44], DPL[45:46], P[47], AVL[52], L[53], DB[54], G[55] */
+/* Limit [0:15][48:51], Base[16:39][56:63], Type[40:43], S[44], DPL[45:46], P[47], AVL[52], L[53], DB[54], G[55] */
 #define RVVM_VMM_REG_X86_SEG_ES     0x50000000UL
 /* Selector[0:15], High Base [16:47] */
 #define RVVM_VMM_REG_X86_SEG_ES_H   0x50000001UL
