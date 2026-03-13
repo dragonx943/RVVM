@@ -718,6 +718,7 @@ void rvvm_vmm_vcpu_set_reg(rvvm_vmm_vcpu_t* vcpu, uint32_t reg_id, uint64_t val)
                 seg->avl     = (val >> 52) & 0x01; // Available for software
                 seg->l       = (val >> 53) & 0x01; // Long
                 seg->db      = (val >> 54) & 0x01; // D/B (Size)
+                seg->g       = (val >> 55) & 0x01; // Granularity
             } else if (seg && (reg_id & 1)) {
                 seg->selector = (uint16_t)val;                               // Selector
                 seg->base     = ((uint32_t)seg->base) | ((val >> 16) << 32); // Base (high)
