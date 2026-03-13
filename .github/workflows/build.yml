@@ -104,7 +104,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v4.1.1
+      uses: actions/checkout@v6
 
     - name: Install Dependencies
       if: matrix.apt-pkgs
@@ -156,7 +156,7 @@ jobs:
       run: ${{ matrix.make }} test
 
     - name: Upload Artifacts
-      uses: actions/upload-artifact@v4.3.1
+      uses: actions/upload-artifact@v7
       with:
         compression-level: 9
         retention-days: 5
