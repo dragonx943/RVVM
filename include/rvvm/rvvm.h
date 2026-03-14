@@ -1,5 +1,5 @@
 /*
-<rvvm/utils.h> - RVVM Public API
+<rvvm/rvvm.h> - RVVM Public API
 Copyright (C) 2020-2025 LekKit <github.com/LekKit>
                         cerg2010cerg2010 <github.com/cerg2010cerg2010>
                         Mr0maks <mr.maks0443@gmail.com>
@@ -14,175 +14,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef _RVVM_PUBLIC_API_H
 #define _RVVM_PUBLIC_API_H
 
-#if defined(__cplusplus)
-#define RVVM_EXTERN_C_BEGIN extern "C" {
-#define RVVM_EXTERN_C_END   }
-#else
-#define RVVM_EXTERN_C_BEGIN
-#define RVVM_EXTERN_C_END
-#endif
+#include <rvvm/rvvm_base.h>
 
 RVVM_EXTERN_C_BEGIN
-
-/* For size_t, NULL */
-#include <stddef.h>
-
-#if defined(__GNUC__) || defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
-/* For bool, uint32_t, etc */
-#if __STDC_VERSION__ < 202311L && !defined(__cplusplus)
-#include <stdbool.h>
-#endif
-#include <stdint.h>
-#else
-/* Pre-C99 translation unit, expose C99 definitions for public headers */
-#if defined(_MSC_VER) && _MSC_VER <= 1500
-typedef int _Bool;
-#endif
-typedef signed char    __int8_t;
-typedef unsigned char  __uint8_t;
-typedef signed short   __int16_t;
-typedef unsigned short __uint16_t;
-typedef signed int     __int32_t;
-typedef unsigned int   __uint32_t;
-#if defined(__LP64__)
-typedef signed long int   __int64_t;
-typedef unsigned long int __uint64_t;
-#else
-typedef signed long long   __int64_t;
-typedef unsigned long long __uint64_t;
-#endif
-/* Replace <stdbool.h> */
-#if !defined(__bool_true_false_are_defined) && !defined(__cplusplus)
-#define __bool_true_false_are_defined 1
-#undef bool
-#define bool _Bool
-#undef false
-#define false 0
-#undef true
-#define true 0
-#endif
-/* Replace <stdint.h> */
-#undef int8_t
-#define int8_t __int8_t
-#undef uint8_t
-#define uint8_t __uint8_t
-#undef int16_t
-#define int16_t __int16_t
-#undef uint16_t
-#define uint16_t __uint16_t
-#undef int32_t
-#define int32_t __int32_t
-#undef uint32_t
-#define uint32_t __uint32_t
-#undef int64_t
-#define int64_t __int64_t
-#undef uint64_t
-#define uint64_t __uint64_t
-#endif
-
-/* Expose inline attribute */
-#undef inline
-#if !(defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L) && defined(_MSC_VER)
-#define inline __inline
-#elif !(defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L) && defined(__GNUC__)
-#define inline __inline__
-#elif !(defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L)
-#define inline
-#endif
-
-#if !defined(RVVM_STATIC) && (defined(_WIN32) || defined(__CYGWIN__)) && defined(USE_LIB)
-/* Mark symbols as dllexport when building shared librvvm */
-#define RVVM_PUBLIC __declspec(dllexport)
-#elif !defined(RVVM_STATIC) && (defined(_WIN32) || defined(__CYGWIN__)) && !defined(RVVM_VERSION)
-/* Mark symbols as dllimport when linking to shared librvvm */
-#define RVVM_PUBLIC __declspec(dllimport)
-#elif !defined(RVVM_STATIC) && defined(__GNUC__) && __GNUC__ >= 4 && (!defined(RVVM_VERSION) || defined(USE_LIB))
-/* Mark symbols as visible when building/linking to shared librvvm */
-#define RVVM_PUBLIC __attribute__((__visibility__("default")))
-#else
-#define RVVM_PUBLIC
-#endif
-
-#if !defined(RVVM_VERSION)
-/**
- * Version string
- */
-#define RVVM_VERSION "0.7-git"
-#endif
-
-/**
- * Increments on each API/ABI breakage, defined to -1 in staging versions with unstable API/ABI
- */
-#define RVVM_ABI_VERSION -1
-
-/**
- * Check librvvm ABI compatibility via rvvm_check_abi(RVVM_ABI_VERSION)
- * \return True if librvvm supports the requested ABI
- */
-RVVM_PUBLIC bool rvvm_check_abi(int abi);
-
-/**
- * @defgroup rvvm_types RVVM Type definitions
- * @addtogroup rvvm_types
- * @{
- */
-
-/**
- * Physical memory address
- */
-typedef uint64_t rvvm_addr_t;
-
-/**
- * Interrupt index
- */
-typedef uint32_t rvvm_irq_t;
-
-/**
- * Machine handle
- */
-typedef struct rvvm_machine_t rvvm_machine_t;
-
-/**
- * CPU handle
- */
-typedef struct rvvm_hart_t rvvm_cpu_t;
-
-/**
- * MMIO device handle
- */
-typedef struct rvvm_mmio_dev_t rvvm_mmio_dev_t;
-
-/**
- * MMIO access handler
- * \param dev    Device handle
- * \param dest   Pointer to load/store data
- * \param offset Offset within device region, always aligned to size
- * \param size   Access size
- * \return True if access was handled by this device
- */
-typedef bool (*rvvm_mmio_handler_t)(rvvm_mmio_dev_t* dev, void* dest, size_t offset, uint8_t size);
-
-/**
- * Interrupt controller handle
- */
-typedef struct rvvm_intc rvvm_intc_t;
-
-/**
- * PCI Bus (PCI Express Root Complex) handle
- */
-typedef struct rvvm_pci_bus pci_bus_t;
-
-/**
- * I2C Bus handle
- */
-typedef struct rvvm_i2c_bus i2c_bus_t;
-
-/**
- * Flattened Device Tree node
- */
-typedef struct fdt_node rvvm_fdt_node_t;
-
-/** @}*/
 
 /**
  * @defgroup rvvm_machine_api RVVM Machine API
@@ -211,6 +45,22 @@ typedef struct fdt_node rvvm_fdt_node_t;
 #define RVVM_OPT_MEM_BASE     0x80000001U /**< Physical RAM base address, Default: 0x80000000 */
 #define RVVM_OPT_MEM_SIZE     0x80000002U /**< Physical RAM size                              */
 #define RVVM_OPT_CPU_COUNT    0x80000003U /**< Amount of CPUs                                 */
+
+/**
+ * MMIO access handler
+ * \param dev    Device handle
+ * \param dest   Pointer to load/store data
+ * \param offset Offset within device region, always aligned to size
+ * \param size   Access size
+ * \return True if access was handled by this device
+ */
+typedef bool (*rvvm_mmio_handler_t)(rvvm_mmio_dev_t* dev, void* dest, size_t offset, uint8_t size);
+
+/**
+ * Check librvvm ABI compatibility via rvvm_check_abi(RVVM_ABI_VERSION)
+ * \return True if librvvm supports the requested ABI
+ */
+RVVM_PUBLIC bool rvvm_check_abi(int abi);
 
 /**
  * Creates a new virtual machine
@@ -568,15 +418,5 @@ RVVM_PUBLIC void rvvm_write_cpu_reg(rvvm_cpu_t* thread, size_t reg_id, rvvm_addr
 /** @}*/
 
 RVVM_EXTERN_C_END
-
-/*
- * Deprecated definitions
- * TODO: Get rid of this!
- */
-
-#undef PUBLIC
-#define PUBLIC RVVM_PUBLIC
-
-typedef struct rvvm_hart_t rvvm_hart_t;
 
 #endif

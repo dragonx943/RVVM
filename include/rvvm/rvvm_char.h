@@ -1,16 +1,16 @@
 /*
-<rvvm/rvvm_char.h> - Character Device (Serial) API
-Copyright (C) 2020-2025  LekKit <github.com/LekKit>
+<rvvm/rvvm_char.h> - RVVM Character Device (Serial) API
+Copyright (C) 2020-2026  LekKit <github.com/LekKit>
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#ifndef _RVVM_CHARDEV_API_H
-#define _RVVM_CHARDEV_API_H
+#ifndef _RVVM_CHAR_API_H
+#define _RVVM_CHAR_API_H
 
-#include <rvvm/rvvm.h>
+#include <rvvm/rvvm_base.h>
 
 RVVM_EXTERN_C_BEGIN
 
@@ -35,11 +35,6 @@ RVVM_EXTERN_C_BEGIN
  */
 #define RVVM_CHAR_RX 0x01 /** Serial data receive available  */
 #define RVVM_CHAR_TX 0x02 /** Serial data transmit available */
-
-/**
- * Character device handle
- */
-typedef struct rvvm_char_dev rvvm_char_dev_t;
 
 /**
  * Character device callbacks

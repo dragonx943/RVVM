@@ -1,6 +1,6 @@
 /*
-<rvvm/rvvm_gpio.h> - General-Purpose IO API
-Copyright (C) 2020-2025  LekKit <github.com/LekKit>
+<rvvm/rvvm_gpio.h> - RVVM GPIO API
+Copyright (C) 2020-2026  LekKit <github.com/LekKit>
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -10,7 +10,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef _RVVM_GPIO_API_H
 #define _RVVM_GPIO_API_H
 
-#include <rvvm/rvvm.h>
+#include <rvvm/rvvm_base.h>
 
 RVVM_EXTERN_C_BEGIN
 
@@ -32,11 +32,6 @@ RVVM_EXTERN_C_BEGIN
  * The rvvm_gpio_dev_t context is reference-counted.
  * Dropping a GPIO handle unreferences all muxed handles.
  */
-
-/**
- * GPIO device handle
- */
-typedef struct rvvm_gpio_dev rvvm_gpio_dev_t;
 
 /**
  * GPIO callbacks

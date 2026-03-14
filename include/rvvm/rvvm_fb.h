@@ -1,6 +1,6 @@
 /*
 <rvvm/rvvm_fb.h> - Framebuffer, RGB format handling
-Copyright (C) 2020-2025  LekKit <github.com/LekKit>
+Copyright (C) 2020-2026  LekKit <github.com/LekKit>
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -10,7 +10,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef _RVVM_FRAMEBUFFER_API_H
 #define _RVVM_FRAMEBUFFER_API_H
 
-#include <rvvm/rvvm.h>
+#include <rvvm/rvvm_base.h>
 
 RVVM_EXTERN_C_BEGIN
 
@@ -62,11 +62,6 @@ RVVM_EXTERN_C_BEGIN
 #define RVVM_RGB_XRGB1555    0x42 /**< Also known as r5g5b5, 15bpp                */
 #define RVVM_RGB_XRGB2101010 0x44 /**< Deep color XRGB with 10-bit color channels */
 #define RVVM_RGB_XBGR2101010 0x54 /**< Deep color XBGR with 10-bit color channels */
-
-/**
- * RGB Pixel format
- */
-typedef uint32_t rvvm_rgb_t;
 
 /**
  * Get bytes per pixel for a pixel format
@@ -230,11 +225,6 @@ static inline bool rvvm_fb_same_scanout(const rvvm_fb_t* fb_a, const rvvm_fb_t* 
  * - Optionally checks rvvm_fbdev_is_dirty() to optimize idle redraw
  * - Reports rvvm_fbdev_flip_done()
  */
-
-/**
- * Framebuffer device (2D GPU) handle
- */
-typedef struct rvvm_fbdev rvvm_fbdev_t;
 
 /**
  * Framebuffer device callbacks

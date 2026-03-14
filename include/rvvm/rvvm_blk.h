@@ -10,7 +10,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef _RVVM_BLKDEV_API_H
 #define _RVVM_BLKDEV_API_H
 
-#include <rvvm/rvvm.h>
+#include <rvvm/rvvm_base.h>
 
 RVVM_EXTERN_C_BEGIN
 
@@ -37,11 +37,6 @@ RVVM_EXTERN_C_BEGIN
 #define RVVM_BLK_SEEK_SET 0x00 /** Set drive head position relative to image beginning  */
 #define RVVM_BLK_SEEK_CUR 0x01 /** Set drive head position relative to current position */
 #define RVVM_BLK_SEEK_END 0x02 /** Set drive head position relative to image end        */
-
-/**
- * Block device image handle
- */
-typedef struct rvvm_blk_dev rvvm_blk_dev_t;
 
 /**
  * Open a block device image

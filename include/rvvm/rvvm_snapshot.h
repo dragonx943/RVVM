@@ -10,8 +10,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef _RVVM_SNAPSHOT_H
 #define _RVVM_SNAPSHOT_H
 
-#include <rvvm/rvvm_blk.h>
-#include <stdint.h>
+#include <rvvm/rvvm_base.h>
 
 RVVM_EXTERN_C_BEGIN
 
@@ -20,11 +19,6 @@ RVVM_EXTERN_C_BEGIN
  * @addtogroup rvvm_snapshot
  * @{
  */
-
-/**
- * Snapshot state handle
- */
-typedef struct rvvm_snapshot_state rvvm_snapshot_t;
 
 /**
  * Open snapshot for reading or writing from block device handle
@@ -70,81 +64,81 @@ RVVM_PUBLIC void rvvm_snapshot_write(rvvm_snapshot_t* snap, const void* data, si
 /**
  * Read opaque data from current snapshot section, advance pointer
  */
-RVVM_PUBLIC void rvvm_snapshot_read(rvvm_snapshot_t* state, void* data, size_t size);
+RVVM_PUBLIC void rvvm_snapshot_read(rvvm_snapshot_t* snap, void* data, size_t size);
 
 /**
  * Write u8 value to current snapshot section, advance pointer
  */
-static inline void rvvm_snapshot_write_u8(rvvm_snapshot_t* state, uint8_t val)
+static inline void rvvm_snapshot_write_u8(rvvm_snapshot_t* snap, uint8_t val)
 {
-    rvvm_snapshot_write(state, &val, sizeof(val));
+    rvvm_snapshot_write(snap, &val, sizeof(val));
 }
 
 /**
  * Read u8 value from current snapshot section, advance pointer
  */
-static inline uint8_t rvvm_snapshot_read_u8(rvvm_snapshot_t* state)
+static inline uint8_t rvvm_snapshot_read_u8(rvvm_snapshot_t* snap)
 {
     uint8_t buf = 0;
-    rvvm_snapshot_read(state, &buf, sizeof(buf));
+    rvvm_snapshot_read(snap, &buf, sizeof(buf));
     return buf;
 }
 
 /**
  * Write little-endian u16 value to current snapshot section, advance pointer
  */
-static inline void rvvm_snapshot_write_u16(rvvm_snapshot_t* state, uint16_t val)
+static inline void rvvm_snapshot_write_u16(rvvm_snapshot_t* snap, uint16_t val)
 {
     uint8_t buf[2] = {(uint8_t)val, (uint8_t)(val >> 8)};
-    rvvm_snapshot_write(state, buf, sizeof(buf));
+    rvvm_snapshot_write(snap, buf, sizeof(buf));
 }
 
 /**
  * Read little-endian u16 value from current snapshot section, advance pointer
  */
-static inline uint16_t rvvm_snapshot_read_u16(rvvm_snapshot_t* state)
+static inline uint16_t rvvm_snapshot_read_u16(rvvm_snapshot_t* snap)
 {
     uint8_t buf[2] = {0};
-    rvvm_snapshot_read(state, buf, sizeof(buf));
+    rvvm_snapshot_read(snap, buf, sizeof(buf));
     return buf[0] | (((uint16_t)buf[1]) << 8);
 }
 
 /**
  * Write little-endian u32 value to current snapshot section, advance pointer
  */
-static inline void rvvm_snapshot_write_u32(rvvm_snapshot_t* state, uint32_t val)
+static inline void rvvm_snapshot_write_u32(rvvm_snapshot_t* snap, uint32_t val)
 {
     uint8_t buf[4] = {(uint8_t)val, (uint8_t)(val >> 8), (uint8_t)(val >> 16), (uint8_t)(val >> 24)};
-    rvvm_snapshot_write(state, buf, sizeof(buf));
+    rvvm_snapshot_write(snap, buf, sizeof(buf));
 }
 
 /**
  * Read little-endian u32 value from current snapshot section, advance pointer
  */
-static inline uint32_t rvvm_snapshot_read_u32(rvvm_snapshot_t* state)
+static inline uint32_t rvvm_snapshot_read_u32(rvvm_snapshot_t* snap)
 {
     uint8_t buf[4] = {0};
-    rvvm_snapshot_read(state, buf, sizeof(buf));
+    rvvm_snapshot_read(snap, buf, sizeof(buf));
     return buf[0] | (((uint32_t)buf[1]) << 8) | (((uint32_t)buf[2]) << 16) | (((uint32_t)buf[3]) << 24);
 }
 
 /**
  * Write little-endian u64 value to current snapshot section, advance pointer
  */
-static inline void rvvm_snapshot_write_u64(rvvm_snapshot_t* state, uint64_t val)
+static inline void rvvm_snapshot_write_u64(rvvm_snapshot_t* snap, uint64_t val)
 {
     uint8_t buf[8] = {(uint8_t)val,         (uint8_t)(val >> 8),  (uint8_t)(val >> 16), (uint8_t)(val >> 24),
                       (uint8_t)(val >> 32), (uint8_t)(val >> 40), (uint8_t)(val >> 48), (uint8_t)(val >> 56)};
-    rvvm_snapshot_write(state, buf, sizeof(buf));
+    rvvm_snapshot_write(snap, buf, sizeof(buf));
 }
 
 /**
  * Read little-endian u64 value from current snapshot section, advance pointer
  */
-static inline uint64_t rvvm_snapshot_read_u64(rvvm_snapshot_t* state)
+static inline uint64_t rvvm_snapshot_read_u64(rvvm_snapshot_t* snap)
 {
     uint8_t buf[8] = {0};
-    rvvm_snapshot_read(state, buf, sizeof(buf));
+    rvvm_snapshot_read(snap, buf, sizeof(buf));
     return buf[0] | (((uint64_t)buf[1]) << 8)                      /**/
          | (((uint64_t)buf[2]) << 16) | (((uint64_t)buf[3]) << 24) /**/
          | (((uint64_t)buf[4]) << 32) | (((uint64_t)buf[5]) << 40) /**/
