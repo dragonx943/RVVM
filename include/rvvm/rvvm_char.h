@@ -68,6 +68,11 @@ typedef struct {
      */
     void* (*aux)(rvvm_char_dev_t* chardev, uint32_t aux, void* ptr);
 
+    /**
+     * Suspend/resume, serialize to snapshot if non-null
+     */
+    void (*suspend)(rvvm_char_dev_t* chardev, rvvm_snapshot_t* snap, bool resume);
+
 } rvvm_char_cb_t;
 
 /**
@@ -144,6 +149,12 @@ RVVM_PUBLIC size_t rvvm_char_write(rvvm_char_dev_t* chardev, const void* buffer,
  * Auxillary operation on other side, similar to ioctl()
  */
 RVVM_PUBLIC void* rvvm_char_aux(rvvm_char_dev_t* chardev, uint32_t aux, void* ptr);
+
+/**
+ * Request device suspend/resume
+ * \param snap Snapshot state to serialize into if non-null
+ */
+RVVM_PUBLIC void rvvm_char_suspend(rvvm_char_dev_t* chardev, rvvm_snapshot_t* snap, bool resume);
 
 /** @}*/
 
