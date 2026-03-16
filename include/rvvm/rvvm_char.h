@@ -19,28 +19,37 @@ RVVM_EXTERN_C_BEGIN
  * @addtogroup rvvm_char_api
  * @{
  *
- * Serial controller and character device both hold a handle to rvvm_char_dev_t,
- * and may set up callbacks on reading/writing serial data by another side
+ * Serial controller and serial device both hold a handle to rvvm_char_dev_t,
+ * and may set up callbacks on reading/writing serial data by the other side
  *
- * Both may also bi-directionally read/write serial data instead of callbacks,
- * which may be more suitable for certain API usecases
+ * The rvvm_char_dev_t context contains a FIFO, similar to a pipe buffer, and
+ * is internally synchronized - callbacks are never called from multiple threads
  *
- * The rvvm_char_dev_t context contains an RX/TX FIFO, akin to a pipe buffer
+ * Both ends may always read/write serial data via FIFO if the other end does
+ * not immediately consume all the data via callback
  *
- * The rvvm_char_dev_t context is reference-counted
+ * The callbacks may be optionally set to NULL to purely use the FIFO
+ *
+ * The write callback may return zero, and used as a notification callback
+ *
+ * Both ends should be explicitly paired, and receive a close callback when
+ * the other side frees its character device handle
+ *
+ * The close callback should be handled if the device is considered to be owned
+ * by the other side (Serial controller, etc) to free its private data / handle
  */
 
 /*
  * Serial data availability flags for rvvm_char_poll()
  */
-#define RVVM_CHAR_RX            0x01 /** Serial data receive available  */
-#define RVVM_CHAR_TX            0x02 /** Serial data transmit available */
+#define RVVM_CHAR_RX            0x01 /** Available data to read */
+#define RVVM_CHAR_TX            0x02 /** Available space to write */
 
 /*
- * Auxillary codes for rvvm_char_aux()
+ * Auxiliary codes for rvvm_char_aux()
  */
-#define RVVM_CHAR_AUX_I2C_START 0x00 /** Start I2C transmission */
-#define RVVM_CHAR_AUX_I2C_STOP  0x01 /** Stop I2C transmission */
+#define RVVM_CHAR_AUX_I2C_START 0x1000 /** Start I2C, ptr is non-zero on write */
+#define RVVM_CHAR_AUX_I2C_STOP  0x1001 /** Stop I2C */
 
 /**
  * Character device callbacks
@@ -49,59 +58,64 @@ RVVM_EXTERN_C_BEGIN
  */
 typedef struct {
     /**
-     * Free callback (All references are dropped)
-     */
-    void (*free)(rvvm_char_dev_t* chardev);
-
-    /**
-     * Read callback (Other side wants to pull data out)
+     * Read callback
      */
     size_t (*read)(rvvm_char_dev_t* chardev, void* buffer, size_t size);
 
     /**
-     * Write callback (Other side wants to push data in)
+     * Write callback
      */
     size_t (*write)(rvvm_char_dev_t* chardev, const void* buffer, size_t size);
 
     /**
-     * Auxillary callback for special devices, like I2C
+     * Auxiliary callback for special devices, like I2C
      */
-    void* (*aux)(rvvm_char_dev_t* chardev, uint32_t aux, void* ptr);
+    int32_t (*aux)(rvvm_char_dev_t* chardev, uint32_t aux, void* ptr);
 
     /**
      * Suspend/resume, serialize to snapshot if non-null
      */
     void (*suspend)(rvvm_char_dev_t* chardev, rvvm_snapshot_t* snap, bool resume);
 
+    /**
+     * Close callback
+     *
+     * Should be handled if this device is owned by other side,
+     * and may be ignored if current device is owned elsewhere
+     */
+    void (*close)(rvvm_char_dev_t* chardev);
+
 } rvvm_char_cb_t;
 
 /**
  * Create a new character device
  *
- * \param cb   Character device callbacks or NULL
+ * \param cb   Character device callbacks
  * \param data Private character device data to obtain via rvvm_char_get_data()
- * \return New character device handle
+ * \return Character device handle
  */
 RVVM_PUBLIC rvvm_char_dev_t* rvvm_char_init(const rvvm_char_cb_t* cb, void* data);
 
 /**
- * Pair character devices into a pipe
+ * Free character device handle
  *
- * Paired devices share their reference count, so they are
- * both freed whenever both sides drop their char references
+ * Unpairs the character device before finally calling close callback on the other side
+ *
+ * \param chardev Character device handle
+ */
+RVVM_PUBLIC void rvvm_char_free(rvvm_char_dev_t* chardev);
+
+/**
+ * Pair character devices, providing a pipe-like mechanism
+ *
+ * The previous pair established on both devices is torn down
  */
 RVVM_PUBLIC void rvvm_char_pair(rvvm_char_dev_t* a, rvvm_char_dev_t* b);
 
 /**
  * Unpair character devices back
  *
- * This may be done on serial controller deinit, which doesn't expect a
- * free callback to ever be called, and only goes down with the machine
- *
- * Example:
- * if (!rvvm_char_drop_ref(chardev)) {
- *     rvvm_char_unpair(chardev);
- * }
+ * \param chardev Character device handle
  */
 static inline void rvvm_char_unpair(rvvm_char_dev_t* chardev)
 {
@@ -109,50 +123,56 @@ static inline void rvvm_char_unpair(rvvm_char_dev_t* chardev)
 }
 
 /**
- * Modify / Get character device reference count
- *
- * \param  ref Increment refcount (May be zero or negative)
- * \return Resulting refcount
- */
-RVVM_PUBLIC uint32_t rvvm_char_refcount(rvvm_char_dev_t* chardev, int32_t ref);
-
-/**
- * Drop character device reference
- * \return True if the character device/pair was freed
- */
-static inline bool rvvm_char_drop_ref(rvvm_char_dev_t* chardev)
-{
-    return !rvvm_char_refcount(chardev, -1);
-}
-
-/**
  * Get private character device data
+ *
+ * \param chardev Character device handle
+ * \return Own private data passed to rvvm_char_init()
  */
 RVVM_PUBLIC void* rvvm_char_get_data(rvvm_char_dev_t* chardev);
 
 /**
- * Poll serial data availability on character device side
+ * Poll serial data availability
+ *
+ * \param chardev Character device handle
+ * \return Combination of RVVM_CHAR_RX/RVVM_CHAR_TX bits based on data availability
  */
 RVVM_PUBLIC uint32_t rvvm_char_poll(rvvm_char_dev_t* chardev);
 
 /**
- * Read serial data inbound to character device
+ * Read serial data
+ *
+ * \param chardev Character device handle
+ * \param data    Serial data buffer
+ * \param size    Buffer capacity
+ * \return Amount of bytes actually read
  */
-RVVM_PUBLIC size_t rvvm_char_read(rvvm_char_dev_t* chardev, void* buffer, size_t size);
+RVVM_PUBLIC size_t rvvm_char_read(rvvm_char_dev_t* chardev, void* data, size_t size);
 
 /**
- * Write serial data outbound from character device
+ * Write serial data
+ *
+ * \param chardev Character device handle
+ * \param data    Serial data buffer
+ * \param size    Serial data length
+ * \return Amount of bytes actually written
  */
-RVVM_PUBLIC size_t rvvm_char_write(rvvm_char_dev_t* chardev, const void* buffer, size_t size);
+RVVM_PUBLIC size_t rvvm_char_write(rvvm_char_dev_t* chardev, const void* data, size_t size);
 
 /**
- * Auxillary operation on other side, similar to ioctl()
+ * Auxiliary operation on other side, similar to ioctl()
+ *
+ * \param chardev Character device handle
+ * \param aux     Auxiliary operation code
+ * \param ptr     Auxiliary data for operation
+ * \return Auxiliary return value from aux callback
  */
-RVVM_PUBLIC void* rvvm_char_aux(rvvm_char_dev_t* chardev, uint32_t aux, void* ptr);
+RVVM_PUBLIC int32_t rvvm_char_aux(rvvm_char_dev_t* chardev, uint32_t aux, void* ptr);
 
 /**
- * Request device suspend/resume
- * \param snap Snapshot state to serialize into if non-null
+ * Request device suspend/resume on other side
+ *
+ * \param chardev Character device handle
+ * \param snap    Snapshot state to serialize into if non-null
  */
 RVVM_PUBLIC void rvvm_char_suspend(rvvm_char_dev_t* chardev, rvvm_snapshot_t* snap, bool resume);
 
