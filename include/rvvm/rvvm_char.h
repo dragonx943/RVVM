@@ -32,6 +32,10 @@ RVVM_EXTERN_C_BEGIN
  *
  * The write callback may return zero, and used as a notification callback
  *
+ * Periodic polling mode may be enabled, which will coalesce read/write
+ * callbacks, and only transfer data upon polling or when FIFO is filled up,
+ * which optimizes operation of slow character devices (Like host terminals)
+ *
  * Both ends should be explicitly paired, and receive a close callback when
  * the other side frees its character device handle
  *
@@ -131,12 +135,13 @@ static inline void rvvm_char_unpair(rvvm_char_dev_t* chardev)
 RVVM_PUBLIC void* rvvm_char_get_data(rvvm_char_dev_t* chardev);
 
 /**
- * Poll serial data availability
+ * Get line status, optional periodic polling
  *
  * \param chardev Character device handle
+ * \param polling Perform periodic polling, if desired, disables event-driven model
  * \return Combination of RVVM_CHAR_RX/RVVM_CHAR_TX bits based on data availability
  */
-RVVM_PUBLIC uint32_t rvvm_char_poll(rvvm_char_dev_t* chardev);
+RVVM_PUBLIC uint32_t rvvm_char_poll(rvvm_char_dev_t* chardev, bool polling);
 
 /**
  * Read serial data
