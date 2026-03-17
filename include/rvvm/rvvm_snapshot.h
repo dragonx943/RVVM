@@ -22,128 +22,77 @@ RVVM_EXTERN_C_BEGIN
 
 /**
  * Open snapshot for reading or writing from block device handle
+ *
+ * \param blk Block device handle
+ * \param wr  True to begin writing state to snapshot
+ * \return Snapshot handle
  */
-RVVM_PUBLIC rvvm_snapshot_t* rvvm_snapshot_open(rvvm_blk_dev_t* blk, bool write);
+RVVM_PUBLIC rvvm_snapshot_t* rvvm_snapshot_open(rvvm_blk_dev_t* blk, bool wr);
 
 /**
- * Close snapshot handle, sync to backing storage after writing
+ * Close snapshot handle, finalize and sync to backing storage after writing
+ *
+ * \param snap Snapshot handle
  */
 RVVM_PUBLIC void rvvm_snapshot_close(rvvm_snapshot_t* snap);
 
 /**
- * Get or set failure flag on snapshot
+ * Get and clear failure flag on snapshot since last call
  *
  * Failure flag means either:
  * - IO error on backing block device storage
  * - Requested section wasn't found when reading
  * - Tried to read beyond end of section
- * - Device (de)serialization manually called rvvm_snapshot_fail(snap, true)
  *
- * If failure flag is set, the restored machine state is likely incomplete.
+ * If failure flag is set, the restored state is likely incomplete
+ *
  * However, it might still be worth a try to load partial state after
  * incompatible migration, and print a warning. The broken devices can be
- * re-hot-plugged to fix them on guest side after that.
- */
-RVVM_PUBLIC bool rvvm_snapshot_fail(rvvm_snapshot_t* snap, bool fail);
-
-/**
- * Select snapshot section (For separate device states), reset pointer
+ * re-hot-plugged to fix them on guest side after that
  *
- * Example: "nvme-v0.7"
+ * \param snap Snapshot handle
+ * \param fail True to set failure flag, or current failure flag is returned and cleared
+ * \return Failure flag
+ */
+RVVM_PUBLIC bool rvvm_snapshot_fail(rvvm_snapshot_t* snap);
+
+/**
+ * Select next snapshot section, reset data pointer
  *
- * When reading: Creates new section with same name
- * When writing: Loads next section with same name
+ * Every device state should be stored in a separate section, optionally versioned
+ *
+ * When writing to snapshot:
+ * - Creates new section on each call, finalizes previous section
+ * When reading from snapshot:
+ * - Sequentially opens next section with the requested name
+ * - Sets failure flag if the section is missing
+ *
+ * \param snap Snapshot handle
+ * \param name Section name for reading/writing
+ * \return True if we are writing state to snapshot
  */
-RVVM_PUBLIC void rvvm_snapshot_section(rvvm_snapshot_t* snap, const char* name);
+RVVM_PUBLIC bool rvvm_snapshot_section(rvvm_snapshot_t* snap, const char* name);
 
 /**
- * Write opaque data to current snapshot section, advance pointer
+ * Read/write opaque data to current snapshot section, advance pointer
+ *
+ * The read/write direction is decided by current snapshot open mode
+ *
+ * Sets failure flag on over-reading beyond the current section
+ *
+ * \param snap Snapshot handle
+ * \param data Opaque data pointer
+ * \param size Opaque data size
  */
-RVVM_PUBLIC void rvvm_snapshot_write(rvvm_snapshot_t* snap, const void* data, size_t size);
+RVVM_PUBLIC void rvvm_snapshot_data(rvvm_snapshot_t* snap, void* data, size_t size);
 
 /**
- * Read opaque data from current snapshot section, advance pointer
+ * Read/write opaque field to current snapshot section, advance pointer
+ *
+ * \param snap  Snapshot handle
+ * \param field Opaque variable field
  */
-RVVM_PUBLIC void rvvm_snapshot_read(rvvm_snapshot_t* snap, void* data, size_t size);
-
-/**
- * Write u8 value to current snapshot section, advance pointer
- */
-static inline void rvvm_snapshot_write_u8(rvvm_snapshot_t* snap, uint8_t val)
-{
-    rvvm_snapshot_write(snap, &val, sizeof(val));
-}
-
-/**
- * Read u8 value from current snapshot section, advance pointer
- */
-static inline uint8_t rvvm_snapshot_read_u8(rvvm_snapshot_t* snap)
-{
-    uint8_t buf = 0;
-    rvvm_snapshot_read(snap, &buf, sizeof(buf));
-    return buf;
-}
-
-/**
- * Write little-endian u16 value to current snapshot section, advance pointer
- */
-static inline void rvvm_snapshot_write_u16(rvvm_snapshot_t* snap, uint16_t val)
-{
-    uint8_t buf[2] = {(uint8_t)val, (uint8_t)(val >> 8)};
-    rvvm_snapshot_write(snap, buf, sizeof(buf));
-}
-
-/**
- * Read little-endian u16 value from current snapshot section, advance pointer
- */
-static inline uint16_t rvvm_snapshot_read_u16(rvvm_snapshot_t* snap)
-{
-    uint8_t buf[2] = {0};
-    rvvm_snapshot_read(snap, buf, sizeof(buf));
-    return buf[0] | (((uint16_t)buf[1]) << 8);
-}
-
-/**
- * Write little-endian u32 value to current snapshot section, advance pointer
- */
-static inline void rvvm_snapshot_write_u32(rvvm_snapshot_t* snap, uint32_t val)
-{
-    uint8_t buf[4] = {(uint8_t)val, (uint8_t)(val >> 8), (uint8_t)(val >> 16), (uint8_t)(val >> 24)};
-    rvvm_snapshot_write(snap, buf, sizeof(buf));
-}
-
-/**
- * Read little-endian u32 value from current snapshot section, advance pointer
- */
-static inline uint32_t rvvm_snapshot_read_u32(rvvm_snapshot_t* snap)
-{
-    uint8_t buf[4] = {0};
-    rvvm_snapshot_read(snap, buf, sizeof(buf));
-    return buf[0] | (((uint32_t)buf[1]) << 8) | (((uint32_t)buf[2]) << 16) | (((uint32_t)buf[3]) << 24);
-}
-
-/**
- * Write little-endian u64 value to current snapshot section, advance pointer
- */
-static inline void rvvm_snapshot_write_u64(rvvm_snapshot_t* snap, uint64_t val)
-{
-    uint8_t buf[8] = {(uint8_t)val,         (uint8_t)(val >> 8),  (uint8_t)(val >> 16), (uint8_t)(val >> 24),
-                      (uint8_t)(val >> 32), (uint8_t)(val >> 40), (uint8_t)(val >> 48), (uint8_t)(val >> 56)};
-    rvvm_snapshot_write(snap, buf, sizeof(buf));
-}
-
-/**
- * Read little-endian u64 value from current snapshot section, advance pointer
- */
-static inline uint64_t rvvm_snapshot_read_u64(rvvm_snapshot_t* snap)
-{
-    uint8_t buf[8] = {0};
-    rvvm_snapshot_read(snap, buf, sizeof(buf));
-    return buf[0] | (((uint64_t)buf[1]) << 8)                      /**/
-         | (((uint64_t)buf[2]) << 16) | (((uint64_t)buf[3]) << 24) /**/
-         | (((uint64_t)buf[4]) << 32) | (((uint64_t)buf[5]) << 40) /**/
-         | (((uint64_t)buf[6]) << 48) | (((uint64_t)buf[7]) << 56);
-}
+#define rvvm_snapshot_field(snap, field) rvvm_snapshot_data(snap, &(field), sizeof(field))
 
 /** @}*/
 
