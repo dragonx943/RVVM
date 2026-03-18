@@ -55,7 +55,7 @@ typedef unsigned long long __uint64_t;
 #undef false
 #define false 0
 #undef true
-#define true 0
+#define true 1
 #endif
 /* Replace <stdint.h> */
 #undef int8_t
@@ -143,9 +143,9 @@ typedef struct rvvm_machine_t rvvm_machine_t;
 typedef struct rvvm_hart_t rvvm_cpu_t;
 
 /**
- * Register-based (MMIO/Port IO) device handle
+ * Register-based (MMIO / Port IO) device handle
  */
-typedef struct rvvm_reg_device rvvm_reg_dev_t;
+typedef struct rvvm_reg_dev rvvm_reg_dev_t;
 
 /**
  * Character device handle
@@ -190,7 +190,7 @@ typedef struct rvvm_fbdev rvvm_fbdev_t;
 /**
  * Snapshot state handle
  */
-typedef struct rvvm_snapshot_state rvvm_snapshot_t;
+typedef struct rvvm_snapshot rvvm_snapshot_t;
 
 /**
  * Flattened Device Tree node handle
