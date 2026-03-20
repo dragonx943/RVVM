@@ -54,6 +54,45 @@ static const uint32_t riscv_fli_table[32] = {
     0x7FC00000UL, // Canonical NaN
 };
 
+static void riscv_prepare_rmm(rvvm_hart_t* vm, const uint32_t insn, const size_t rs1, const size_t rs2)
+{
+    bool neg = false;
+
+    // Decide the sign of the output
+    switch (insn & 0xFE000000UL) {
+        case 0x00000000UL: // fadd.s
+            neg = fpu_signbit32(fpu_add32(riscv_view_s(vm, rs1), riscv_view_s(vm, rs2)));
+            break;;
+        case 0x02000000UL: // fadd.d
+            neg = fpu_signbit64(fpu_add64(riscv_view_d(vm, rs1), riscv_view_d(vm, rs2)));
+            break;
+        case 0x08000000UL: // fsub.s
+            neg = fpu_signbit32(fpu_sub32(riscv_view_s(vm, rs1), riscv_view_s(vm, rs2)));
+            break;
+        case 0x0A000000UL: // fsub.d
+            neg = fpu_signbit64(fpu_sub64(riscv_view_d(vm, rs1), riscv_view_d(vm, rs2)));
+            break;
+        case 0x10000000UL: // fmul.s
+        case 0x18000000UL: // fdiv.s
+            neg = fpu_signbit32(riscv_view_s(vm, rs1)) != fpu_signbit32(riscv_view_s(vm, rs2));
+            break;
+        case 0x12000000UL: // fmul.d
+        case 0x1A000000UL: // fdiv.d
+            neg = fpu_signbit64(riscv_view_d(vm, rs1)) != fpu_signbit64(riscv_view_d(vm, rs2));
+            break;
+        default:
+            neg = fpu_signbit64(riscv_view_d(vm, rs1));
+            break;
+    }
+
+    // Round to positive/negative infinity based on the result sign
+    if (neg) {
+        fpu_set_rounding_mode(FPU_LIB_ROUND_DN);
+    } else {
+        fpu_set_rounding_mode(FPU_LIB_ROUND_UP);
+    }
+}
+
 slow_path func_opt_size void riscv_emulate_f_opc_op(rvvm_hart_t* vm, const uint32_t insn)
 {
     const size_t   rds = bit_ext_u32(insn, 7, 5);
@@ -62,6 +101,12 @@ slow_path func_opt_size void riscv_emulate_f_opc_op(rvvm_hart_t* vm, const uint3
     const size_t   rs2 = bit_ext_u32(insn, 20, 5);
 
     if (likely(riscv_fpu_is_enabled(vm))) {
+
+        if (unlikely(vm->csr.fcsr >> 5 == 0x04)) {
+            // Handle RMM rounding
+            riscv_prepare_rmm(vm, insn, rs1, rs2);
+        }
+
         switch (insn & 0xFE007000UL) {
             /*
              * FPU computations
