@@ -46,14 +46,16 @@ RVVM_EXTERN_C_BEGIN
 /*
  * Serial data availability flags for rvvm_char_poll()
  */
-#define RVVM_CHAR_RX            0x01 /** Available data to read */
-#define RVVM_CHAR_TX            0x02 /** Available space to write */
+#define RVVM_CHAR_RX            0x01 /**< Available data to read   */
+#define RVVM_CHAR_TX            0x02 /**< Available space to write */
 
 /*
  * Auxiliary codes for rvvm_char_aux()
  */
-#define RVVM_CHAR_AUX_I2C_START 0x1000 /** Start I2C, ptr is non-zero on write */
-#define RVVM_CHAR_AUX_I2C_STOP  0x1001 /** Stop I2C */
+#define RVVM_CHAR_AUX_PAIRED    0x0000 /**< Paired with other character device  */
+#define RVVM_CHAR_AUX_UNPAIRED  0x0001 /**< Unpaired                            */
+#define RVVM_CHAR_AUX_I2C_START 0x1000 /**< Start I2C, ptr is non-zero on write */
+#define RVVM_CHAR_AUX_I2C_STOP  0x1001 /**< Stop I2C                            */
 
 /**
  * Character device callbacks
@@ -84,8 +86,8 @@ typedef struct {
     /**
      * Close callback
      *
-     * Should be handled if this device is owned by other side,
-     * and may be ignored if current device is owned elsewhere
+     * Should be handled if this chardev is owned by other side,
+     * and may be ignored if current chardev is owned elsewhere
      */
     void (*close)(rvvm_char_dev_t* chardev);
 
@@ -103,7 +105,9 @@ RVVM_PUBLIC rvvm_char_dev_t* rvvm_char_init(const rvvm_char_cb_t* cb, void* data
 /**
  * Free character device handle
  *
- * Unpairs the character device before finally calling close callback on the other side
+ * Calls close callback on both sides, unpairing character devices beforehand
+ *
+ * May be safely called recursively from close callback, it is simply ignored
  *
  * \param chardev Character device handle
  */

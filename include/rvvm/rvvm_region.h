@@ -224,7 +224,7 @@ static inline void rvvm_region_relocate(rvvm_reg_dev_t* dev, rvvm_addr_t addr)
     const rvvm_region_desc_t* orig = rvvm_region_get_desc(dev);
     if (orig) {
         rvvm_region_desc_t desc = *orig;
-        // Replace description address
+        /* Replace description address */
         desc.addr = addr;
         rvvm_region_update_desc(dev, &desc);
     }
