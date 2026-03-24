@@ -143,7 +143,7 @@ typedef struct rvvm_machine_t rvvm_machine_t;
 typedef struct rvvm_hart_t rvvm_cpu_t;
 
 /**
- * Register-based (MMIO / Port IO) device handle
+ * Region-based device handle
  */
 typedef struct rvvm_reg_dev rvvm_reg_dev_t;
 
