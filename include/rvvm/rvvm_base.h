@@ -128,6 +128,12 @@ typedef uint64_t rvvm_addr_t;
 typedef uint32_t rvvm_irq_t;
 
 /**
+ * PCI bus address
+ * Encodes func [0:2] dev [3:7] bus [8:15] domain [16:31]
+ */
+typedef uint32_t rvvm_pci_addr_t;
+
+/**
  * Pixel RGB format enum
  */
 typedef uint32_t rvvm_rgb_t;
@@ -168,9 +174,24 @@ typedef struct rvvm_blk_dev rvvm_blk_dev_t;
 typedef struct rvvm_intc rvvm_intc_t;
 
 /**
- * PCI/PCIe bus handle
+ * Framebuffer device (2D GPU) handle
+ */
+typedef struct rvvm_fbdev rvvm_fbdev_t;
+
+/**
+ * Snapshot state handle
+ */
+typedef struct rvvm_snapshot rvvm_snapshot_t;
+
+/**
+ * PCI / PCIe bus handle
  */
 typedef struct rvvm_pci_bus rvvm_pci_bus_t;
+
+/*
+ * PCI function handle
+ */
+typedef struct rvvm_pci_function rvvm_pci_func_t;
 
 /**
  * USB bus handle
@@ -181,16 +202,6 @@ typedef struct rvvm_usb_bus rvvm_usb_bus_t;
  * I2C bus handle
  */
 typedef struct rvvm_i2c_bus rvvm_i2c_bus_t;
-
-/**
- * Framebuffer device (2D GPU) handle
- */
-typedef struct rvvm_fbdev rvvm_fbdev_t;
-
-/**
- * Snapshot state handle
- */
-typedef struct rvvm_snapshot rvvm_snapshot_t;
 
 /**
  * Flattened Device Tree node handle
