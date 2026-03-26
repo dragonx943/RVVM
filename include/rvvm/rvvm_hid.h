@@ -34,7 +34,10 @@ RVVM_EXTERN_C_BEGIN
 #define RVVM_SCROLL_DOWN  1    /**< Scroll one unit downward */
 
 /*
- * Mouse implementation callbacks (Nullable)
+ * Mouse implementation callbacks
+ *
+ * Must be valid during mouse lifetime, or static
+ * Callbacks are optional (Nullable, no-op then)
  */
 typedef struct {
     /**
@@ -62,6 +65,9 @@ typedef struct {
 /**
  * Create mouse handle
  *
+ * Handles are dual-owned on implementation and user side,
+ * and should be detached + freed on both sides
+ *
  * \return Mouse handle
  */
 RVVM_PUBLIC rvvm_mouse_t* rvvm_mouse_init(void);
@@ -84,14 +90,14 @@ RVVM_PUBLIC void rvvm_mouse_register(rvvm_mouse_t* mouse, const rvvm_mouse_cb_t*
 RVVM_PUBLIC void* rvvm_mouse_data(rvvm_mouse_t* mouse);
 
 /**
- * Disown mouse handle from mouse implementation
+ * Detach mouse handle from mouse implementation
  *
  * Must be called when mouse implementation is freed on machine side
  * Mouse handle will exist till it's both disowned & freed
  *
  * \param mouse Mouse handle
  */
-static inline void rvvm_mouse_disown(rvvm_mouse_t* mouse)
+static inline void rvvm_mouse_detach(rvvm_mouse_t* mouse)
 {
     rvvm_mouse_register(mouse, NULL, NULL);
 }
@@ -138,12 +144,24 @@ static inline void rvvm_mouse_release(rvvm_mouse_t* mouse, uint32_t btns)
 }
 
 /**
+ * Scroll mouse horizontally / vertically
+ *
+ * \param mouse Mouse handle
+ * \param x     Horizontal scroll offset
+ * \param y     Vertical scroll offset
+ */
+RVVM_PUBLIC void rvvm_mouse_scroll_xy(rvvm_mouse_t* mouse, int32_t x, int32_t y);
+
+/**
  * Scroll mouse wheel
  *
  * \param mouse Mouse handle
  * \param off   Scroll offset (Positive offset goes downward)
  */
-RVVM_PUBLIC void rvvm_mouse_scroll(rvvm_mouse_t* mouse, int32_t off);
+static inline void rvvm_mouse_scroll(rvvm_mouse_t* mouse, int32_t off)
+{
+    rvvm_mouse_scroll_xy(mouse, 0, off);
+}
 
 /**
  * Set tablet resolution
@@ -200,6 +218,70 @@ static inline void rvvm_mouse_place(rvvm_mouse_t* mouse, int32_t x, int32_t y)
  * @{
  */
 
+/*
+ * Keyboard implementation callbacks
+ *
+ * Must be valid during keyboard lifetime, or static
+ * Callbacks are optional (Nullable, no-op then)
+ */
+typedef struct {
+    /**
+     * Set keyboard key state
+     */
+    void (*set_key)(rvvm_keyboard_t* kb, rvvm_keycode_t key, bool set);
+
+} rvvm_keyboard_cb_t;
+
+/**
+ * Create keyboard handle
+ *
+ * Handles are dual-owned on implementation and user side,
+ * and should be detached + freed on both sides
+ *
+ * \return Keyboard handle
+ */
+RVVM_PUBLIC rvvm_keyboard_t* rvvm_keyboard_init(void);
+
+/**
+ * Register keyboard implementation on a handle
+ *
+ * \param kb   Keyboard handle
+ * \param cb   Keyboard callbacks
+ * \param data Keyboard private data
+ */
+RVVM_PUBLIC void rvvm_keyboard_register(rvvm_keyboard_t* kb, const rvvm_keyboard_cb_t* cb, void* data);
+
+/**
+ * Get private keyboard implementation data
+ *
+ * \param kb Keyboard handle
+ * \return Keyboard implementation private data
+ */
+RVVM_PUBLIC void* rvvm_keyboard_data(rvvm_keyboard_t* kb);
+
+/**
+ * Detach keyboard handle from keyboard implementation
+ *
+ * Must be called when keyboard implementation is freed on machine side
+ * Keyboard handle will exist till it's both disowned & freed
+ *
+ * \param kb Keyboard handle
+ */
+static inline void rvvm_keyboard_detach(rvvm_keyboard_t* kb)
+{
+    rvvm_keyboard_register(kb, NULL, NULL);
+}
+
+/**
+ * Free keyboard handle from keyboard user side
+ *
+ * Must be called when keyboard is not intended to be used anymore
+ * Keyboard handle will exist till it's both disowned & freed
+ *
+ * \param kb Keyboard handle
+ */
+RVVM_PUBLIC void rvvm_keyboard_free(rvvm_keyboard_t* kb);
+
 /**
  * Set keyboard key state
  *
@@ -235,7 +317,7 @@ static inline void rvvm_keyboard_release(rvvm_keyboard_t* kb, rvvm_keycode_t key
  * Type text string over guest keyboard
  *
  * \param kb  Keyboard handle
- * \param str Text string (English text only)
+ * \param str Text string (ASCII only)
  */
 RVVM_PUBLIC void rvvm_keyboard_type_text(rvvm_keyboard_t* kb, const char* str);
 
@@ -308,7 +390,7 @@ RVVM_PUBLIC void rvvm_keyboard_type_text(rvvm_keyboard_t* kb, const char* str);
 #define RVVM_KEY_LEFTBRACE          0x2F /**< Left brace or bracket             */
 #define RVVM_KEY_RIGHTBRACE         0x30 /**< Right brace or bracket            */
 #define RVVM_KEY_BACKSLASH          0x31 /**< Backslash                         */
-#define RVVM_KEY_HASHTILDE          0x32 /**< Hash, tilde (Huh, never seen one) */
+#define RVVM_KEY_HASHTILDE          0x32 /**< Hash, tilde (Non-US ISO keyboard) */
 #define RVVM_KEY_SEMICOLON          0x33 /**< Colon, semicolon                  */
 #define RVVM_KEY_APOSTROPHE         0x34 /**< Quotation                         */
 #define RVVM_KEY_GRAVE              0x35 /**< Tilde (Quake console)             */
@@ -401,7 +483,7 @@ RVVM_PUBLIC void rvvm_keyboard_type_text(rvvm_keyboard_t* kb, const char* str);
 #define RVVM_KEY_OPEN               0x74 /**< Execute                                                */
 #define RVVM_KEY_HELP               0x75 /**< Help                                                   */
 #define RVVM_KEY_PROPS              0x76 /**< Context menu key (Near right Alt) - Linux evdev naming */
-#define RVVM_KEY_MENU               0x76 /**< Context menu key too, different naming                 */
+#define RVVM_KEY_MENU               0x76 /**< Context menu key, alias to RVVM_KEY_PROPS              */
 #define RVVM_KEY_FRONT              0x77 /**< Select                                                 */
 #define RVVM_KEY_STOP               0x78 /**< Stop                                                   */
 #define RVVM_KEY_AGAIN              0x79 /**< Again                                                  */
