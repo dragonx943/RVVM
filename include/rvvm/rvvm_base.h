@@ -139,6 +139,11 @@ typedef uint32_t rvvm_pci_addr_t;
 typedef uint32_t rvvm_rgb_t;
 
 /**
+ * Keyboard keycode
+ */
+typedef uint8_t rvvm_keycode_t;
+
+/**
  * Machine handle
  */
 typedef struct rvvm_machine_t rvvm_machine_t;
@@ -177,6 +182,16 @@ typedef struct rvvm_intc rvvm_intc_t;
  * Framebuffer device (2D GPU) handle
  */
 typedef struct rvvm_fbdev rvvm_fbdev_t;
+
+/**
+ * Keyboard handle
+ */
+typedef struct rvvm_keyboard rvvm_keyboard_t;
+
+/**
+ * Mouse handle
+ */
+typedef struct rvvm_mouse rvvm_mouse_t;
 
 /**
  * Snapshot state handle

@@ -23,23 +23,23 @@ RVVM_EXTERN_C_BEGIN
 /*
  * PCI INTx pins
  */
-#define RVVM_PCI_PIN_NONE  0x00
-#define RVVM_PCI_PIN_INTA  0x01
-#define RVVM_PCI_PIN_INTB  0x02
-#define RVVM_PCI_PIN_INTC  0x03
-#define RVVM_PCI_PIN_INTD  0x04
+#define RVVM_PCI_PIN_NONE 0x00
+#define RVVM_PCI_PIN_INTA 0x01
+#define RVVM_PCI_PIN_INTB 0x02
+#define RVVM_PCI_PIN_INTC 0x03
+#define RVVM_PCI_PIN_INTD 0x04
 
 /*
  * PCI DMA attributes
  */
-#define RVVM_PCI_DMA_RD    0x01
-#define RVVM_PCI_DMA_WR    0x02
-#define RVVM_PCI_DMA_RW    0x03
+#define RVVM_PCI_DMA_RD   0x01
+#define RVVM_PCI_DMA_WR   0x02
+#define RVVM_PCI_DMA_RW   0x03
 
 /**
  * Auto-allocated bus address
  */
-#define RVVM_PCI_ADDR_AUTO ((rvvm_pci_addr_t)(-1))
+#define RVVM_PCI_ADDR_ANY ((rvvm_pci_addr_t)(-1))
 
 /**
  * PCI function description
@@ -155,7 +155,7 @@ RVVM_PUBLIC bool rvvm_pci_bus_init_legacy(rvvm_machine_t*   machine, /**/
  *
  * \param machine Machine handle
  * \param desc    PCI function description, temporary
- * \param addr    PCI bus address or RVVM_PCI_ADDR_AUTO
+ * \param addr    PCI bus address or RVVM_PCI_ADDR_ANY
  * \return PCI function handle or NULL
  */
 RVVM_PUBLIC rvvm_pci_func_t* rvvm_pci_func_init_at(rvvm_machine_t*             machine, /**/
@@ -173,7 +173,7 @@ RVVM_PUBLIC rvvm_pci_func_t* rvvm_pci_func_init_at(rvvm_machine_t*             m
  */
 static inline rvvm_pci_func_t* rvvm_pci_func_init(rvvm_machine_t* machine, const rvvm_pci_func_desc_t* desc)
 {
-    return rvvm_pci_func_init_at(machine, desc, RVVM_PCI_ADDR_AUTO);
+    return rvvm_pci_func_init_at(machine, desc, RVVM_PCI_ADDR_ANY);
 }
 
 /**
