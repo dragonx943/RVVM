@@ -42,6 +42,7 @@ RVVM_PUBLIC rvvm_fdt_node_t* rvvm_fdt_init_reg(const char* name, uint64_t addr);
  * Add child node to a FDT node
  *
  * The root FDT node recursively owns the entire device tree
+ * If attach fails (Parent node is NULL), child node is freed
  *
  * \param node  Parent FDT node handle
  * \param child Child FDT node handle
