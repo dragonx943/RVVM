@@ -20,92 +20,150 @@ RVVM_EXTERN_C_BEGIN
  * @{
  *
  * GPIO controller and GPIO devices hold a handle to rvvm_gpio_dev_t,
- * and may set up GPIO callbacks on reading/writing their pins.
+ * and may set up GPIO callbacks on reading/writing their pins
  *
- * They may also bi-directionally read/write pins instead of callbacks,
- * which may be more suitable for certain API usecases.
+ * Each end should be explicitly muxed, multiple GPIO devices may be
+ * muxed to a subset of pins of other GPIO handle, and receive a close
+ * callback when the other end frees its GPIO handle
  *
- * GPIO handles can be muxed to a subset of pins of the GPIO group.
+ * Each end may always read/write pins instead of callbacks, which may be
+ * more suitable for certain API usecases, pin data is stored internally
  *
- * Supplying a mask to rvvm_gpio_set_pins() allows updating specific pins.
+ * Callbacks are internally synchronized between multiple threads
  *
- * The rvvm_gpio_dev_t context is reference-counted.
- * Dropping a GPIO handle unreferences all muxed handles.
+ * Reading / writing GPIO pins is done in bulk via u32 bit mask, which
+ * is called a GPIO pin group, and indexed in read / write operations
+ *
+ * Supplying a mask to rvvm_gpio_set_pins() allows updating specific pins
+ *
+ * The close callback should be handled if the device is considered to be owned
+ * by the other side (GPIO controller, etc) to free its private data / handle
  */
 
 /**
  * GPIO callbacks
  *
- * May be set up by both GPIO controller / GPIO outer connection sides
+ * Must be valid during GPIO device lifetime, or static
+ * Callbacks are optional (Nullable)
  */
 typedef struct {
-    void     (*free)(rvvm_gpio_dev_t* gpio);
-    uint32_t (*get_pins)(rvvm_gpio_dev_t* gpio, uint32_t off);
-    void     (*set_pins)(rvvm_gpio_dev_t* gpio, uint32_t off, uint32_t pins);
+    /**
+     * Read GPIO pins group
+     */
+    uint32_t (*read)(rvvm_gpio_dev_t* gpio, size_t idx);
+
+    /**
+     * Write GPIO pins group
+     */
+    void (*write)(rvvm_gpio_dev_t* gpio, size_t idx, uint32_t pins);
+
+    /**
+     * Close callback
+     *
+     * Should be handled if this device is owned by other side,
+     * and may be ignored if current device is owned elsewhere
+     */
+    void (*close)(rvvm_gpio_dev_t* gpio);
+
 } rvvm_gpio_cb_t;
 
 /**
- * Create a new GPIO device context, return it's handle
+ * Create a new GPIO device handle
+ *
+ * \param cb   GPIO device callbacks
+ * \param data GPIO device private data
  */
-RVVM_PUBLIC rvvm_gpio_dev_t* rvvm_gpio_init(void);
+RVVM_PUBLIC rvvm_gpio_dev_t* rvvm_gpio_init(const rvvm_gpio_cb_t* cb, void* data);
 
 /**
- * Attach GPIO handle to a GPIO group, muxing the GPIO bus
+ * Free GPIO device handle
+ *
+ * Calls close callback on both sides, unpairing devices beforehand
+ *
+ * May be safely called recursively from close callback, it is simply ignored
+ *
+ * \param gpio GPIO device handle
  */
-RVVM_PUBLIC bool rvvm_gpio_attach(rvvm_gpio_dev_t* mux, rvvm_gpio_dev_t* gpio, //
-                                  uint32_t pin_off, uint32_t pin_cnt);
+RVVM_PUBLIC void rvvm_gpio_free(rvvm_gpio_dev_t* gpio);
 
 /**
- * Increment GPIO handle reference count
+ * Attach GPIO device to a parent, muxing the GPIO bus
+ *
+ * Previous connection established at child handle is torn down
+ * If parent is NULL, child device is unconnected from its parent
+ * Overlapping pins in multiple child devices is disallowed
+ *
+ * \param parent Parent GPIO device handle
+ * \param child  Child GPIO device handle
+ * \param offset Parent pins offset
+ * \param count  Parent pins count
  */
-RVVM_PUBLIC void rvvm_gpio_inc_ref(rvvm_gpio_dev_t* gpio);
+RVVM_PUBLIC void rvvm_gpio_attach(rvvm_gpio_dev_t* parent, /**/
+                                  rvvm_gpio_dev_t* child,  /**/
+                                  size_t           offset, /**/
+                                  size_t           count);
 
 /**
- * Unreference GPIO handle, returns true if it was the last handle
+ * Detach GPIO device from a parent
+ *
+ * \param gpio GPIO device handle
  */
-RVVM_PUBLIC bool rvvm_gpio_dec_ref(rvvm_gpio_dev_t* gpio);
-
-/**
- * Set private GPIO device data
- */
-RVVM_PUBLIC void rvvm_gpio_set_data(rvvm_gpio_dev_t* gpio, void* data);
+static inline void rvvm_gpio_detach(rvvm_gpio_dev_t* gpio)
+{
+    rvvm_gpio_attach(NULL, gpio, 0, 0);
+}
 
 /**
  * Get private GPIO device data
+ *
+ * \param gpio GPIO device handle
+ * \return GPIO device private data
  */
 RVVM_PUBLIC void* rvvm_gpio_get_data(rvvm_gpio_dev_t* gpio);
 
 /**
- * Register GPIO device callbacks
+ * Set GPIO pins outbound from this device
+ *
+ * \param gpio GPIO device handle
+ * \param idx  Pin group index
+ * \param pins Pin group bits
+ * \param mask Pin group mask
  */
-RVVM_PUBLIC void rvvm_gpio_register_cb(rvvm_gpio_dev_t* gpio, const rvvm_gpio_cb_t* cb);
-
-/**
- * Set GPIO pins outbound from this device (With mask)
- */
-RVVM_PUBLIC void rvvm_gpio_set_pins(rvvm_gpio_dev_t* gpio, uint32_t off, uint32_t pins, uint32_t mask);
+RVVM_PUBLIC void rvvm_gpio_set_pins(rvvm_gpio_dev_t* gpio, size_t idx, uint32_t pins, uint32_t mask);
 
 /**
  * Get GPIO pins inbound to this device
+ *
+ * \param gpio GPIO device handle
+ * \param idx  Pin group index
+ * \return Pin group bits
  */
-RVVM_PUBLIC uint32_t rvvm_gpio_get_pins(rvvm_gpio_dev_t* gpio, uint32_t off);
+RVVM_PUBLIC uint32_t rvvm_gpio_get_pins(rvvm_gpio_dev_t* gpio, size_t idx);
 
 /**
  * Set a single GPIO pin value
+ *
+ * \param gpio GPIO device handle
+ * \param pin  Pin index
+ * \param val  Pin value
  */
-static inline void rvvm_gpio_set_pin(rvvm_gpio_dev_t* gpio, uint32_t pin, bool val)
+static inline void rvvm_gpio_set_pin(rvvm_gpio_dev_t* gpio, size_t pin, bool val)
 {
-    uint32_t mask = (1U << (pin & 0x1FU));
+    uint32_t mask = (1U << (pin & 0x1F));
     rvvm_gpio_set_pins(gpio, pin >> 5, val ? mask : 0, mask);
 }
 
 /**
  * Get a single GPIO pin value
+ *
+ * \param gpio GPIO device handle
+ * \param pin  Pin index
+ * \return Pin value
  */
-static inline bool rvvm_gpio_get_pin(rvvm_gpio_dev_t* gpio, uint32_t pin)
+static inline bool rvvm_gpio_get_pin(rvvm_gpio_dev_t* gpio, size_t pin)
 {
     uint32_t pins = rvvm_gpio_get_pins(gpio, pin >> 5);
-    return pins & (1U << (pin & 0x1FU));
+    return pins & (1U << (pin & 0x1F));
 }
 
 /** @}*/
