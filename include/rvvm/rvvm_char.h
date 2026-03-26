@@ -54,13 +54,12 @@ RVVM_EXTERN_C_BEGIN
  */
 #define RVVM_CHAR_AUX_PAIRED    0x0000 /**< Paired with other character device  */
 #define RVVM_CHAR_AUX_UNPAIRED  0x0001 /**< Unpaired                            */
-#define RVVM_CHAR_AUX_I2C_START 0x1000 /**< Start I2C, ptr is non-zero on write */
-#define RVVM_CHAR_AUX_I2C_STOP  0x1001 /**< Stop I2C                            */
 
 /**
  * Character device callbacks
  *
  * Must be valid during chardev lifetime, or static
+ * Callbacks are optional (Nullable)
  */
 typedef struct {
     /**
