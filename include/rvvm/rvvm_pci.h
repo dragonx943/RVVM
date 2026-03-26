@@ -23,10 +23,23 @@ RVVM_EXTERN_C_BEGIN
 /*
  * PCI INTx pins
  */
-#define RVVM_PCI_PIN_INTA 0x01
-#define RVVM_PCI_PIN_INTB 0x02
-#define RVVM_PCI_PIN_INTC 0x03
-#define RVVM_PCI_PIN_INTD 0x04
+#define RVVM_PCI_PIN_NONE  0x00
+#define RVVM_PCI_PIN_INTA  0x01
+#define RVVM_PCI_PIN_INTB  0x02
+#define RVVM_PCI_PIN_INTC  0x03
+#define RVVM_PCI_PIN_INTD  0x04
+
+/*
+ * PCI DMA attributes
+ */
+#define RVVM_PCI_DMA_RD    0x01
+#define RVVM_PCI_DMA_WR    0x02
+#define RVVM_PCI_DMA_RW    0x03
+
+/**
+ * Auto-allocated bus address
+ */
+#define RVVM_PCI_ADDR_AUTO ((rvvm_pci_addr_t)(-1))
 
 /**
  * PCI function description
@@ -78,19 +91,21 @@ typedef struct {
     uint8_t pin;
 
     /**
-     * BAR region descriptions
+     * BAR region descriptions (Nullable)
      */
     const rvvm_region_desc_t* bar[6];
 
     /**
-     * Expansion ROM region description
+     * Expansion ROM region (Nullable)
      */
     const rvvm_region_desc_t* rom;
 
     /**
-     * Configuration space region description
+     * Additional configuration space capabilities (Nullable)
+     *
+     * Useful for VFIO and Virtio devices
      */
-    const rvvm_region_desc_t* cfg;
+    const rvvm_region_desc_t* cap;
 
 } rvvm_pci_func_desc_t;
 
@@ -101,7 +116,7 @@ typedef struct {
  * \param domain   PCI domain
  * \param addr     Base address of ECAM space
  * \param intc     Wired interrupt controller handle
- * \param irqs     Vector of 4 wire IRQs for legacy INTx interrupts
+ * \param irqs     Vector of 4 wired IRQs for legacy INTx interrupts
  * \param io_addr  Start of PCI IO Port space
  * \param io_size  Length of PCI IO Port space
  * \param mem_addr Start of PCI MMIO Space
@@ -119,12 +134,18 @@ RVVM_PUBLIC bool rvvm_pci_bus_init_ecam(rvvm_machine_t*   machine,   /**/
                                         rvvm_addr_t       mem_size); /**/
 
 /**
- * Attach legacy x86 PCI controller at IO port 0xCF8
+ * Attach legacy x86 PCI controller via IO ports
  *
  * \param machine Machine handle
+ * \param port    Base port of PCI controller, usually 0xCF8
+ * \param intc    Wired interrupt controller handle
+ * \param irqs    Vector of 4 wired IRQs, usually 11, 10, 9, 5
  * \return Attach success
  */
-RVVM_PUBLIC bool rvvm_pci_bus_init_legacy(rvvm_machine_t* machine);
+RVVM_PUBLIC bool rvvm_pci_bus_init_legacy(rvvm_machine_t*   machine, /**/
+                                          rvvm_addr_t       port,    /**/
+                                          rvvm_intc_t*      intc,    /**/
+                                          const rvvm_irq_t* irqs);
 
 /**
  * Attach PCI function to machine at specific bus address
@@ -133,8 +154,8 @@ RVVM_PUBLIC bool rvvm_pci_bus_init_legacy(rvvm_machine_t* machine);
  * Multi-function devices may be constructed by manually plugging their separate functions
  *
  * \param machine Machine handle
- * \param desc    PCI function description, copied internally
- * \param addr    PCI bus address or -1 for automatic address
+ * \param desc    PCI function description, temporary
+ * \param addr    PCI bus address or RVVM_PCI_ADDR_AUTO
  * \return PCI function handle or NULL
  */
 RVVM_PUBLIC rvvm_pci_func_t* rvvm_pci_func_init_at(rvvm_machine_t*             machine, /**/
@@ -147,12 +168,12 @@ RVVM_PUBLIC rvvm_pci_func_t* rvvm_pci_func_init_at(rvvm_machine_t*             m
  * If attach fails, device is freed and NULL returned
  *
  * \param machine Machine handle
- * \param desc    PCI function description, copied internally
+ * \param desc    PCI function description, temporary
  * \return PCI function handle or NULL
  */
 static inline rvvm_pci_func_t* rvvm_pci_func_init(rvvm_machine_t* machine, const rvvm_pci_func_desc_t* desc)
 {
-    return rvvm_pci_func_init_at(machine, desc, -1);
+    return rvvm_pci_func_init_at(machine, desc, RVVM_PCI_ADDR_AUTO);
 }
 
 /**
@@ -184,31 +205,37 @@ RVVM_PUBLIC rvvm_pci_addr_t rvvm_pci_func_get_addr(rvvm_pci_func_t* func);
 /**
  * Set interrupt level of a PCI function
  *
- * \param func    PCI function handle which set the IRQ
- * \param msi_vec MSI/MSI-X IRQ Vector (Ignored when INTx enabled)
+ * The interrupt is delivered via INTx/MSI/MSI-X based on guest configuration
+ *
+ * \param func PCI function handle which set the IRQ
+ * \param vec  Interrupt vector index provided by the device
  */
-RVVM_PUBLIC void rvvm_pci_set_irq(rvvm_pci_func_t* func, uint32_t msi_vec, bool level);
+RVVM_PUBLIC void rvvm_pci_set_irq(rvvm_pci_func_t* func, uint32_t vec, bool level);
 
 /**
  * Raise interrupt vector of a PCI function
  *
- * \param func    PCI function handle which raised the IRQ
- * \param msi_vec MSI/MSI-X IRQ Vector (Ignored when INTx enabled)
+ * The interrupt is delivered via INTx/MSI/MSI-X based on guest configuration
+ *
+ * \param func PCI function handle which raised the IRQ
+ * \param vec  Interrupt vector index provided by the device
  */
-static inline void rvvm_pci_raise_irq(rvvm_pci_func_t* func, uint32_t msi_vec)
+static inline void rvvm_pci_raise_irq(rvvm_pci_func_t* func, uint32_t vec)
 {
-    rvvm_pci_set_irq(func, msi_vec, true);
+    rvvm_pci_set_irq(func, vec, true);
 }
 
 /**
  * Lower interrupt vector of a PCI function
  *
- * \param func    PCI function handle which lowered the IRQ
- * \param msi_vec MSI/MSI-X IRQ Vector (Ignored when INTx enabled)
+ * The interrupt is delivered via INTx/MSI/MSI-X based on guest configuration
+ *
+ * \param func PCI function handle which lowered the IRQ
+ * \param vec  Interrupt vector index provided by the device
  */
-static inline void rvvm_pci_lower_irq(rvvm_pci_func_t* func, uint32_t msi_vec)
+static inline void rvvm_pci_lower_irq(rvvm_pci_func_t* func, uint32_t vec)
 {
-    rvvm_pci_set_irq(func, msi_vec, false);
+    rvvm_pci_set_irq(func, vec, false);
 }
 
 /**
@@ -219,13 +246,28 @@ static inline void rvvm_pci_lower_irq(rvvm_pci_func_t* func, uint32_t msi_vec)
  * \param func PCI function handle which performs DMA access
  * \param addr Physical memory address
  * \param size Memory region size
- * \param rw   Writable region
+ * \param attr DMA operation attributes (read/write/etc)
  * \return Pointer to DMA memory or NULL
  */
-RVVM_PUBLIC void* rvvm_pci_get_dma(rvvm_pci_func_t* func, rvvm_addr_t addr, size_t size, bool rw);
+RVVM_PUBLIC void* rvvm_pci_get_dma_ex(rvvm_pci_func_t* func, rvvm_addr_t addr, size_t size, uint32_t attr);
 
 /**
- * End direct memory access to the PCI host
+ * Perform direct memory access to the PCI host (Read/Write)
+ *
+ * DMA access must be ended via rvvm_pci_end_dma() for IOMMU and RAM hotplug support
+ *
+ * \param func PCI function handle which performs DMA access
+ * \param addr Physical memory address
+ * \param size Memory region size
+ * \return Pointer to DMA memory or NULL
+ */
+static inline void* rvvm_pci_get_dma(rvvm_pci_func_t* func, rvvm_addr_t addr, size_t size)
+{
+    return rvvm_pci_get_dma_ex(func, addr, size, RVVM_PCI_DMA_RW);
+}
+
+/**
+ * End direct memory access to the PCI host started by rvvm_pci_get_dma()
  *
  * \param func PCI function handle which performs DMA access
  * \param ptr  Pointer to DMA memory obtained via rvvm_pci_get_dma()
