@@ -13,50 +13,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "fpu_lib.h"      // IWYU pragma: keep
 #include "riscv_common.h" // IWYU pragma: keep
 
-/*
- * Floating-point funct7 opcodes in insn[31:25]
- */
-#define RISCV_FADD_S      0x00
-#define RISCV_FSUB_S      0x04
-#define RISCV_FMUL_S      0x08
-#define RISCV_FDIV_S      0x0C
-#define RISCV_FSQRT_S     0x2C // rs2 field is zero
-#define RISCV_FSGNJ_S     0x10 // rm field encodes funct3
-#define RISCV_FCLAMP_S    0x14 // rm field encodes funct3, fmin/fmax
-#define RISCV_FCVT_W_S    0x60 // rs2 field encodes conversion type
-#define RISCV_FMVCLS_S    0x70 // rs2 field is zero, rm encodes fmv.x.w or fclass
-#define RISCV_FCMP_S      0x50 // rm field encodes funct3
-#define RISCV_FCVT_S_W    0x68 // rs2 field encodes conversion type
-#define RISCV_FMV_W_X     0x78 // rs2, rm fields are zero
-
-#define RISCV_FADD_D      0x01
-#define RISCV_FSUB_D      0x05
-#define RISCV_FMUL_D      0x09
-#define RISCV_FDIV_D      0x0D
-#define RISCV_FSQRT_D     0x2D // rs2 field is zero
-#define RISCV_FSGNJ_D     0x11 // rm field encodes funct3
-#define RISCV_FCLAMP_D    0x15 // rm field encodes funct3, fmin/fmax
-#define RISCV_FCVT_S_D    0x20 // rs2 is 1
-#define RISCV_FCVT_D_S    0x21 // rs2 is 0
-#define RISCV_FCVT_W_D    0x61 // rs2 field encodes conversion type
-#define RISCV_FMVCLS_D    0x71 // rs2 field is zero, rm encodes fmv.x.w or fclass
-#define RISCV_FCMP_D      0x51 // rm field encodes funct3
-#define RISCV_FCVT_D_W    0x69 // rs2 field encodes conversion type
-#define RISCV_FMV_D_X     0x79 // rs2, rm fields are zero
-
-/*
- * Floating-point fclass results
- */
-#define FCL_NEG_INF       0x00
-#define FCL_NEG_NORMAL    0x01
-#define FCL_NEG_SUBNORMAL 0x02
-#define FCL_NEG_ZERO      0x03
-#define FCL_POS_ZERO      0x04
-#define FCL_POS_SUBNORMAL 0x05
-#define FCL_POS_NORMAL    0x06
-#define FCL_POS_INF       0x07
-#define FCL_NAN_SIG       0x08
-#define FCL_NAN_QUIET     0x09
+#if defined(USE_RVV)
+#include "riscv_vector.h" // IWYU pragma: keep
+#endif
 
 #if defined(USE_FPU)
 
@@ -134,10 +93,10 @@ static forceinline void riscv_emulate_f_opc_load(rvvm_hart_t* vm, const uint32_t
 
     if (likely(riscv_fpu_is_enabled(vm))) {
         switch (bit_ext_u32(insn, 12, 3)) {
-            case 0x2: // flw
+            case 0x02: // flw
                 riscv_load_float(vm, addr, rds);
                 return;
-            case 0x3: // fld
+            case 0x03: // fld
                 riscv_load_double(vm, addr, rds);
                 return;
         }
@@ -155,10 +114,10 @@ static forceinline void riscv_emulate_f_opc_store(rvvm_hart_t* vm, const uint32_
 
     if (likely(riscv_fpu_is_enabled(vm))) {
         switch (bit_ext_u32(insn, 12, 3)) {
-            case 0x2: // fsw
+            case 0x02: // fsw
                 riscv_store_float(vm, addr, rs2);
                 return;
-            case 0x3: // fsd
+            case 0x03: // fsd
                 riscv_store_double(vm, addr, rs2);
                 return;
         }
