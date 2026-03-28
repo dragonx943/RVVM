@@ -176,7 +176,7 @@ typedef struct rvvm_blk_dev rvvm_blk_dev_t;
 /**
  * Wired interrupt controller handle
  */
-typedef struct rvvm_intc rvvm_intc_t;
+typedef struct rvvm_irq_dev rvvm_irq_dev_t;
 
 /**
  * Framebuffer device (2D GPU) handle
@@ -237,10 +237,10 @@ typedef struct rvvm_hart_t rvvm_hart_t;
 
 typedef struct rvvm_mmio_dev_t rvvm_mmio_dev_t;
 
-typedef bool (*rvvm_mmio_handler_t)(rvvm_mmio_dev_t* dev, void* dest, size_t offset, uint8_t size);
-
 typedef struct rvvm_pci_bus pci_bus_t;
 
 typedef struct rvvm_i2c_bus i2c_bus_t;
+
+typedef struct rvvm_intc rvvm_intc_t;
 
 #endif
