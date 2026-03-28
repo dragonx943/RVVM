@@ -115,7 +115,7 @@ typedef struct {
  * \param machine  Machine handle
  * \param domain   PCI domain
  * \param addr     Base address of ECAM space
- * \param intc     Wired interrupt controller handle
+ * \param irq_dev  Wired interrupt controller handle
  * \param irqs     Vector of 4 wired IRQs for legacy INTx interrupts
  * \param io_addr  Start of PCI IO Port space
  * \param io_size  Length of PCI IO Port space
@@ -126,7 +126,7 @@ typedef struct {
 RVVM_PUBLIC bool rvvm_pci_bus_init_ecam(rvvm_machine_t*   machine,   /**/
                                         uint32_t          domain,    /**/
                                         rvvm_addr_t       addr,      /**/
-                                        rvvm_intc_t*      intc,      /**/
+                                        rvvm_irq_dev_t*   irq_dev,   /**/
                                         const rvvm_irq_t* irqs,      /**/
                                         rvvm_addr_t       io_addr,   /**/
                                         rvvm_addr_t       io_size,   /**/
@@ -138,13 +138,13 @@ RVVM_PUBLIC bool rvvm_pci_bus_init_ecam(rvvm_machine_t*   machine,   /**/
  *
  * \param machine Machine handle
  * \param port    Base port of PCI controller, usually 0xCF8
- * \param intc    Wired interrupt controller handle
+ * \param irq_dev Wired interrupt controller handle
  * \param irqs    Vector of 4 wired IRQs, usually 11, 10, 9, 5
  * \return Attach success
  */
 RVVM_PUBLIC bool rvvm_pci_bus_init_legacy(rvvm_machine_t*   machine, /**/
                                           rvvm_addr_t       port,    /**/
-                                          rvvm_intc_t*      intc,    /**/
+                                          rvvm_irq_dev_t*   irq_dev, /**/
                                           const rvvm_irq_t* irqs);
 
 /**

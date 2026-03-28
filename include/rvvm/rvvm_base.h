@@ -214,6 +214,11 @@ typedef struct rvvm_pci_function rvvm_pci_func_t;
 typedef struct rvvm_usb_bus rvvm_usb_bus_t;
 
 /**
+ * USB device handle
+ */
+typedef struct rvvm_usb_dev rvvm_usb_dev_t;
+
+/**
  * I2C bus handle
  */
 typedef struct rvvm_i2c_bus rvvm_i2c_bus_t;

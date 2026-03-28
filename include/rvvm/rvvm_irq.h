@@ -72,6 +72,14 @@ RVVM_PUBLIC rvvm_irq_dev_t* rvvm_irq_dev_init(const rvvm_irq_cb_t* cb, void* dat
 RVVM_PUBLIC void rvvm_irq_dev_free(rvvm_irq_dev_t* irq_dev);
 
 /**
+ * Get FDT phandle of an interrupt controller
+ *
+ * \param irq_dev Interrupt controller handle
+ * \return FDT phandle
+ */
+RVVM_PUBLIC uint32_t rvvm_irq_dev_fdt_phandle(rvvm_irq_dev_t* irq_dev);
+
+/**
  * Allocate interrupt pin
  *
  * \param irq_dev Interrupt controller handle
@@ -142,15 +150,7 @@ static inline void rvvm_irq_send(rvvm_irq_dev_t* irq_dev, rvvm_irq_t irq)
  * \param irq_dev Interrupt controller handle
  * \param irq     Interrupt pin
  */
-RVVM_PUBLIC void rvvm_irq_describe_fdt(rvvm_fdt_node_t* node, rvvm_irq_dev_t* irq_dev, rvvm_irq_t irq);
-
-/**
- * Get FDT phandle of an interrupt controller
- *
- * \param irq_dev Interrupt controller handle
- * \return FDT phandle
- */
-RVVM_PUBLIC uint32_t rvvm_fdt_intc_phandle(rvvm_irq_dev_t* irq_dev);
+RVVM_PUBLIC void rvvm_irq_fdt_describe(rvvm_fdt_node_t* node, rvvm_irq_dev_t* irq_dev, rvvm_irq_t irq);
 
 /**
  * Get interrupts-extended FDT cells for an IRQ
@@ -161,7 +161,7 @@ RVVM_PUBLIC uint32_t rvvm_fdt_intc_phandle(rvvm_irq_dev_t* irq_dev);
  * \param size    Buffer size (In cells)
  * \return FDT cells count
  */
-RVVM_PUBLIC size_t rvvm_fdt_irq_cells(rvvm_irq_dev_t* irq_dev, rvvm_irq_t irq, uint32_t* cells, size_t size);
+RVVM_PUBLIC size_t rvvm_irq_fdt_cells(rvvm_irq_dev_t* irq_dev, rvvm_irq_t irq, uint32_t* cells, size_t size);
 
 /** @}*/
 
