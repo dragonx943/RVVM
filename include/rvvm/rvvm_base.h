@@ -230,6 +230,8 @@ typedef struct fdt_node rvvm_fdt_node_t;
 
 /** @}*/
 
+RVVM_EXTERN_C_END
+
 /*
  * Deprecated definitions
  * TODO: Get rid or complete renaming these
