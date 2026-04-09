@@ -85,7 +85,7 @@ USE_INFRA_TESTS ?= 0 # Build infrastructure tests
 USE_LIBS_PROBE  ?= 0 # Probe libraries in runtime instead of linking to them
 USE_LOCK_DEBUG  ?= 1 # Runtime lock debugging & locking debug info
 USE_ISOLATION   ?= 1 # Process isolation via seccomp/pledge
-USE_JNI         ?= 1 # Enable JNI support in librvvm
+USE_JNI         ?= 0 # Enable JNI support in librvvm
 
 # Acceleration
 # Enable JIT by default on x86_64, arm64, riscv64
