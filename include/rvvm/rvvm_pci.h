@@ -39,7 +39,12 @@ RVVM_EXTERN_C_BEGIN
 /**
  * Auto-allocated bus address
  */
-#define RVVM_PCI_ADDR_ANY ((rvvm_pci_addr_t)(-1))
+#define RVVM_PCI_ADDR_ANY 0xFFFFFFFFUL
+
+/**
+ * Auto-allocated hot-pluggable bus address
+ */
+#define RVVM_PCI_ADDR_HOT 0xFFFFFFFEUL
 
 /**
  * PCI function description
@@ -101,16 +106,21 @@ typedef struct {
     const rvvm_region_desc_t* rom;
 
     /**
-     * Additional configuration space capabilities (Nullable)
-     *
-     * Useful for VFIO and Virtio devices
+     * Additional legacy PCI capabilities (Nullable)
+     * This capability starts at 0xC0 in legacy PCI configuration space
      */
     const rvvm_region_desc_t* cap;
+
+    /**
+     * Additional PCI Express capabilities (Nullable)
+     * This capability starts at 0x100 in PCI Express configuration space
+     */
+    const rvvm_region_desc_t* ecap;
 
 } rvvm_pci_func_desc_t;
 
 /**
- *  Attach ECAM PCIe host controller (ACPI/FDT based)
+ * Attach ECAM PCIe host controller (ACPI/FDT based)
  *
  * \param machine  Machine handle
  * \param domain   PCI domain
@@ -121,7 +131,7 @@ typedef struct {
  * \param io_size  Length of PCI IO Port space
  * \param mem_addr Start of PCI MMIO Space
  * \param mem_size Length of PCI MMIO Space
- * \return Attach success
+ * \return         Attach success
  */
 RVVM_PUBLIC bool rvvm_pci_bus_init_ecam(rvvm_machine_t*   machine,   /**/
                                         uint32_t          domain,    /**/
@@ -140,7 +150,7 @@ RVVM_PUBLIC bool rvvm_pci_bus_init_ecam(rvvm_machine_t*   machine,   /**/
  * \param port    Base port of PCI controller, usually 0xCF8
  * \param irq_dev Wired interrupt controller handle
  * \param irqs    Vector of 4 wired IRQs, usually 11, 10, 9, 5
- * \return Attach success
+ * \return        Attach success
  */
 RVVM_PUBLIC bool rvvm_pci_bus_init_legacy(rvvm_machine_t*   machine, /**/
                                           rvvm_addr_t       port,    /**/
@@ -151,12 +161,15 @@ RVVM_PUBLIC bool rvvm_pci_bus_init_legacy(rvvm_machine_t*   machine, /**/
  * Attach PCI function to machine at specific bus address
  *
  * If attach fails, device is freed and NULL returned
- * Multi-function devices may be constructed by manually plugging their separate functions
  *
  * \param machine Machine handle
- * \param desc    PCI function description, temporary
+ * \param desc    PCI function description, fully copied internally
  * \param addr    PCI bus address or RVVM_PCI_ADDR_ANY
- * \return PCI function handle or NULL
+ * \return        PCI function handle or NULL
+ *
+ * Multi-function devices may be constructed manually via this
+ *
+ * This function is thread-safe
  */
 RVVM_PUBLIC rvvm_pci_func_t* rvvm_pci_func_init_at(rvvm_machine_t*             machine, /**/
                                                    const rvvm_pci_func_desc_t* desc,    /**/
@@ -168,8 +181,10 @@ RVVM_PUBLIC rvvm_pci_func_t* rvvm_pci_func_init_at(rvvm_machine_t*             m
  * If attach fails, device is freed and NULL returned
  *
  * \param machine Machine handle
- * \param desc    PCI function description, temporary
- * \return PCI function handle or NULL
+ * \param desc    PCI function description, fully copied internally
+ * \return        PCI function handle or NULL
+ *
+ * This function is thread-safe
  */
 static inline rvvm_pci_func_t* rvvm_pci_func_init(rvvm_machine_t* machine, const rvvm_pci_func_desc_t* desc)
 {
@@ -182,6 +197,9 @@ static inline rvvm_pci_func_t* rvvm_pci_func_init(rvvm_machine_t* machine, const
  * Removes the device from owning machine and invokes cleanup as usual
  *
  * \param func PCI function handle
+ * \note       Must not be called from device's own callbacks or internal threads
+ *
+ * This function is thread-safe
  */
 RVVM_PUBLIC void rvvm_pci_func_free(rvvm_pci_func_t* func);
 
@@ -190,7 +208,9 @@ RVVM_PUBLIC void rvvm_pci_func_free(rvvm_pci_func_t* func);
  *
  * \param machine Machine handle
  * \param addr    PCI bus address
- * \return PCI function handle or NULL
+ * \return        PCI function handle or NULL
+ *
+ * This function is thread-safe
  */
 RVVM_PUBLIC rvvm_pci_func_t* rvvm_pci_func_from_addr(rvvm_machine_t* machine, rvvm_pci_addr_t addr);
 
@@ -198,27 +218,32 @@ RVVM_PUBLIC rvvm_pci_func_t* rvvm_pci_func_from_addr(rvvm_machine_t* machine, rv
  * Get bus address of a PCI function
  *
  * \param func PCI function handle
- * \return PCI function bus address
+ * \return     PCI function bus address
+ *
+ * This function is thread-safe
  */
 RVVM_PUBLIC rvvm_pci_addr_t rvvm_pci_func_get_addr(rvvm_pci_func_t* func);
 
 /**
  * Set interrupt level of a PCI function
  *
- * The interrupt is delivered via INTx/MSI/MSI-X based on guest configuration
- *
  * \param func PCI function handle which set the IRQ
  * \param vec  Interrupt vector index provided by the device
+ * \param lvl  Interrupt line level
+ *
+ * The interrupt is delivered via INTx/MSI/MSI-X based on configuration space
+ *
+ * This function is thread-safe
  */
-RVVM_PUBLIC void rvvm_pci_set_irq(rvvm_pci_func_t* func, uint32_t vec, bool level);
+RVVM_PUBLIC void rvvm_pci_set_irq(rvvm_pci_func_t* func, uint32_t vec, bool lvl);
 
 /**
  * Raise interrupt vector of a PCI function
  *
- * The interrupt is delivered via INTx/MSI/MSI-X based on guest configuration
- *
  * \param func PCI function handle which raised the IRQ
  * \param vec  Interrupt vector index provided by the device
+ *
+ * This function is thread-safe
  */
 static inline void rvvm_pci_raise_irq(rvvm_pci_func_t* func, uint32_t vec)
 {
@@ -228,10 +253,10 @@ static inline void rvvm_pci_raise_irq(rvvm_pci_func_t* func, uint32_t vec)
 /**
  * Lower interrupt vector of a PCI function
  *
- * The interrupt is delivered via INTx/MSI/MSI-X based on guest configuration
- *
  * \param func PCI function handle which lowered the IRQ
  * \param vec  Interrupt vector index provided by the device
+ *
+ * This function is thread-safe
  */
 static inline void rvvm_pci_lower_irq(rvvm_pci_func_t* func, uint32_t vec)
 {
@@ -239,27 +264,45 @@ static inline void rvvm_pci_lower_irq(rvvm_pci_func_t* func, uint32_t vec)
 }
 
 /**
- * Perform direct memory access to the PCI host
+ * Send interrupt edge (pulse) from a PCI function
  *
- * DMA access must be ended via rvvm_pci_end_dma() for IOMMU and RAM hotplug support
+ * \param func PCI function handle which sent the IRQ
+ * \param vec  Interrupt vector index provided by the device
+ *
+ * Should be used for VFIO or other devices which can't report lowered interrupt
+ *
+ * This function is thread-safe
+ */
+static inline void rvvm_pci_pulse_irq(rvvm_pci_func_t* func, uint32_t vec)
+{
+    rvvm_pci_set_irq(func, vec, true);
+    rvvm_pci_set_irq(func, vec, false);
+}
+
+/**
+ * Perform direct memory access to the PCI host
  *
  * \param func PCI function handle which performs DMA access
  * \param addr Physical memory address
  * \param size Memory region size
  * \param attr DMA operation attributes (read/write/etc)
- * \return Pointer to DMA memory or NULL
+ * \return     Pointer to DMA memory or NULL
+ * \note       DMA access must be ended via rvvm_pci_end_dma()
+ *
+ * This function is thread-safe
  */
 RVVM_PUBLIC void* rvvm_pci_get_dma_ex(rvvm_pci_func_t* func, rvvm_addr_t addr, size_t size, uint32_t attr);
 
 /**
  * Perform direct memory access to the PCI host (Read/Write)
  *
- * DMA access must be ended via rvvm_pci_end_dma() for IOMMU and RAM hotplug support
- *
  * \param func PCI function handle which performs DMA access
  * \param addr Physical memory address
  * \param size Memory region size
- * \return Pointer to DMA memory or NULL
+ * \return     Pointer to DMA memory or NULL
+ * \note       DMA access must be ended via rvvm_pci_end_dma()
+ *
+ * This function is thread-safe
  */
 static inline void* rvvm_pci_get_dma(rvvm_pci_func_t* func, rvvm_addr_t addr, size_t size)
 {
@@ -267,13 +310,16 @@ static inline void* rvvm_pci_get_dma(rvvm_pci_func_t* func, rvvm_addr_t addr, si
 }
 
 /**
- * End direct memory access to the PCI host started by rvvm_pci_get_dma()
+ * End direct memory access started by rvvm_pci_get_dma()
  *
  * \param func PCI function handle which performs DMA access
  * \param ptr  Pointer to DMA memory obtained via rvvm_pci_get_dma()
+ *
+ * Required for proper RAM hotplug and IOMMU support
+ *
+ * This function is thread-safe
  */
 RVVM_PUBLIC void rvvm_pci_end_dma(rvvm_pci_func_t* func, void* ptr);
-
 
 /** @}*/
 
