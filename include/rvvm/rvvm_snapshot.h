@@ -15,84 +15,109 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 RVVM_EXTERN_C_BEGIN
 
 /**
- * @defgroup rvvm_snapshot RVVM Snapshot serialization
+ * @defgroup rvvm_snapshot Snapshot serialization
  * @addtogroup rvvm_snapshot
  * @{
+ *
+ * Snapshots are stored to block devices, which internally may be represented
+ * by a file, deduplicated image, provided over network, etc
+ *
+ * Devices must serialize/deserialize their state from suspend/resume callbacks
+ *
+ * Every device state should be stored in a separate, optionally versioned section
+ *
+ * Section order with same name is preserved in snapshot within constructed machine
+ *
+ * Serialization direction will usually be transparent to device implementations,
+ * which should only enumerate their fields once to support state read/write
+ *
+ * For backward-compatible additions to device state, section name should be retained,
+ * with new, optional data stored after all backward-compatible state fields
+ *
+ * Upon IO error or reading corrupted data, any further operation will fail
+ *
+ * The deserialized state after failed rvvm_snapshot_close() is unspecified
+ *
+ * This API is NOT thread-safe, but suspend callbacks guarantee exclusive caller
  */
 
 /**
  * Open snapshot for reading or writing from block device handle
  *
- * \param blk Block device handle
- * \param wr  True to begin writing state to snapshot
- * \return Snapshot handle
+ * \param blk   Block device handle
+ * \param write Intent to write snapshot state
+ * \return      Snapshot handle or NULL
  */
-RVVM_PUBLIC rvvm_snapshot_t* rvvm_snapshot_open(rvvm_blk_dev_t* blk, bool wr);
+RVVM_PUBLIC rvvm_snapshot_t* rvvm_snapshot_open(rvvm_blk_dev_t* blk, bool write);
 
 /**
- * Close snapshot handle, finalize and sync to backing storage after writing
+ * Close snapshot handle
+ *
+ * Synchronizes changes to backing storage after writing
  *
  * \param snap Snapshot handle
+ * \return     Success (No IO error or corruption)
  */
-RVVM_PUBLIC void rvvm_snapshot_close(rvvm_snapshot_t* snap);
+RVVM_PUBLIC bool rvvm_snapshot_close(rvvm_snapshot_t* snap);
 
 /**
- * Get and clear failure flag on snapshot since last call
- *
- * Failure flag means either:
- * - IO error on backing block device storage
- * - Requested section wasn't found when reading
- * - Tried to read beyond end of section
- *
- * If failure flag is set, the restored state is likely incomplete
- *
- * However, it might still be worth a try to load partial state after
- * incompatible migration, and print a warning. The broken devices can be
- * re-hot-plugged to fix them on guest side after that
- *
- * \param snap Snapshot handle
- * \param fail True to set failure flag, or current failure flag is returned and cleared
- * \return Failure flag
- */
-RVVM_PUBLIC bool rvvm_snapshot_fail(rvvm_snapshot_t* snap);
-
-/**
- * Select next snapshot section, reset data pointer
- *
- * Every device state should be stored in a separate section, optionally versioned
+ * Open next snapshot section, reset data pointer and failure flag
  *
  * When writing to snapshot:
- * - Creates new section on each call, finalizes previous section
+ * - Finalizes previous section, creates new section for writing
  * When reading from snapshot:
- * - Sequentially opens next section with the requested name
- * - Sets failure flag if the section is missing
+ * - Opens next section with matching name for reading
+ *
+ * For a missing section, all serialization calls will fail
  *
  * \param snap Snapshot handle
  * \param name Section name for reading/writing
- * \return True if we are writing state to snapshot
+ * \return     Success (Section exists)
  */
 RVVM_PUBLIC bool rvvm_snapshot_section(rvvm_snapshot_t* snap, const char* name);
 
 /**
- * Read/write opaque data to current snapshot section, advance pointer
+ * Check opened snapshot direction (Reading/Writing)
  *
- * The read/write direction is decided by current snapshot open mode
+ * \param snap Snapshot handle
+ * \return     Writing state to snapshot
+ */
+RVVM_PUBLIC bool rvvm_snapshot_writing(rvvm_snapshot_t* snap);
+
+/**
+ * Read/Write opaque data to current snapshot section, advance pointer
  *
- * Sets failure flag on over-reading beyond the current section
+ * Direction is decided by current snapshot open mode
  *
  * \param snap Snapshot handle
  * \param data Opaque data pointer
  * \param size Opaque data size
+ * \return     Success (Data was available)
  */
-RVVM_PUBLIC void rvvm_snapshot_data(rvvm_snapshot_t* snap, void* data, size_t size);
+RVVM_PUBLIC bool rvvm_snapshot_data(rvvm_snapshot_t* snap, void* data, size_t size);
 
 /**
- * Read/write opaque field to current snapshot section, advance pointer
+ * Read/Write host-endian variable to current snapshot section, advance pointer
+ *
+ * Serializes host-endian variable as little-endian for sizes of 1, 2, 4, 8
+ *
+ * Direction is decided by current snapshot open mode
+ *
+ * \param snap Snapshot handle
+ * \param data Opaque data pointer
+ * \param size Opaque data size
+ * \return     Success (Data was available and size is correct)
+ */
+RVVM_PUBLIC bool rvvm_snapshot_host(rvvm_snapshot_t* snap, void* data, size_t size);
+
+/**
+ * Read/Write host field to current snapshot section, advance pointer
  *
  * \param snap  Snapshot handle
  * \param field Opaque variable field
+ * \return      Success (Data was available and size is correct)
  */
-#define rvvm_snapshot_field(snap, field) rvvm_snapshot_data(snap, &(field), sizeof(field))
+#define rvvm_snapshot_field(snap, field) rvvm_snapshot_host(snap, &(field), sizeof(field))
 
 /** @}*/
 
