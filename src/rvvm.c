@@ -46,8 +46,8 @@ void rvvm_append_isa_string(rvvm_machine_t* machine, const char* str)
         struct fdt_node* cpus = fdt_node_find(rvvm_get_fdt_root(machine), "cpus");
         struct fdt_node* cpu  = fdt_node_find_reg(cpus, "cpu", i);
         // Get previous riscv,isa
-        char*  isa_str = fdt_node_get_prop_data(cpu, "riscv,isa");
-        size_t isa_len = isa_str ? rvvm_strlen(isa_str) : 0;
+        const char* isa_str = fdt_node_get_prop_data(cpu, "riscv,isa");
+        size_t      isa_len = isa_str ? rvvm_strlen(isa_str) : 0;
         if (isa_str && rvvm_strfind(isa_str, str)) {
             // String already present
             return;
@@ -605,7 +605,7 @@ PUBLIC void rvvm_append_cmdline(rvvm_machine_t* machine, const char* str)
     if (machine) {
         struct fdt_node* chosen = fdt_node_find(machine->fdt, "chosen");
         // Obtain /chosen/bootargs
-        char* cmdline = fdt_node_get_prop_data(chosen, "bootargs");
+        const char* cmdline = fdt_node_get_prop_data(chosen, "bootargs");
         // Append cmdline
         char* tmp = cmdline ? rvvm_merge_strings_internal(cmdline, " ") : NULL;
         char* new = rvvm_merge_strings_internal(tmp, str);
