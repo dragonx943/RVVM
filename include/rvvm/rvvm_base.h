@@ -112,7 +112,7 @@ typedef unsigned long long __uint64_t;
 #define RVVM_ABI_VERSION -1
 
 /**
- * @defgroup rvvm_types RVVM Types
+ * @defgroup rvvm_types Base types and definitions
  * @addtogroup rvvm_types
  * @{
  */
@@ -129,6 +129,7 @@ typedef uint32_t rvvm_irq_t;
 
 /**
  * PCI bus address
+ *
  * Encodes func [0:2] dev [3:7] bus [8:15] domain [16:31]
  */
 typedef uint32_t rvvm_pci_addr_t;
