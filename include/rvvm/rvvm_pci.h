@@ -98,24 +98,24 @@ typedef struct {
     /**
      * BAR region descriptions (Nullable)
      */
-    const rvvm_region_desc_t* bar[6];
+    const rvvm_reg_desc_t* bar[6];
 
     /**
      * Expansion ROM region (Nullable)
      */
-    const rvvm_region_desc_t* rom;
+    const rvvm_reg_desc_t* rom;
 
     /**
      * Additional legacy PCI capabilities (Nullable)
      * This capability starts at 0xC0 in legacy PCI configuration space
      */
-    const rvvm_region_desc_t* cap;
+    const rvvm_reg_desc_t* cap;
 
     /**
      * Additional PCI Express capabilities (Nullable)
      * This capability starts at 0x100 in PCI Express configuration space
      */
-    const rvvm_region_desc_t* ecap;
+    const rvvm_reg_desc_t* ecap;
 
 } rvvm_pci_func_desc_t;
 
