@@ -11,78 +11,104 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef RVVM_FDTLIB_H
 #define RVVM_FDTLIB_H
 
-#include "rvvmlib.h"
+#include <rvvm/rvvm.h>
+#include <rvvm/rvvm_fdt.h>
 
-struct fdt_node;
+static inline struct fdt_node* fdt_node_create(const char* name)
+{
+    return rvvm_fdt_init(name);
+}
 
-/*
- * Node handling
- */
+static inline struct fdt_node* fdt_node_create_reg(const char* name, uint64_t addr)
+{
+    return rvvm_fdt_init_reg(name, addr);
+}
 
-// Create a fdt node, root node should have name = NULL
-PUBLIC struct fdt_node* fdt_node_create(const char* name);
+static inline void fdt_node_add_child(struct fdt_node* node, struct fdt_node* child)
+{
+    rvvm_fdt_attach(node, child);
+}
 
-// Create a fdt node with address, like device@10000
-PUBLIC struct fdt_node* fdt_node_create_reg(const char* name, uint64_t addr);
+static inline struct fdt_node* fdt_node_find(struct fdt_node* node, const char* name)
+{
+    return rvvm_fdt_find(node, name);
+}
 
-// Attach child node
-PUBLIC void fdt_node_add_child(struct fdt_node* node, struct fdt_node* child);
+static inline struct fdt_node* fdt_node_find_reg(struct fdt_node* node, const char* name, uint64_t addr)
+{
+    return rvvm_fdt_find_reg(node, name, addr);
+}
 
-// Lookup for child node by name (returns NULL on failure)
-PUBLIC struct fdt_node* fdt_node_find(struct fdt_node* node, const char* name);
+static inline struct fdt_node* fdt_node_find_reg_any(struct fdt_node* node, const char* name)
+{
+    return rvvm_fdt_find_reg_any(node, name);
+}
 
-// Lookup for child node by name + addr, like device@10000 (returns NULL on failure)
-PUBLIC struct fdt_node* fdt_node_find_reg(struct fdt_node* node, const char* name, uint64_t addr);
+static inline uint32_t fdt_node_get_phandle(struct fdt_node* node)
+{
+    return rvvm_fdt_phandle(node);
+}
 
-// Lookup for any reg child node by name, like device@* (returns NULL on failure)
-PUBLIC struct fdt_node* fdt_node_find_reg_any(struct fdt_node* node, const char *name);
+static inline void fdt_node_add_prop(struct fdt_node* node, const char* name, const void* data, uint32_t len)
+{
+    rvvm_fdt_prop_set(node, name, data, len);
+}
 
-// Get child node phandle. Allocates phandles transparently, all node hierarchy should be attached!
-PUBLIC uint32_t fdt_node_get_phandle(struct fdt_node* node);
+static inline void fdt_node_add_prop_u32(struct fdt_node* node, const char* name, uint32_t val)
+{
+    rvvm_fdt_prop_set_u32(node, name, val);
+}
 
-/*
- * Property handling
- */
+static inline void fdt_node_add_prop_u64(struct fdt_node* node, const char* name, uint64_t val)
+{
+    rvvm_fdt_prop_set_u64(node, name, val);
+}
 
-// Add arbitary byte buffer property
-PUBLIC void fdt_node_add_prop(struct fdt_node* node, const char* name, const void* data, uint32_t len);
+static inline void fdt_node_add_prop_cells(struct fdt_node* node, const char* name, uint32_t* cells, uint32_t count)
+{
+    rvvm_fdt_prop_set_cells(node, name, cells, count);
+}
 
-// Add single-cell property
-PUBLIC void fdt_node_add_prop_u32(struct fdt_node* node, const char* name, uint32_t val);
+static inline void fdt_node_add_prop_str(struct fdt_node* node, const char* name, const char* val)
+{
+    rvvm_fdt_prop_set_str(node, name, val);
+}
 
-// Add double-cell property
-PUBLIC void fdt_node_add_prop_u64(struct fdt_node* node, const char* name, uint64_t val);
+static inline void fdt_node_add_prop_reg(struct fdt_node* node, const char* name, uint64_t begin, uint64_t size)
+{
+    rvvm_fdt_prop_set_reg(node, name, begin, size);
+}
 
-// Add multi-cell property
-PUBLIC void fdt_node_add_prop_cells(struct fdt_node* node, const char* name, uint32_t* cells, uint32_t count);
+static inline const void* fdt_node_get_prop_data(struct fdt_node* node, const char* name)
+{
+    return rvvm_fdt_prop_get_data(node, name);
+}
 
-// Add string property
-PUBLIC void fdt_node_add_prop_str(struct fdt_node* node, const char* name, const char* val);
+static inline size_t fdt_node_get_prop_size(struct fdt_node* node, const char* name)
+{
+    return rvvm_fdt_prop_get_size(node, name);
+}
 
-// Add register range property (addr cells: 2, size cells: 2)
-PUBLIC void fdt_node_add_prop_reg(struct fdt_node* node, const char* name, uint64_t begin, uint64_t size);
+static inline bool fdt_node_del_prop(struct fdt_node* node, const char* name)
+{
+    rvvm_fdt_prop_del(node, name);
+    return true;
+}
 
-// Returns underlying property data
-PUBLIC void* fdt_node_get_prop_data(struct fdt_node* node, const char* name);
+static inline void fdt_node_free(struct fdt_node* node)
+{
+    rvvm_fdt_free(node);
+}
 
-// Returns underlying property size
-PUBLIC size_t fdt_node_get_prop_size(struct fdt_node* node, const char* name);
+static inline size_t fdt_size(struct fdt_node* node)
+{
+    return rvvm_fdt_size(node);
+}
 
-// Delete property
-PUBLIC bool fdt_node_del_prop(struct fdt_node* node, const char* name);
-
-/*
- * Serialization, cleanup
- */
-
-// Recursively free a node and it's child nodes
-PUBLIC void fdt_node_free(struct fdt_node* node);
-
-// Returns required buffer size for serializing
-PUBLIC size_t fdt_size(struct fdt_node* node);
-
-// Serialize DTB into buffer, returns 0 when there's insufficient space
-// Returns required buffer size when buffer == NULL
-PUBLIC size_t fdt_serialize(struct fdt_node* node, void* buffer, size_t size, uint32_t boot_cpuid);
+static inline size_t fdt_serialize(struct fdt_node* node, void* buffer, size_t size, uint32_t boot_cpuid)
+{
+    (void)boot_cpuid;
+    return rvvm_fdt_serialize(node, buffer, size);
+}
 
 #endif
