@@ -350,11 +350,9 @@ static void sound_hda_remove(rvvm_mmio_dev_t* dev)
     sound_hda_dev_t *hda = dev->data;
     if (hda != NULL) {
         atomic_store_uint32_relax(&hda->stream_output.running, 0);
-        // A BDL entry at 48 kHz × 2 bytes is typically 256-4096 bytes =
-        // ~3-43 ms of wall-clock per iteration under the new pacing loop.
-        // 20 ms is enough for the worker to notice the flag before the
-        // next iteration in the common (small-period) case; the worst-
-        // case long-period still exits at the top of the next loop.
+        // The HDA stream period is 128 frames at 192 kHz = ~667 µs wall.
+        // 20 ms of sleep is 30x that — comfortably long enough for the
+        // worker to finish its current iteration.
         sleep_ms(20);
     }
 }
@@ -796,15 +794,21 @@ static void *sound_hda_stream_worker(void *arg)
             uint32_t len  = bdle[1] & 0xFFFFFFFF;
             uint8_t  ioc  = bdle[1] >> 32 & 1;
 
+            // Dispatch PCM to the configured host-side backend. If no backend
+            // was installed at init time (neither a compile-time USE_ALSA nor
+            // a caller-supplied write_fn via sound_hda_init_ex), the HDA
+            // device enumerates on the PCI bus but this path is a no-op —
+            // the guest sees a working device and the LPIB counter advances
+            // so its driver doesn't stall, but PCM data is silently dropped.
+            //
             // Backend contract: always receives MONO 16-bit LE at the
             // stream's configured rate. If the guest driver configured a
             // multi-channel stream (Linux's HDA code likes stereo even
             // when the codec widget advertises mono capability), we
-            // downmix here by averaging channels — keeps the backend's
-            // job simple and the pacing math below stays 1:1 with the
-            // bytes it sees.
-#ifdef USE_ALSA
-            {
+            // downmix here by averaging channels. Keeps backends simple
+            // (they don't need to know channel count) and the pacing
+            // math below stays 1:1 with the bytes they see.
+            if (hda->subsystem.write != NULL) {
                 void *pcm = pci_get_dma_ptr(hda->pci_func, addr, len);
                 if (channels == 1 || pcm == NULL) {
                     hda->subsystem.write(&hda->subsystem, pcm, len);
@@ -831,15 +835,13 @@ static void *sound_hda_stream_worker(void *arg)
                         bytes_emitted += chunk_frames * 2;
                     }
                 } else {
-                    // Rare: non-16-bit multi-channel. Pass raw.
+                    // Rare: non-16-bit multi-channel. Pass raw; backends
+                    // that care can parse stream->fmt from the caller.
                     hda->subsystem.write(&hda->subsystem, pcm, len);
                 }
+            } else {
+                UNUSED(addr);
             }
-#else
-            // No compile-time backend: LPIB still advances (paced below)
-            // so the guest's HDA driver doesn't stall, but PCM is dropped.
-            UNUSED(addr);
-#endif
 
             // Wall-clock pacing. Compute the ideal elapsed time for the
             // bytes we've emitted so far and sleep the difference.
@@ -1033,7 +1035,29 @@ static bool sound_hda_mmio_write(rvvm_mmio_dev_t* dev, void* data, size_t offset
     return true;
 }
 
-PUBLIC pci_dev_t *sound_hda_init(pci_bus_t *pci_bus)
+/*
+ * Bridge struct stored in sound_subsystem_t.sound_data when a caller-supplied
+ * backend is installed via sound_hda_init_ex. Adapts the public two-argument
+ * callback to the subsystem's three-argument shape. Freed... never. The HDA
+ * device itself is leaked on machine destruction today (see sound_hda_remove),
+ * so this follows the same lifecycle.
+ */
+typedef struct {
+    sound_hda_backend_write_fn user_fn;
+    void                       *user_data;
+} sound_hda_backend_bridge_t;
+
+static void sound_hda_backend_bridge_write(sound_subsystem_t *sub, void *data, size_t size)
+{
+    sound_hda_backend_bridge_t *bridge = (sound_hda_backend_bridge_t *)sub->sound_data;
+    if (bridge != NULL && bridge->user_fn != NULL) {
+        bridge->user_fn(bridge->user_data, data, size);
+    }
+}
+
+PUBLIC pci_dev_t *sound_hda_init_ex(pci_bus_t *pci_bus,
+                                    sound_hda_backend_write_fn write_fn,
+                                    void *user_data)
 {
     sound_hda_dev_t *sound_hda = safe_new_obj(sound_hda_dev_t);
 
@@ -1058,12 +1082,39 @@ PUBLIC pci_dev_t *sound_hda_init(pci_bus_t *pci_bus)
     if (pci_dev)
         sound_hda->pci_func = pci_get_device_func(pci_dev, 0);
 
+    // Backend selection priority:
+    //   1. Caller-supplied write_fn (via sound_hda_init_ex) — skip the
+    //      compile-time default. Used by embedders that want to route
+    //      audio somewhere other than the host's native audio stack
+    //      (managed runtimes, IPC channels, WAV capture fixtures, etc.).
+    //   2. Compile-time USE_ALSA — the traditional Linux host path.
+    //   3. Neither — PCI device enumerates but the stream worker drops PCM.
+    if (write_fn != NULL) {
+        sound_hda_backend_bridge_t *bridge = safe_new_obj(sound_hda_backend_bridge_t);
+        bridge->user_fn = write_fn;
+        bridge->user_data = user_data;
+        sound_hda->subsystem.sound_data = bridge;
+        sound_hda->subsystem.write = sound_hda_backend_bridge_write;
+    } else {
 #ifdef USE_ALSA
-    if (!alsa_sound_init(&sound_hda->subsystem))
-        return NULL;
+        if (!alsa_sound_init(&sound_hda->subsystem))
+            return NULL;
 #endif
+    }
 
     return pci_dev;
+}
+
+PUBLIC pci_dev_t *sound_hda_init_auto_ex(rvvm_machine_t *machine,
+                                         sound_hda_backend_write_fn write_fn,
+                                         void *user_data)
+{
+    return sound_hda_init_ex(rvvm_get_pci_bus(machine), write_fn, user_data);
+}
+
+PUBLIC pci_dev_t *sound_hda_init(pci_bus_t *pci_bus)
+{
+    return sound_hda_init_ex(pci_bus, NULL, NULL);
 }
 
 PUBLIC pci_dev_t *sound_hda_init_auto(rvvm_machine_t *machine)
