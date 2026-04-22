@@ -29,6 +29,7 @@ ASOUND_DLIB_SYM(snd_pcm_hw_params_set_format)
 ASOUND_DLIB_SYM(snd_pcm_hw_params_set_channels)
 ASOUND_DLIB_SYM(snd_pcm_hw_params_set_rate_near)
 ASOUND_DLIB_SYM(snd_pcm_hw_params_set_period_size_near)
+ASOUND_DLIB_SYM(snd_pcm_hw_params_set_buffer_size_near)
 ASOUND_DLIB_SYM(snd_pcm_hw_params)
 ASOUND_DLIB_SYM(snd_pcm_writei)
 ASOUND_DLIB_SYM(snd_pcm_prepare)
@@ -44,6 +45,7 @@ ASOUND_DLIB_SYM(snd_pcm_hw_params_free)
 #define snd_pcm_hw_params_set_channels snd_pcm_hw_params_set_channels_dlib
 #define snd_pcm_hw_params_set_rate_near snd_pcm_hw_params_set_rate_near_dlib
 #define snd_pcm_hw_params_set_period_size_near snd_pcm_hw_params_set_period_size_near_dlib
+#define snd_pcm_hw_params_set_buffer_size_near snd_pcm_hw_params_set_buffer_size_near_dlib
 #define snd_pcm_hw_params snd_pcm_hw_params_dlib
 #define snd_pcm_writei snd_pcm_writei_dlib
 #define snd_pcm_prepare snd_pcm_prepare_dlib
@@ -59,8 +61,41 @@ static void alsa_sound_write(sound_subsystem_t *subsystem, void *data, size_t si
 {
     alsa_subsystem_t *alsa = subsystem->sound_data;
 
-    if (snd_pcm_writei(alsa->pcm_handle, data, size / 2) == -EPIPE)
-        snd_pcm_prepare(alsa->pcm_handle);
+    // The previous version called snd_pcm_writei exactly once and
+    // dropped whatever didn't land: on xrun (-EPIPE) it prepared the
+    // PCM but skipped re-writing the chunk; on a positive short return
+    // it ignored the tail; on -EINTR it also dropped. Each lost chunk
+    // is an audible click/crackle.
+    //
+    // Loop until every frame is delivered. size is in bytes and we
+    // always feed mono 16-bit, so one frame = 2 bytes. Bail on
+    // unrecoverable errors after a handful of retries so a disconnected
+    // device doesn't spin us forever.
+    int16_t *buf = (int16_t*)data;
+    snd_pcm_uframes_t remaining = size / 2;
+    int xrun_retries = 4;
+
+    while (remaining > 0) {
+        snd_pcm_sframes_t n = snd_pcm_writei(alsa->pcm_handle, buf, remaining);
+        if (n < 0) {
+            if (n == -EAGAIN || n == -EINTR) {
+                // Spurious short-wake; try again with the same data.
+                continue;
+            }
+            if (n == -EPIPE || n == -ESTRPIPE) {
+                // Xrun / suspend. Reset the PCM and retry the chunk.
+                // -ESTRPIPE means suspended — resume would be ideal but
+                // prepare is enough to get us back to a writable state.
+                if (--xrun_retries < 0) return;
+                snd_pcm_prepare(alsa->pcm_handle);
+                continue;
+            }
+            // Unrecoverable (EBADFD, ENODEV, ...) — give up this chunk.
+            return;
+        }
+        buf       += n;     // int16_t* step = one sample per element
+        remaining -= n;
+    }
 }
 
 static bool alsa_load_symbols(void)
@@ -87,6 +122,7 @@ do { \
     ASOUND_DLIB_RESOLVE(libasound, snd_pcm_hw_params_set_channels);
     ASOUND_DLIB_RESOLVE(libasound, snd_pcm_hw_params_set_rate_near);
     ASOUND_DLIB_RESOLVE(libasound, snd_pcm_hw_params_set_period_size_near);
+    ASOUND_DLIB_RESOLVE(libasound, snd_pcm_hw_params_set_buffer_size_near);
     ASOUND_DLIB_RESOLVE(libasound, snd_pcm_hw_params);
     ASOUND_DLIB_RESOLVE(libasound, snd_pcm_writei);
     ASOUND_DLIB_RESOLVE(libasound, snd_pcm_prepare);
@@ -116,9 +152,24 @@ bool alsa_sound_init(sound_subsystem_t *sound)
 
     snd_pcm_t *pcm_device = subsystem->pcm_handle;
     snd_pcm_hw_params_t *params = NULL;
-    unsigned int sample_rate = 192000;
+    // Match the HDA codec's advertised format (48 kHz mono 16-bit in
+    // sound-hda.c's CODEC_PARAM_SUPP_PCM_SIZE_RATES). Opening the host
+    // PCM at 192 kHz while the codec feeds 48 kHz streams plays audio
+    // 4× fast → two octaves up.
+    unsigned int sample_rate = 48000;
     int channels = 1;
-    snd_pcm_uframes_t frames = 128;
+    // Host PCM latency. The guest runs its own ALSA buffer on top of the
+    // emulated HDA DMA BDL — that's what user-space apps size via
+    // snd_pcm_hw_params on the guest. These numbers only control the
+    // host-side PipeWire/ALSA ring the emulator feeds into.
+    //
+    // 128 frames / 2.67 ms was too tight: a single host scheduling hiccup
+    // xruns PipeWire and mpg123's write returns short (3400 of 4608) as
+    // back-pressure propagates. 960-frame periods (20 ms) with a 4×
+    // buffer (80 ms total) give PipeWire enough slack to ride out jitter
+    // without noticeable user-facing latency.
+    snd_pcm_uframes_t period_frames = 960;
+    snd_pcm_uframes_t buffer_frames = 3840;
     int dir = 0;
 
     snd_pcm_hw_params_malloc(&params);
@@ -128,7 +179,8 @@ bool alsa_sound_init(sound_subsystem_t *sound)
     snd_pcm_hw_params_set_format(pcm_device, params, SND_PCM_FORMAT_S16_LE);
     snd_pcm_hw_params_set_channels(pcm_device, params, channels);
     snd_pcm_hw_params_set_rate_near(pcm_device, params, &sample_rate, &dir);
-    snd_pcm_hw_params_set_period_size_near(pcm_device, params, &frames, &dir);
+    snd_pcm_hw_params_set_period_size_near(pcm_device, params, &period_frames, &dir);
+    snd_pcm_hw_params_set_buffer_size_near(pcm_device, params, &buffer_frames);
     snd_pcm_hw_params(pcm_device, params);
 
     subsystem->pcm_handle = pcm_device;

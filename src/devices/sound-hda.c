@@ -11,6 +11,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "atomics.h"
 #include "compiler.h"
 #include "mem_ops.h"
+#include "rvtimer.h"
 #include "threading.h"
 #include "spinlock.h"
 #include "utils.h"
@@ -303,7 +304,8 @@ typedef struct {
     uint8_t     ioce;
     uint8_t     stream;
     uint8_t     channel;
-    uint32_t    running;
+    uint32_t    running;       // Guest intent: 1 = stream should be running
+    uint32_t    worker_alive;  // Worker lifetime: 1 = worker thread exists
     uint8_t     fmt;
     uint8_t     status;
     uint8_t     left_gain;
@@ -337,7 +339,29 @@ typedef struct {
 
 static void sound_hda_remove(rvvm_mmio_dev_t* dev)
 {
-    UNUSED(dev);
+    // Halt the stream worker before the PCI function is torn down.
+    // Without this, a worker still walking the BDL will call
+    // pci_send_irq() / pci_get_dma_ptr() on a freed pci_func and crash.
+    //
+    // running=0 asks the worker to exit at the top of its next drain
+    // iteration. worker_alive is cleared by the worker when it actually
+    // returns — polling it is a reliable join, since thread_create_task
+    // is fire-and-forget and RVVM has no matching thread handle here.
+    sound_hda_dev_t *hda = dev->data;
+    if (hda != NULL) {
+        sound_hda_stream_t *stream = &hda->stream_output;
+        atomic_store_uint32_relax(&stream->running, 0);
+        // The worst-case drain-exit latency is one pacing-sleep period:
+        // at 48 kHz x 2 bytes, a 4 KiB BDL entry paces ~43 ms. Cap the
+        // wait at ~1 s as a liveness guard against a wedged backend
+        // (subsystem.write blocking inside the user callback). If we
+        // hit the cap, the device is being torn down anyway and the
+        // worst outcome is a brief thread leak — not a use-after-free.
+        for (int i = 0; i < 200; i++) {
+            if (!atomic_load_uint32_relax(&stream->worker_alive)) break;
+            sleep_ms(5);
+        }
+    }
 }
 
 static rvvm_mmio_type_t sound_hda_type = {
@@ -372,13 +396,50 @@ static bool sound_hda_mmio_read(rvvm_mmio_dev_t* dev, void* data, size_t offset,
         case SOUND_HDA_INTR_CTRL:
             write_uint32_le(data, hda->intr_ctrl);
             break;
-        case SOUND_HDA_INTSTS:
-            // As per specification and to simplify this code,
-            // we assume that interrupt always occured when
-            // guest reads this. Value represent interrupt
-            // on the outptut stream.
-            write_uint32_le(data, 1 << 29);
+        case SOUND_HDA_INTSTS: {
+            // INTSTS (HDA spec 3.3.13): bits 0..29 are per-stream SIS
+            // flags (SDnSTS has any latched IRQ), bit 30 CIS (CORB/RIRB),
+            // bit 31 GIS (overall OR).
+            //
+            // Stream indices follow the descriptor order ISS, OSS, BSS:
+            // we advertise 1 input + 1 output, so ISD0 is stream 0
+            // (mask 1<<0) and OSD0 is stream 1 (mask 1<<1).
+            //
+            // Prior code returned `1 << 29`, claiming "stream 29 has an
+            // IRQ". Linux's azx_interrupt does
+            //   if (status & azx_dev->sd_int_sta_mask) { ... }
+            // over its stream_list (indices 0 and 1 for us). Bit 29
+            // never matches, the output stream's IRQ is silently
+            // dropped before snd_pcm_period_elapsed runs — same
+            // "writers never wake" failure mode as a missing BCIS.
+            uint32_t sts = 0;
+            if (hda->stream_output.status & 0x1C) {
+                sts |= 1u << 1;   // OSD0 = stream index 1
+            }
+            if (sts) sts |= (1u << 31);  // GIS mirrors any pending SIS
+            write_uint32_le(data, sts);
             break;
+        }
+        case SOUND_HDA_WALL_CLOCK: {
+            // HDA spec 3.3.18: 32-bit counter clocked at 24 MHz. Used by
+            // the Linux HDA driver (intel.c:azx_position_ok) as a sanity
+            // gate: if (now - start_wallclk) < (period_wallclk * 2/3),
+            // the IRQ is declared bogus and dropped before
+            // snd_pcm_period_elapsed runs. Returning 0 meant every IRQ
+            // was rejected, hw_ptr never advanced from the driver's POV,
+            // writers blocked in wait_for_avail until a signal arrived
+            // (mpg123: "wrote only N of M"). With a real monotonic
+            // 24 MHz counter the driver compares correctly, the gate
+            // passes once per period, and period_elapsed wakes writers.
+            //
+            // aplay @ 22 kHz mono never saw this because its byte rate
+            // (44 KB/s) is well below our BDL drain rate (96 KB/s) —
+            // the runtime buffer never filled, so wait_for_avail was
+            // never entered and WALLCLK was irrelevant.
+            uint32_t wallclk = (uint32_t)rvtimer_clocksource(24000000ULL);
+            write_uint32_le(data, wallclk);
+            break;
+        }
         case SOUND_HDA_CORB_WP:
             write_uint16_le(data, hda->corb_wp);
             break;
@@ -471,7 +532,20 @@ static uint32_t sound_hda_codec_fg_output_cmd(uint32_t payload)
             return CODEC_PARAM_FUNC_GROUP_TYPE_AUDIO;
 
         case CODEC_PARAM_SUPP_PCM_SIZE_RATES:
-            return (0x1F << 16) | 0x7FF; // B8 - B32, 8.0 - 192.0kHz
+            // Advertise ONLY 48 kHz, 16-bit. If we advertised the full
+            // 8-192 kHz / 8-32 bit range, the Linux driver would let the
+            // application pick its file's native rate, but the stream
+            // worker has no per-stream rate awareness — it paces to a
+            // fixed bytes/sec. So playing a 48 kHz WAV against a codec
+            // that accepts 192 kHz caused 4× slow playback + aliasing.
+            //
+            // Fixing the codec to one format makes ALSA + the HDA driver
+            // handle any rate mismatch in software (linear-interp upsample
+            // or straight passthrough), with the emulator's rate
+            // always matching the pacing math. 48 kHz mono 16-bit is
+            // what every common audio file decodes to after ffmpeg/afconvert,
+            // so the hot path is pure passthrough.
+            return (1 << 17) | (1 << 6); // 16-bit, 48 kHz
 
         case CODEC_PARAM_SUPP_STREAM_FMTS:
             return CODEC_PARAM_SUPP_STREAM_FMTS_PCM;
@@ -498,14 +572,19 @@ static uint32_t sound_hda_codec_output_cmd(uint32_t payload)
             return 0x00010001; // 1 Subnode, StartNid = 1
 
         case CODEC_PARAM_AUDIO_WIDGET_CAPS:
+            // No STEREO bit: tell the guest driver this widget is mono
+            // only. Prevents Linux from configuring a stereo stream
+            // (which it will by default on stereo-capable widgets, even
+            // for mono input, and then silently downmixes the input
+            // duplicating mono → L+R — so the emulator byte rate
+            // doubles and pacing diverges).
             return CODEC_PARAM_AUDIO_WIDGET_CAPS_OUTPUT
                  | CODEC_PARAM_AUDIO_WIDGET_CAPS_FORMAT_OVR
                  | CODEC_PARAM_AUDIO_WIDGET_CAPS_AMP_OVR
-                 | CODEC_PARAM_AUDIO_WIDGET_CAPS_AMP_OUT
-                 | CODEC_PARAM_AUDIO_WIDGET_CAPS_STEREO;
+                 | CODEC_PARAM_AUDIO_WIDGET_CAPS_AMP_OUT;
 
         case CODEC_PARAM_SUPP_PCM_SIZE_RATES:
-            return (0x1F << 16) | 0x7FF; // B8 - B32, 8.0 - 192.0kHz
+            return (1 << 17) | (1 << 6); // 16-bit, 48 kHz (see root-node comment)
 
         case CODEC_PARAM_SUPP_STREAM_FMTS:
             return CODEC_PARAM_SUPP_STREAM_FMTS_PCM;
@@ -526,9 +605,10 @@ static uint32_t sound_hda_codec_pin_output_cmd(uint32_t payload)
 {
     switch (payload) {
         case CODEC_PARAM_AUDIO_WIDGET_CAPS:
+            // Mono pin to match the output widget; see the output-widget
+            // caps comment above.
             return CODEC_PARAM_AUDIO_WIDGET_CAPS_PIN
-                 | CODEC_PARAM_AUDIO_WIDGET_CAPS_CONN_LIST
-                 | CODEC_PARAM_AUDIO_WIDGET_CAPS_STEREO;
+                 | CODEC_PARAM_AUDIO_WIDGET_CAPS_CONN_LIST;
 
         case CODEC_PARAM_PIN_CAPS:
             return CODEC_PARAM_PIN_CAPS_OUTPUT
@@ -692,13 +772,68 @@ static void sound_hda_codec_cmd(sound_hda_dev_t *hda, uint32_t cmd)
     sound_hda_write_rirb(hda, cad, response);
 }
 
-static void *sound_hda_stream_worker(void *arg)
+// Drain the stream once: read current fmt/BDL, pace PCM to the backend
+// until the guest clears running (or an unrecoverable condition bails).
+// Separate from the worker-lifetime loop below so early-bail paths can
+// just return without touching worker_alive.
+static void sound_hda_stream_drain(sound_hda_dev_t *hda)
 {
-    sound_hda_dev_t *hda = arg;
     sound_hda_stream_t *stream = &hda->stream_output;
+
+    // Pace the worker to the stream's configured bytes-per-second.
+    // Without pacing, non-blocking backends (ring buffers, null sinks)
+    // let this loop blast through the BDL as fast as the CPU allows:
+    // LPIB advances instantly, the guest HDA driver sees its DMA
+    // "consume" data faster than it can refill, and aplay trips ALSA's
+    // position-consistency assertion ("pcm_plugin.c Assertion
+    // status->appl_ptr == *pcm->appl.ptr failed"). Blocking backends
+    // (ALSA's snd_pcm_writei) dodge this accidentally because writei
+    // blocks when the host buffer fills.
+    //
+    // The rate is derived from stream->fmt per HDA spec 7.3.3.10:
+    //   bit  14      : base rate        (0=48000, 1=44100)
+    //   bits 13:11   : rate multiplier  (N+1: 1×, 2×, 3×, 4×)
+    //   bits 10:8    : rate divisor     (N+1: /1 .. /8)
+    //   bits 6:4     : bits/sample      (0=8, 1=16, 2=20, 3=24, 4=32)
+    //   bits 3:0     : channels minus 1 (0=1ch, 1=2ch, …)
+    //
+    // A previous iteration hardcoded 192 kHz mono then later 48 kHz
+    // mono — both broke when the guest driver chose a different stream
+    // format (Linux HDA likes to configure stereo streams even for mono
+    // content, doubling the true byte rate). Deriving from fmt is the
+    // only way to be robust across guest driver choices.
+    uint16_t fmt             = stream->fmt;
+    uint32_t channels        = (fmt & 0xF) + 1;
+    uint32_t bits_code       = (fmt >> 4) & 7;
+    uint32_t bits_per_sample = bits_code == 0 ? 8  : bits_code == 1 ? 16 :
+                               bits_code == 2 ? 20 : bits_code == 3 ? 24 : 32;
+    uint32_t bytes_per_frame = channels * ((bits_per_sample + 7) / 8);
+    uint32_t div             = ((fmt >> 8)  & 7) + 1;
+    uint32_t mult            = ((fmt >> 11) & 7) + 1;
+    uint32_t base_hz         = (fmt & (1 << 14)) ? 44100 : 48000;
+    uint64_t sample_rate_hz  = (uint64_t)base_hz * mult / div;
+    uint64_t SAMPLE_RATE_BYTES_PER_SEC = sample_rate_hz * bytes_per_frame;
+    if (SAMPLE_RATE_BYTES_PER_SEC == 0) {
+        // Guest wrote run=1 before configuring the format. Bail out
+        // like the NULL-dma case — driver will retry properly.
+        atomic_store_uint32_relax(&stream->running, 0);
+        return;
+    }
+    uint64_t       paced_start_ns  = 0;
+    uint64_t       paced_bytes_out = 0;
 
     uint32_t total = stream->bdl_lvi + 1;
     uint64_t *dma = pci_get_dma_ptr(hda->pci_func, stream->bdl_lo, stream->bdl_len);
+
+    // If the guest set up the stream control register without a valid BDL
+    // (bdl_lo == 0 or invalid), pci_get_dma_ptr returns NULL. Bail out
+    // cleanly — the guest's ALSA driver will eventually retry with a
+    // proper BDL when userspace opens another PCM handle.
+    if (dma == NULL) {
+        atomic_store_uint32_relax(&stream->running, 0);
+        return;
+    }
+
     while (atomic_load_uint32_relax(&stream->running)) {
         for (uint32_t i = 0; i < total; ++i) {
             uint64_t *bdle = &dma[i * 2];
@@ -706,14 +841,82 @@ static void *sound_hda_stream_worker(void *arg)
             uint32_t len  = bdle[1] & 0xFFFFFFFF;
             uint8_t  ioc  = bdle[1] >> 32 & 1;
 
-#ifdef USE_ALSA
-            void *pcm = pci_get_dma_ptr(hda->pci_func, addr, len);
-            hda->subsystem.write(&hda->subsystem, pcm, len);
-#else
-            // TODO: Stub backend or don't compile this file if no
-            //       sound compilation option?
-            UNUSED(addr);
-#endif
+            // Dispatch PCM to the configured host-side backend. If no backend
+            // was installed at init time (neither a compile-time USE_ALSA nor
+            // a caller-supplied write_fn via sound_hda_init_ex), the HDA
+            // device enumerates on the PCI bus but this path is a no-op —
+            // the guest sees a working device and the LPIB counter advances
+            // so its driver doesn't stall, but PCM data is silently dropped.
+            //
+            // Backend contract: always receives MONO 16-bit LE at the
+            // stream's configured rate. If the guest driver configured a
+            // multi-channel stream (Linux's HDA code likes stereo even
+            // when the codec widget advertises mono capability), we
+            // downmix here by averaging channels. Keeps backends simple
+            // (they don't need to know channel count) and the pacing
+            // math below stays 1:1 with the bytes they see.
+            if (hda->subsystem.write != NULL) {
+                void *pcm = pci_get_dma_ptr(hda->pci_func, addr, len);
+                if (pcm == NULL) {
+                    // Bad guest BDL entry (zero addr, unmapped region, or
+                    // zero len). Don't feed NULL to the backend — ALSA's
+                    // snd_pcm_writei(NULL, n) is UB and ringbuf writes
+                    // memcpy from NULL. Pacing still advances below so
+                    // LPIB keeps moving and the guest can recover.
+                } else if (channels == 1) {
+                    hda->subsystem.write(&hda->subsystem, pcm, len);
+                } else if (bits_per_sample == 16) {
+                    // Common case: 16-bit multi-channel → 16-bit mono.
+                    // Stack-allocate — BDL entries are small (256-4096 B).
+                    size_t frame_bytes_in = (size_t)bytes_per_frame;
+                    size_t frames         = len / frame_bytes_in;
+                    int16_t *src = (int16_t*)pcm;
+                    int16_t  mono_buf[4096];
+                    size_t bytes_emitted = 0;
+                    while (bytes_emitted < frames * 2) {
+                        size_t chunk_frames = frames - (bytes_emitted / 2);
+                        if (chunk_frames > 4096) chunk_frames = 4096;
+                        for (size_t f = 0; f < chunk_frames; f++) {
+                            int32_t sum = 0;
+                            size_t base = (bytes_emitted / 2 + f) * channels;
+                            for (uint32_t c = 0; c < channels; c++) {
+                                sum += src[base + c];
+                            }
+                            mono_buf[f] = (int16_t)(sum / (int32_t)channels);
+                        }
+                        hda->subsystem.write(&hda->subsystem, mono_buf, chunk_frames * 2);
+                        bytes_emitted += chunk_frames * 2;
+                    }
+                } else {
+                    // Rare: non-16-bit multi-channel. Pass raw; backends
+                    // that care can parse stream->fmt from the caller.
+                    hda->subsystem.write(&hda->subsystem, pcm, len);
+                }
+            } else {
+                UNUSED(addr);
+            }
+
+            // Wall-clock pacing. Compute the ideal elapsed time for the
+            // bytes we've emitted so far and sleep the difference.
+            paced_bytes_out += len;
+            uint64_t now_ns = rvtimer_clocksource(1000000000ULL);
+            if (paced_start_ns == 0) {
+                paced_start_ns = now_ns;
+            } else {
+                uint64_t expected_ns = paced_bytes_out * 1000000000ULL
+                                     / SAMPLE_RATE_BYTES_PER_SEC;
+                uint64_t elapsed_ns  = now_ns - paced_start_ns;
+                if (expected_ns > elapsed_ns) {
+                    sleep_ns(expected_ns - elapsed_ns);
+                } else if (elapsed_ns > expected_ns + 100000000ULL) {
+                    // Fell more than 100 ms behind — rebase so we don't
+                    // try to "catch up" by blasting. Happens on machine
+                    // resume from pause, or very long Java-side GCs.
+                    paced_start_ns  = now_ns;
+                    paced_bytes_out = 0;
+                }
+            }
+
             stream->lpib += len;
             // If stream longer than BDL length, reset LPIB.
             if (stream->lpib >= stream->bdl_len)
@@ -721,12 +924,48 @@ static void *sound_hda_stream_worker(void *arg)
             // When LPIB goes over BDL length, we are done.
             if (stream->bdl_len > 0 && stream->lpib > stream->bdl_len)
                 atomic_store_uint32_relax(&stream->running, 0);
-            if (ioc)
+            if (ioc) {
+                // Latch BCIS (SDnSTS bit 2) before raising the IRQ. Linux's
+                // HDA ISR (snd_hdac_bus_handle_stream_irq) reads SD_STS,
+                // and only calls snd_pcm_period_elapsed when SD_INT_COMPLETE
+                // (== BCIS) is set. Without this bit, the IRQ is ack'd and
+                // discarded — hw_ptr stops advancing from the driver's POV,
+                // writers blocked in wait_for_avail never wake, and the
+                // stream decays into a stall that userspace sees as short
+                // or zero writes from snd_pcm_writei.
+                //
+                // HDA spec 3.3.38: BCIS is RW1C. Guest clears it via the
+                // existing OSD0STS write handler at sound_hda_mmio_write().
+                hda->stream_output.status |= 0x04;
                 pci_send_irq(hda->pci_func, 0);
+            }
         }
     }
+}
 
-    return NULL;
+static void *sound_hda_stream_worker(void *arg)
+{
+    sound_hda_dev_t *hda = arg;
+    sound_hda_stream_t *stream = &hda->stream_output;
+
+    // Worker lifetime is published via worker_alive. Loop handles a narrow
+    // missed-wakeup window: guest writes run=1 after we read running=0 but
+    // before we clear worker_alive — its spawn CAS sees worker_alive=1
+    // and skips, leaving no worker for a running stream. We catch that by
+    // re-reading running after the clear, and re-claim the slot to drain
+    // again. If a concurrent spawn already won the CAS, they own the next
+    // drain — we exit. Either way, exactly one worker runs at a time.
+    for (;;) {
+        sound_hda_stream_drain(hda);
+
+        atomic_store_uint32_relax(&stream->worker_alive, 0);
+
+        if (!atomic_load_uint32_relax(&stream->running))
+            return NULL;
+        if (!atomic_cas_uint32(&stream->worker_alive, 0, 1))
+            return NULL;
+        // Re-claimed the slot; drain again with freshly-read stream state.
+    }
 }
 
 static void sound_hda_output_stream_ctl(sound_hda_dev_t *hda, uint32_t cmd)
@@ -738,8 +977,22 @@ static void sound_hda_output_stream_ctl(sound_hda_dev_t *hda, uint32_t cmd)
     stream->ioce = ioce;
 
     if (run) {
+        // Publish guest intent first, THEN gate the spawn on worker_alive.
+        // Ordering matters: a worker exiting its while-loop right now will
+        // clear worker_alive after its last running-check. If we set
+        // running=1 before it clears, our subsequent CAS will either win
+        // the slot (worker already gone) or lose it (worker still alive),
+        // and the worker's post-clear re-check of running catches the case
+        // where we lost the CAS but running=1 still needs a worker.
         atomic_store_uint32_relax(&stream->running, 1);
-        thread_create_task(sound_hda_stream_worker, hda);
+        // Gate on worker_alive (not running): running is guest intent and
+        // can flip repeatedly while a single worker drains a stream.
+        // worker_alive is owned by the worker — set here on spawn, cleared
+        // only by the worker at function return — so it stays 1 across the
+        // entire window where a second thread would trample stream state.
+        if (atomic_cas_uint32(&stream->worker_alive, 0, 1)) {
+            thread_create_task(sound_hda_stream_worker, hda);
+        }
     } else {
         atomic_store_uint32_relax(&stream->running, 0);
     }
@@ -877,7 +1130,29 @@ static bool sound_hda_mmio_write(rvvm_mmio_dev_t* dev, void* data, size_t offset
     return true;
 }
 
-PUBLIC pci_dev_t *sound_hda_init(pci_bus_t *pci_bus)
+/*
+ * Bridge struct stored in sound_subsystem_t.sound_data when a caller-supplied
+ * backend is installed via sound_hda_init_ex. Adapts the public two-argument
+ * callback to the subsystem's three-argument shape. Freed... never. The HDA
+ * device itself is leaked on machine destruction today (see sound_hda_remove),
+ * so this follows the same lifecycle.
+ */
+typedef struct {
+    sound_hda_backend_write_fn user_fn;
+    void                       *user_data;
+} sound_hda_backend_bridge_t;
+
+static void sound_hda_backend_bridge_write(sound_subsystem_t *sub, void *data, size_t size)
+{
+    sound_hda_backend_bridge_t *bridge = (sound_hda_backend_bridge_t *)sub->sound_data;
+    if (bridge != NULL && bridge->user_fn != NULL) {
+        bridge->user_fn(bridge->user_data, data, size);
+    }
+}
+
+PUBLIC pci_dev_t *sound_hda_init_ex(pci_bus_t *pci_bus,
+                                    sound_hda_backend_write_fn write_fn,
+                                    void *user_data)
 {
     sound_hda_dev_t *sound_hda = safe_new_obj(sound_hda_dev_t);
 
@@ -902,12 +1177,39 @@ PUBLIC pci_dev_t *sound_hda_init(pci_bus_t *pci_bus)
     if (pci_dev)
         sound_hda->pci_func = pci_get_device_func(pci_dev, 0);
 
+    // Backend selection priority:
+    //   1. Caller-supplied write_fn (via sound_hda_init_ex) — skip the
+    //      compile-time default. Used by embedders that want to route
+    //      audio somewhere other than the host's native audio stack
+    //      (managed runtimes, IPC channels, WAV capture fixtures, etc.).
+    //   2. Compile-time USE_ALSA — the traditional Linux host path.
+    //   3. Neither — PCI device enumerates but the stream worker drops PCM.
+    if (write_fn != NULL) {
+        sound_hda_backend_bridge_t *bridge = safe_new_obj(sound_hda_backend_bridge_t);
+        bridge->user_fn = write_fn;
+        bridge->user_data = user_data;
+        sound_hda->subsystem.sound_data = bridge;
+        sound_hda->subsystem.write = sound_hda_backend_bridge_write;
+    } else {
 #ifdef USE_ALSA
-    if (!alsa_sound_init(&sound_hda->subsystem))
-        return NULL;
+        if (!alsa_sound_init(&sound_hda->subsystem))
+            return NULL;
 #endif
+    }
 
     return pci_dev;
+}
+
+PUBLIC pci_dev_t *sound_hda_init_auto_ex(rvvm_machine_t *machine,
+                                         sound_hda_backend_write_fn write_fn,
+                                         void *user_data)
+{
+    return sound_hda_init_ex(rvvm_get_pci_bus(machine), write_fn, user_data);
+}
+
+PUBLIC pci_dev_t *sound_hda_init(pci_bus_t *pci_bus)
+{
+    return sound_hda_init_ex(pci_bus, NULL, NULL);
 }
 
 PUBLIC pci_dev_t *sound_hda_init_auto(rvvm_machine_t *machine)
