@@ -21,11 +21,14 @@ RVVM_EXTERN_C_BEGIN
  */
 
 /**
+ * Invalid interrupt index
+ */
+#define RVVM_IRQ_INVALID ((uint32_t)(-1))
+
+/**
  * Interrupt controller callbacks
  *
  * Must be valid during controller lifetime, or static
- *
- * Callbacks are optional (Nullable)
  */
 typedef struct {
     /**
@@ -75,6 +78,27 @@ RVVM_PUBLIC rvvm_irq_dev_t* rvvm_irq_dev_init(const rvvm_irq_dev_cb_t* cb, void*
 RVVM_PUBLIC void rvvm_irq_dev_free(rvvm_irq_dev_t* irq_dev);
 
 /**
+ * Get private interrupt controller data
+ *
+ * \param irq_dev Interrupt controller handle
+ * \return        Interrupt controller private data
+ */
+RVVM_PUBLIC void* rvvm_irq_dev_data(rvvm_irq_dev_t* irq_dev);
+
+/**
+ * Set interrupt controller base peripheral interrupt
+ *
+ * Should be called by interrupt controller implementation to mark
+ * lowest IRQ line usable by peripherals, for proper IRQ allocation
+ *
+ * Must not be mutated after initial configuration
+ *
+ * \param irq_dev  Interrupt controller handle
+ * \param irq_base Lowest IRQ line usable by peripherals
+ */
+RVVM_PUBLIC void rvvm_irq_dev_set_base(rvvm_irq_dev_t* irq_dev, rvvm_irq_t irq_base);
+
+/**
  * Set interrupt controller FDT phandle
  *
  * Should be called by FDT-based interrupt controller implementation
@@ -98,9 +122,7 @@ RVVM_PUBLIC void rvvm_irq_dev_set_phandle(rvvm_irq_dev_t* irq_dev, uint32_t phan
  *
  * \param irq_dev Interrupt controller handle
  * \param irq     Suggest minimal IRQ line to allocate
- * \return        Allocated IRQ line
- *
- * This function always succeeds
+ * \return        Allocated IRQ line or RVVM_IRQ_INVALID
  */
 RVVM_PUBLIC rvvm_irq_t rvvm_irq_alloc(rvvm_irq_dev_t* irq_dev, rvvm_irq_t irq);
 
@@ -133,7 +155,7 @@ static inline bool rvvm_irq_alloc_exact(rvvm_irq_dev_t* irq_dev, rvvm_irq_t irq)
 /**
  * Set interrupt line level
  *
- * Interrupt line state changes are observable in consistent order
+ * All operations establish a happens-before relationship at controller
  *
  * \param irq_dev Interrupt controller handle
  * \param irq     Interrupt line
