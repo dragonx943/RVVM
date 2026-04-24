@@ -104,7 +104,7 @@ typedef struct {
      *
      * This function is exclusively called from a single thread
      */
-    void (*free)(rvvm_reg_dev_t* dev);
+    void (*cleanup)(rvvm_reg_dev_t* dev);
 
     /**
      * Minimum operation size and alignment allowed

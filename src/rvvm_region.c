@@ -21,6 +21,7 @@ PUSH_OPTIMIZATION_SIZE
 struct rvvm_reg_dev {
     rvvm_machine_t*  machine;
     rvvm_mmio_dev_t* mmio;
+    rvvm_mmio_type_t type;
     rvvm_reg_desc_t  desc;
 };
 
@@ -46,8 +47,8 @@ static void rvvm_region_legacy_remove(rvvm_mmio_dev_t* mmio)
 {
     rvvm_reg_dev_t*   dev  = (rvvm_reg_dev_t*)mmio->data;
     rvvm_mmio_type_t* type = NONCONST_CAST(rvvm_mmio_type_t*, mmio->type);
-    if (dev->desc.type && dev->desc.type->free) {
-        dev->desc.type->free(dev);
+    if (dev->desc.type && dev->desc.type->cleanup) {
+        dev->desc.type->cleanup(dev);
     }
     safe_free(dev);
     safe_free(type);
@@ -107,8 +108,8 @@ RVVM_PUBLIC rvvm_reg_dev_t* rvvm_region_init(rvvm_machine_t* machine, const rvvm
             dev->mmio = mmio;
             return dev;
         }
-    } else if (dev->desc.type && dev->desc.type->free) {
-        dev->desc.type->free(dev);
+    } else if (dev->desc.type && dev->desc.type->cleanup) {
+        dev->desc.type->cleanup(dev);
     }
     return NULL;
 }
