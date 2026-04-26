@@ -17,7 +17,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 PUSH_OPTIMIZATION_SIZE
 
-#define FDT_MAGIC        0xD00DFEED
+#define FDT_MAGIC        0xD00DFEEDUL
 #define FDT_VERSION      17
 #define FDT_COMP_VERSION 16
 
@@ -61,47 +61,41 @@ struct fdt_serializer_ctx {
 
 static spinlock_t fdt_lock = ZERO_INIT;
 
-static void* heap_duplicate(const void* data, size_t size)
-{
-    if (data && size) {
-        void* buffer = safe_malloc(size);
-        memcpy(buffer, data, size);
-        return buffer;
-    }
-    return NULL;
-}
-
-static char* str_duplicate(const char* str)
-{
-    return heap_duplicate(str, rvvm_strlen(str) + 1);
-}
-
 static void fdt_prop_free(rvvm_fdt_prop_t* prop)
 {
     free(prop->name);
     free(prop->data);
 }
 
-static size_t fdt_name_with_addr(char* buffer, size_t size, const char* name, uint64_t addr)
-{
-    size_t len  = rvvm_strlcpy(buffer, name, size);
-    len        += rvvm_strlcpy(buffer + len, "@", size - len);
-    len        += uint_to_str_base(buffer + len, size, addr, 16);
-    return len;
-}
-
-RVVM_PUBLIC rvvm_fdt_node_t* rvvm_fdt_init(const char* name)
+static rvvm_fdt_node_t* rvvm_fdt_init_raw(const char* name, const uint64_t* addr)
 {
     rvvm_fdt_node_t* node = safe_new_obj(rvvm_fdt_node_t);
-    node->name            = name ? str_duplicate(name) : NULL;
+    if (name) {
+        char*  name_ptr     = NULL;
+        size_t name_len     = rvvm_strlen(name);
+        char   suff_buf[16] = "@";
+        size_t suff_len     = 0;
+        if (addr) {
+            suff_len = uint_to_str_base(suff_buf + 1, sizeof(suff_buf) - 1, *addr, 16) + 1;
+        }
+        name_ptr = safe_new_arr(char, name_len + suff_len + 1);
+        memcpy(name_ptr, name, name_len);
+        if (suff_len) {
+            memcpy(name_ptr + name_len, suff_buf, suff_len);
+        }
+        node->name = name_ptr;
+    }
     return node;
 }
 
 RVVM_PUBLIC rvvm_fdt_node_t* rvvm_fdt_init_reg(const char* name, uint64_t addr)
 {
-    char buffer[256];
-    fdt_name_with_addr(buffer, sizeof(buffer), name, addr);
-    return rvvm_fdt_init(buffer);
+    return rvvm_fdt_init_raw(name, &addr);
+}
+
+RVVM_PUBLIC rvvm_fdt_node_t* rvvm_fdt_init(const char* name)
+{
+    return rvvm_fdt_init_raw(name, NULL);
 }
 
 RVVM_PUBLIC void rvvm_fdt_attach(rvvm_fdt_node_t* parent, rvvm_fdt_node_t* child)
@@ -259,46 +253,40 @@ RVVM_PUBLIC size_t rvvm_fdt_serialize(rvvm_fdt_node_t* node, void* buff, size_t 
     return buf_size;
 }
 
-RVVM_PUBLIC rvvm_fdt_node_t* rvvm_fdt_find(rvvm_fdt_node_t* node, const char* name)
+static rvvm_fdt_node_t* rvvm_fdt_find_raw(rvvm_fdt_node_t* node, const char* name, const uint64_t* addr)
 {
     if (node) {
         spin_lock(&fdt_lock);
         vector_foreach_back (node->nodes, i) {
             rvvm_fdt_node_t* child = vector_at(node->nodes, i);
-            if (rvvm_strcmp(child->name, name)) {
-                spin_unlock(&fdt_lock);
-                return child;
+            if (rvvm_strfind(child->name, name) == child->name) {
+                size_t len = rvvm_strlen(name);
+                if (addr && child->name[len] == '@') {
+                    char buf[16];
+                    uint_to_str_base(buf, sizeof(buf), *addr, 16);
+                    if (!((*addr) + 1) || rvvm_strcmp(child->name + len + 1, buf)) {
+                        spin_unlock(&fdt_lock);
+                        return child;
+                    }
+                } else if (!addr && !child->name[len]) {
+                    spin_unlock(&fdt_lock);
+                    return child;
+                }
             }
         }
         spin_unlock(&fdt_lock);
     }
     return NULL;
+}
+
+RVVM_PUBLIC rvvm_fdt_node_t* rvvm_fdt_find(rvvm_fdt_node_t* node, const char* name)
+{
+    return rvvm_fdt_find_raw(node, name, NULL);
 }
 
 RVVM_PUBLIC rvvm_fdt_node_t* rvvm_fdt_find_reg(rvvm_fdt_node_t* node, const char* name, uint64_t addr)
 {
-    char buffer[256];
-    fdt_name_with_addr(buffer, sizeof(buffer), name, addr);
-    return rvvm_fdt_find(node, buffer);
-}
-
-RVVM_PUBLIC rvvm_fdt_node_t* rvvm_fdt_find_reg_any(rvvm_fdt_node_t* node, const char* name)
-{
-    char   buffer[256] = {0};
-    size_t len         = rvvm_strlcpy(buffer, name, sizeof(buffer));
-    rvvm_strlcpy(buffer + len, "@", sizeof(buffer) - len);
-    if (node) {
-        spin_lock(&fdt_lock);
-        vector_foreach_back (node->nodes, i) {
-            rvvm_fdt_node_t* child = vector_at(node->nodes, i);
-            if (rvvm_strfind(child->name, buffer) == child->name) {
-                spin_unlock(&fdt_lock);
-                return child;
-            }
-        }
-        spin_unlock(&fdt_lock);
-    }
-    return NULL;
+    return rvvm_fdt_find_raw(node, name, &addr);
 }
 
 RVVM_PUBLIC uint32_t rvvm_fdt_phandle(rvvm_fdt_node_t* node)
@@ -342,66 +330,67 @@ static rvvm_fdt_prop_t* rvvm_fdt_find_prop(rvvm_fdt_node_t* node, const char* na
     return NULL;
 }
 
+static void rvvm_fdt_prop_set_raw(rvvm_fdt_node_t* node, const char* name, void* data, size_t size)
+{
+    if (node->parent) {
+        spin_lock(&fdt_lock);
+    }
+    // Replace old prop if present
+    rvvm_fdt_prop_t* old_prop = rvvm_fdt_find_prop(node, name);
+    if (old_prop) {
+        free(old_prop->data);
+        old_prop->data = data;
+        old_prop->size = size;
+    } else {
+        // Put a new prop
+        size_t          nmsz = rvvm_strlen(name) + 1;
+        rvvm_fdt_prop_t prop = {
+            .name = safe_malloc(nmsz),
+            .data = data,
+            .size = size,
+        };
+        memcpy(prop.name, name, nmsz);
+        vector_push_back(node->props, prop);
+    }
+    if (node->parent) {
+        spin_unlock(&fdt_lock);
+    }
+}
+
 RVVM_PUBLIC void rvvm_fdt_prop_set(rvvm_fdt_node_t* node, const char* name, const void* data, size_t size)
 {
     if (node) {
-        if (node->parent) {
-            spin_lock(&fdt_lock);
+        void* ptr = NULL;
+        if (data) {
+            ptr = safe_malloc(size);
+            memcpy(ptr, data, size);
         }
-        // Replace old prop if present
-        rvvm_fdt_prop_t* old_prop = rvvm_fdt_find_prop(node, name);
-        if (old_prop) {
-            free(old_prop->data);
-            old_prop->data = heap_duplicate(data, size);
-            old_prop->size = size;
-        } else {
-            // Put a new prop
-            rvvm_fdt_prop_t prop = {
-                .name = str_duplicate(name),
-                .data = heap_duplicate(data, size),
-                .size = size,
-            };
-            vector_push_back(node->props, prop);
-        }
-        if (node->parent) {
-            spin_unlock(&fdt_lock);
-        }
+        rvvm_fdt_prop_set_raw(node, name, ptr, size);
     }
 }
 
-RVVM_PUBLIC void rvvm_fdt_prop_set_u32(rvvm_fdt_node_t* node, const char* name, uint32_t val)
+RVVM_PUBLIC void rvvm_fdt_prop_set_cells(rvvm_fdt_node_t* node, const char* name, const uint32_t* cells, size_t count)
 {
-    write_uint32_be_m(&val, val);
-    rvvm_fdt_prop_set(node, name, &val, sizeof(val));
-}
-
-RVVM_PUBLIC void rvvm_fdt_prop_set_u64(rvvm_fdt_node_t* node, const char* name, uint64_t val)
-{
-    write_uint64_be_m(&val, val);
-    rvvm_fdt_prop_set(node, name, &val, sizeof(val));
-}
-
-RVVM_PUBLIC void rvvm_fdt_prop_set_cells(rvvm_fdt_node_t* node, const char* name, const uint32_t* cell, size_t size)
-{
-    uint32_t* buffer = safe_new_arr(uint32_t, size);
-    for (uint32_t i = 0; i < size; ++i) {
-        write_uint32_be_m(&buffer[i], cell[i]);
+    if (node) {
+        uint32_t* ptr = NULL;
+        if (cells) {
+            ptr = safe_new_arr(uint32_t, count);
+            for (uint32_t i = 0; i < count; ++i) {
+                write_uint32_be_m(&ptr[i], cells[i]);
+            }
+        }
+        rvvm_fdt_prop_set_raw(node, name, ptr, count * sizeof(uint32_t));
     }
-    rvvm_fdt_prop_set(node, name, buffer, size * sizeof(uint32_t));
-    free(buffer);
 }
 
-RVVM_PUBLIC void rvvm_fdt_prop_set_str(rvvm_fdt_node_t* node, const char* name, const char* val)
+RVVM_PUBLIC void rvvm_fdt_prop_set_str(rvvm_fdt_node_t* node, const char* name, const char* str)
 {
-    rvvm_fdt_prop_set(node, name, val, rvvm_strlen(val) + 1);
-}
-
-RVVM_PUBLIC void rvvm_fdt_prop_set_reg(rvvm_fdt_node_t* node, const char* name, uint64_t addr, uint64_t size)
-{
-    uint64_t arr[2] = {0};
-    write_uint64_be_m(&arr[0], addr);
-    write_uint64_be_m(&arr[1], size);
-    rvvm_fdt_prop_set(node, name, arr, sizeof(arr));
+    if (node && str) {
+        size_t size = rvvm_strlen(str) + 1;
+        char*  ptr  = safe_malloc(size);
+        memcpy(ptr, str, size);
+        rvvm_fdt_prop_set_raw(node, name, ptr, size);
+    }
 }
 
 RVVM_PUBLIC void rvvm_fdt_prop_del(rvvm_fdt_node_t* node, const char* name)
@@ -424,40 +413,27 @@ RVVM_PUBLIC void rvvm_fdt_prop_del(rvvm_fdt_node_t* node, const char* name)
     }
 }
 
-RVVM_PUBLIC const void* rvvm_fdt_prop_get_data(rvvm_fdt_node_t* node, const char* name)
+RVVM_PUBLIC const void* rvvm_fdt_prop_get(rvvm_fdt_node_t* node, const char* name, size_t* size)
 {
-    void* data = NULL;
+    void*  pdata = NULL;
+    size_t psize = 0;
     if (node) {
         if (node->parent) {
             spin_lock(&fdt_lock);
         }
         rvvm_fdt_prop_t* prop = rvvm_fdt_find_prop(node, name);
         if (prop) {
-            data = prop->data;
+            pdata = prop->data;
+            psize = prop->size;
         }
         if (node->parent) {
             spin_unlock(&fdt_lock);
         }
     }
-    return data;
-}
-
-RVVM_PUBLIC size_t rvvm_fdt_prop_get_size(rvvm_fdt_node_t* node, const char* name)
-{
-    size_t size = 0;
-    if (node) {
-        if (node->parent) {
-            spin_lock(&fdt_lock);
-        }
-        rvvm_fdt_prop_t* prop = rvvm_fdt_find_prop(node, name);
-        if (prop) {
-            size = prop->size;
-        }
-        if (node->parent) {
-            spin_unlock(&fdt_lock);
-        }
+    if (size) {
+        *size = psize;
     }
-    return size;
+    return pdata;
 }
 
 POP_OPTIMIZATION_SIZE

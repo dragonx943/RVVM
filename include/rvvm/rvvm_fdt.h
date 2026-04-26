@@ -24,26 +24,29 @@ RVVM_EXTERN_C_BEGIN
 /**
  * Create FDT node
  *
+ * If name is NULL, a root FDT node is created
+ *
  * \param name FDT node name, or NULL for a root node
  * \return     FDT node handle
  */
 RVVM_PUBLIC rvvm_fdt_node_t* rvvm_fdt_init(const char* name);
 
 /**
- * Create FDT node with hex address, like <device@10000>
+ * Create FDT node with device region suffix, like <device@10000>
  *
- * \param name FDT node device name
- * \param addr FDT node device address
+ * \param name Device name
+ * \param addr Device address
  * \return     FDT node handle
  */
 RVVM_PUBLIC rvvm_fdt_node_t* rvvm_fdt_init_reg(const char* name, uint64_t addr);
+
 
 /**
  * Attach child FDT node
  *
  * The root node recursively owns the entire device tree
  *
- * Detaches from previous parent node, if any
+ * Removes the node from its previous parent, if any
  *
  * Attaching to NULL frees child node tree
  *
@@ -53,6 +56,20 @@ RVVM_PUBLIC rvvm_fdt_node_t* rvvm_fdt_init_reg(const char* name, uint64_t addr);
  * This function is thread-safe
  */
 RVVM_PUBLIC void rvvm_fdt_attach(rvvm_fdt_node_t* parent, rvvm_fdt_node_t* child);
+
+/**
+ * Free FDT node tree
+ *
+ * Removes the node from its parent, if any
+ *
+ * \param node FDT node handle
+ *
+ * This function is thread-safe
+ */
+static inline void rvvm_fdt_free(rvvm_fdt_node_t* node)
+{
+    rvvm_fdt_attach(NULL, node);
+}
 
 /**
  * Serialize FDT into a buffer
@@ -79,20 +96,6 @@ RVVM_PUBLIC size_t rvvm_fdt_serialize(rvvm_fdt_node_t* node, void* buff, size_t 
 static inline size_t rvvm_fdt_size(rvvm_fdt_node_t* node)
 {
     return rvvm_fdt_serialize(node, NULL, 0);
-}
-
-/**
- * Free FDT node tree
- *
- * Detaches from parent node, if any
- *
- * \param node FDT node handle
- *
- * This function is thread-safe
- */
-static inline void rvvm_fdt_free(rvvm_fdt_node_t* node)
-{
-    rvvm_fdt_attach(NULL, node);
 }
 
 /**
@@ -127,7 +130,10 @@ RVVM_PUBLIC rvvm_fdt_node_t* rvvm_fdt_find_reg(rvvm_fdt_node_t* node, const char
  *
  * This function is thread-safe
  */
-RVVM_PUBLIC rvvm_fdt_node_t* rvvm_fdt_find_reg_any(rvvm_fdt_node_t* node, const char* name);
+static inline rvvm_fdt_node_t* rvvm_fdt_find_reg_any(rvvm_fdt_node_t* node, const char* name)
+{
+    return rvvm_fdt_find_reg(node, name, -1);
+}
 
 /**
  * Obtain FDT node phandle
@@ -168,6 +174,18 @@ static inline void rvvm_fdt_prop_set_flag(rvvm_fdt_node_t* node, const char* nam
 }
 
 /**
+ * Set multi-cell property on FDT node
+ *
+ * \param node  FDT node handle
+ * \param name  Property name
+ * \param cells Property cells (u32, host order)
+ * \param count Property cells count
+ *
+ * This function is thread-safe
+ */
+RVVM_PUBLIC void rvvm_fdt_prop_set_cells(rvvm_fdt_node_t* node, const char* name, const uint32_t* cells, size_t count);
+
+/**
  * Set single-cell u32 property on FDT node
  *
  * \param node FDT node handle
@@ -176,7 +194,10 @@ static inline void rvvm_fdt_prop_set_flag(rvvm_fdt_node_t* node, const char* nam
  *
  * This function is thread-safe
  */
-RVVM_PUBLIC void rvvm_fdt_prop_set_u32(rvvm_fdt_node_t* node, const char* name, uint32_t val);
+static inline void rvvm_fdt_prop_set_u32(rvvm_fdt_node_t* node, const char* name, uint32_t val)
+{
+    rvvm_fdt_prop_set_cells(node, name, &val, 1);
+}
 
 /**
  * Set double-cell u64 property on FDT node
@@ -187,30 +208,11 @@ RVVM_PUBLIC void rvvm_fdt_prop_set_u32(rvvm_fdt_node_t* node, const char* name, 
  *
  * This function is thread-safe
  */
-RVVM_PUBLIC void rvvm_fdt_prop_set_u64(rvvm_fdt_node_t* node, const char* name, uint64_t val);
-
-/**
- * Set multi-cell property on FDT node
- *
- * \param node  FDT node handle
- * \param name  Property name
- * \param cells Property cells
- * \param count Property cells count
- *
- * This function is thread-safe
- */
-RVVM_PUBLIC void rvvm_fdt_prop_set_cells(rvvm_fdt_node_t* node, const char* name, const uint32_t* cells, size_t count);
-
-/**
- * Set string property on FDT node
- *
- * \param node FDT node handle
- * \param name Property name
- * \param str  Property string
- *
- * This function is thread-safe
- */
-RVVM_PUBLIC void rvvm_fdt_prop_set_str(rvvm_fdt_node_t* node, const char* name, const char* str);
+static inline void rvvm_fdt_prop_set_u64(rvvm_fdt_node_t* node, const char* name, uint64_t val)
+{
+    uint32_t cells[2] = {(uint32_t)(val >> 32), (uint32_t)val};
+    rvvm_fdt_prop_set_cells(node, name, cells, 2);
+}
 
 /**
  * Set region range property on FDT node (addr cells: 2, size cells: 2)
@@ -222,7 +224,22 @@ RVVM_PUBLIC void rvvm_fdt_prop_set_str(rvvm_fdt_node_t* node, const char* name, 
  *
  * This function is thread-safe
  */
-RVVM_PUBLIC void rvvm_fdt_prop_set_reg(rvvm_fdt_node_t* node, const char* name, uint64_t addr, uint64_t size);
+static inline void rvvm_fdt_prop_set_reg(rvvm_fdt_node_t* node, const char* name, uint64_t addr, uint64_t size)
+{
+    uint32_t cells[4] = {(uint32_t)(addr >> 32), (uint32_t)addr, (uint32_t)(size >> 32), (uint32_t)size};
+    rvvm_fdt_prop_set_cells(node, name, cells, 4);
+}
+
+/**
+ * Set string property on FDT node
+ *
+ * \param node FDT node handle
+ * \param name Property name
+ * \param str  Property string
+ *
+ * This function is thread-safe
+ */
+RVVM_PUBLIC void rvvm_fdt_prop_set_str(rvvm_fdt_node_t* node, const char* name, const char* str);
 
 /**
  * Set string list property on FDT node, like multiple compatible strings
@@ -252,26 +269,16 @@ RVVM_PUBLIC void rvvm_fdt_prop_set_reg(rvvm_fdt_node_t* node, const char* name, 
 RVVM_PUBLIC void rvvm_fdt_prop_del(rvvm_fdt_node_t* node, const char* name);
 
 /**
- * Get FDT node property data pointer
+ * Get FDT node property
  *
  * \param node FDT node handle
  * \param name Property name
+ * \param size Pointer to return property size
  * \return     Property data (Valid until property is changed) or NULL
  *
  * This function is thread-safe
  */
-RVVM_PUBLIC const void* rvvm_fdt_prop_get_data(rvvm_fdt_node_t* node, const char* name);
-
-/**
- * Get FDT node property data size
- *
- * \param node FDT node handle
- * \param name Property name
- * \return     Property size
- *
- * This function is thread-safe
- */
-RVVM_PUBLIC size_t rvvm_fdt_prop_get_size(rvvm_fdt_node_t* node, const char* name);
+RVVM_PUBLIC const void* rvvm_fdt_prop_get(rvvm_fdt_node_t* node, const char* name, size_t* size);
 
 /** @}*/
 

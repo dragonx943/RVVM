@@ -74,19 +74,21 @@ static inline void fdt_node_add_prop_str(struct fdt_node* node, const char* name
     rvvm_fdt_prop_set_str(node, name, val);
 }
 
-static inline void fdt_node_add_prop_reg(struct fdt_node* node, const char* name, uint64_t begin, uint64_t size)
+static inline void fdt_node_add_prop_reg(struct fdt_node* node, const char* name, uint64_t addr, uint64_t size)
 {
-    rvvm_fdt_prop_set_reg(node, name, begin, size);
+    rvvm_fdt_prop_set_reg(node, name, addr, size);
 }
 
 static inline const void* fdt_node_get_prop_data(struct fdt_node* node, const char* name)
 {
-    return rvvm_fdt_prop_get_data(node, name);
+    return rvvm_fdt_prop_get(node, name, NULL);
 }
 
 static inline size_t fdt_node_get_prop_size(struct fdt_node* node, const char* name)
 {
-    return rvvm_fdt_prop_get_size(node, name);
+    size_t size = 0;
+    rvvm_fdt_prop_get(node, name, &size);
+    return size;
 }
 
 static inline bool fdt_node_del_prop(struct fdt_node* node, const char* name)
