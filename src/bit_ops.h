@@ -70,22 +70,38 @@ static forceinline uint64_t bit_replace(uint64_t val, uint32_t pos, uint32_t bit
     return (val & (~(bit_mask(bits) << pos))) | ((rep & bit_mask(bits)) << pos);
 }
 
-// Check if Nth bit of a value is set
-static forceinline bool bit_check(uint64_t val, uint32_t pos)
-{
-    return (val >> pos) & 0x01;
-}
+/*
+ * Safe bit checks
+ */
 
 // Return a bitmask with Nth bit set, clamp to 32 bits
 static forceinline uint32_t bit_set32(uint32_t pos)
 {
-    return (1U << (pos & 0x1F));
+    return (1UL << (pos & 0x1F));
 }
 
 // Return a bitmask with Nth bit set, clamp to 64 bits
 static forceinline uint64_t bit_set64(uint32_t pos)
 {
     return (1ULL << (pos & 0x3F));
+}
+
+// Check if Nth bit is set in 32-bit value
+static forceinline bool bit_check32(uint32_t val, uint32_t pos)
+{
+    return (val >> (pos & 0x1F)) & 0x01;
+}
+
+// Check if Nth bit is set in 64-bit value
+static forceinline bool bit_check64(uint64_t val, uint32_t pos)
+{
+    return (val >> (pos & 0x3F)) & 0x01;
+}
+
+// Same as bit_check64()
+static forceinline bool bit_check(uint64_t val, uint32_t pos)
+{
+    return bit_check64(val, pos);
 }
 
 /*
