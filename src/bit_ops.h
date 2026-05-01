@@ -18,8 +18,19 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include <stdlib.h> // For _byteswap_ulong(), _byteswap_uint64()
 #endif
 
+// Generate bitmask of given bitcount
+static forceinline uint64_t bit_mask(uint32_t count)
+{
+    if (count < 64) {
+        return (1ULL << count) - 1;
+    }
+    return (~0ULL);
+}
+
 /*
- * Simple bit operations (bit extract, sign-extend, mask, bit check/set)
+ * Bit extract operations
+ *
+ * Not safe for arbitrary pos/bits, sanitize them if needed
  */
 
 // Bit extract u32 field
@@ -46,29 +57,21 @@ static forceinline int64_t bit_ext_i64(uint64_t val, uint32_t pos, uint32_t bits
     return ((int64_t)(val << (64 - bits - pos))) >> (64 - bits);
 }
 
-// Sign extend n-bit value
-static forceinline int64_t sign_extend(uint64_t val, uint32_t bits)
+// Replace bit field in u32 value
+static forceinline uint32_t bit_replace32(uint32_t val, uint32_t pos, uint32_t bits, uint32_t field)
 {
-    return bit_ext_i64(val, 0, bits);
+    return (val & (~(bit_mask(bits) << pos))) | ((field & bit_mask(bits)) << pos);
 }
 
-// Generate bitmask of given bitcount
-static forceinline uint64_t bit_mask(uint32_t count)
+// Replace bit field in u64 value
+static forceinline uint64_t bit_replace64(uint64_t val, uint32_t pos, uint32_t bits, uint64_t field)
 {
-    return (1ULL << count) - 1;
+    return (val & (~(bit_mask(bits) << pos))) | ((field & bit_mask(bits)) << pos);
 }
 
-// Same as bit_ext_u64()
-static forceinline uint64_t bit_cut(uint64_t val, uint32_t pos, uint32_t bits)
-{
-    return bit_ext_u64(val, pos, bits);
-}
-
-// Replace bit field in value
-static forceinline uint64_t bit_replace(uint64_t val, uint32_t pos, uint32_t bits, uint64_t rep)
-{
-    return (val & (~(bit_mask(bits) << pos))) | ((rep & bit_mask(bits)) << pos);
-}
+#define sign_extend(val, bits)             bit_ext_i64(val, 0, bits)
+#define bit_cut(val, pos, bits)            bit_ext_u64(val, pos, bits)
+#define bit_replace(val, pos, bits, field) bit_replace64(val, pos, bits, field)
 
 /*
  * Safe bit checks
@@ -98,11 +101,7 @@ static forceinline bool bit_check64(uint64_t val, uint32_t pos)
     return (val >> (pos & 0x3F)) & 0x01;
 }
 
-// Same as bit_check64()
-static forceinline bool bit_check(uint64_t val, uint32_t pos)
-{
-    return bit_check64(val, pos);
-}
+#define bit_check(val, pos) bit_check64(val, pos)
 
 /*
  * Bit rotations
