@@ -73,7 +73,8 @@ USE_RVV  ?= 0 # Support Vector extension
 USE_GUI     ?= 1          # Enable guest display GUI
 USE_SDL     ?= 0          # Enable SDL as GUI backend - usually picked on per-platform basis
 USE_NET     ?= 1          # Enable networking support
-USE_SOUND   ?= 0          # Enable sound support
+USE_SOUND   ?= 0          # Enable sound support (HDA device)
+USE_ALSA    ?= 0          # ALSA host backend — opt-in (pass USE_ALSA=1)
 USE_GDBSTUB ?= $(USE_NET) # Support debugging the guest via GDB remote protocol
 
 # Board features
