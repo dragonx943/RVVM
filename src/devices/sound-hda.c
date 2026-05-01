@@ -662,9 +662,9 @@ static uint32_t reg_field_load(void *base, uint16_t off, uint8_t sz)
 {
     uint8_t *p = (uint8_t*)base + off;
     switch (sz) {
-        case 1:  return *(uint8_t  *)p;
-        case 2:  return *(uint16_t *)p;
-        case 4:  return *(uint32_t *)p;
+        case 1: { uint8_t  v; memcpy(&v, p, 1); return v; }
+        case 2: { uint16_t v; memcpy(&v, p, 2); return v; }
+        case 4: { uint32_t v; memcpy(&v, p, 4); return v; }
         default: return 0;
     }
 }
@@ -673,9 +673,9 @@ static void reg_field_store(void *base, uint16_t off, uint8_t sz, uint32_t v)
 {
     uint8_t *p = (uint8_t*)base + off;
     switch (sz) {
-        case 1: *(uint8_t  *)p = (uint8_t)v;  break;
-        case 2: *(uint16_t *)p = (uint16_t)v; break;
-        case 4: *(uint32_t *)p = v;           break;
+        case 1: { uint8_t  vv = (uint8_t)v;  memcpy(p, &vv, 1); break; }
+        case 2: { uint16_t vv = (uint16_t)v; memcpy(p, &vv, 2); break; }
+        case 4: { uint32_t vv = v;           memcpy(p, &vv, 4); break; }
     }
 }
 
