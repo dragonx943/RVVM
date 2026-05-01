@@ -9,6 +9,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #ifdef USE_ALSA
 
+#include "feature_test.h"
+
 #include "atomics.h"
 #include "compiler.h"
 #include "dlib.h"
