@@ -7,21 +7,24 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#include "ns16550a.h"
+#include <rvvm/rvvm_board.h>
+#include <rvvm/rvvm_fdt.h>
+#include <rvvm/rvvm_irq.h>
+#include <rvvm/rvvm_region.h>
+#include <rvvm/rvvm_snapshot.h>
+
 #include "chardev.h"
-#include "fdtlib.h"
 #include "mem_ops.h"
-#include "spinlock.h"
+#include "ns16550a.h"
 #include "utils.h"
 
 PUSH_OPTIMIZATION_SIZE
 
-#define NS16550A_MMIO_SIZE 0x1000
-
 typedef struct {
-    chardev_t*   chardev;
-    rvvm_intc_t* intc;
-    rvvm_irq_t   irq;
+    chardev_t* chardev;
+
+    rvvm_irq_dev_t* irq_dev;
+    rvvm_irq_t      irq;
 
     uint32_t flags;
     uint32_t ier;
@@ -69,9 +72,9 @@ static void ns16550a_update_irq(ns16550a_dev_t* uart)
     uint32_t flags = atomic_load_uint32_relax(&uart->flags);
     uint32_t ier   = atomic_load_uint32_relax(&uart->ier);
     if (((flags & CHARDEV_RX) && (ier & NS16550A_IER_RECV)) || ((flags & CHARDEV_TX) && (ier & NS16550A_IER_THR))) {
-        rvvm_raise_irq(uart->intc, uart->irq);
+        rvvm_irq_raise(uart->irq_dev, uart->irq);
     } else {
-        rvvm_lower_irq(uart->intc, uart->irq);
+        rvvm_irq_lower(uart->irq_dev, uart->irq);
     }
 }
 
@@ -85,7 +88,7 @@ static void ns16550a_notify(void* io_dev, uint32_t flags)
 }
 
 // Poll for possible RX/TX chardev flags update
-static void ns16550a_poll(ns16550a_dev_t* uart)
+static void ns16550a_poll_rxtx(ns16550a_dev_t* uart)
 {
     uint32_t flags = chardev_poll(uart->chardev);
     if (flags != atomic_load_uint32_relax(&uart->flags)) {
@@ -93,18 +96,18 @@ static void ns16550a_poll(ns16550a_dev_t* uart)
     }
 }
 
-static bool ns16550a_mmio_read(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint8_t size)
+static void ns16550a_read(rvvm_reg_dev_t* dev, void* data, size_t size, size_t off)
 {
-    ns16550a_dev_t* uart = dev->data;
-    memset(data, 0, size);
+    ns16550a_dev_t* uart = rvvm_region_data(dev);
+    UNUSED(size);
 
-    switch (offset) {
+    switch (off) {
         case NS16550A_REG_RBR_DLL:
             if (atomic_load_uint32_relax(&uart->lcr) & NS16550A_LCR_DLAB) {
                 write_uint8(data, atomic_load_uint32_relax(&uart->dll));
             } else if (chardev_poll(uart->chardev) & CHARDEV_RX) {
                 chardev_read(uart->chardev, data, 1);
-                ns16550a_poll(uart);
+                ns16550a_poll_rxtx(uart);
             }
             break;
         case NS16550A_REG_IER_DLM:
@@ -145,21 +148,20 @@ static bool ns16550a_mmio_read(rvvm_mmio_dev_t* dev, void* data, size_t offset, 
             write_uint8(data, atomic_load_uint32_relax(&uart->scr));
             break;
     }
-    return true;
 }
 
-static bool ns16550a_mmio_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint8_t size)
+static void ns16550a_write(rvvm_reg_dev_t* dev, const void* data, size_t size, size_t off)
 {
-    ns16550a_dev_t* uart = dev->data;
+    ns16550a_dev_t* uart = rvvm_region_data(dev);
     UNUSED(size);
 
-    switch (offset) {
+    switch (off) {
         case NS16550A_REG_THR_DLL:
             if (atomic_load_uint32_relax(&uart->lcr) & NS16550A_LCR_DLAB) {
                 atomic_store_uint32_relax(&uart->dll, read_uint8(data));
             } else {
                 chardev_write(uart->chardev, data, 1);
-                ns16550a_poll(uart);
+                ns16550a_poll_rxtx(uart);
             }
             break;
         case NS16550A_REG_IER_DLM:
@@ -180,89 +182,102 @@ static bool ns16550a_mmio_write(rvvm_mmio_dev_t* dev, void* data, size_t offset,
             atomic_store_uint32_relax(&uart->scr, read_uint8(data));
             break;
     }
-    return true;
 }
 
-static void ns16550a_update(rvvm_mmio_dev_t* dev)
+static void ns16550a_poll(rvvm_reg_dev_t* dev)
 {
-    ns16550a_dev_t* uart = dev->data;
+    ns16550a_dev_t* uart = rvvm_region_data(dev);
     chardev_update(uart->chardev);
 }
 
-static void ns16550a_remove(rvvm_mmio_dev_t* dev)
+static void ns16550a_suspend(rvvm_reg_dev_t* dev, rvvm_snapshot_t* snap, bool resume)
 {
-    ns16550a_dev_t* uart = dev->data;
+    if (snap) {
+        ns16550a_dev_t* uart = rvvm_region_data(dev);
+        rvvm_snapshot_section(snap, "serial-ns16550a");
+        rvvm_snapshot_field(snap, uart->flags);
+        rvvm_snapshot_field(snap, uart->ier);
+        rvvm_snapshot_field(snap, uart->lcr);
+        rvvm_snapshot_field(snap, uart->mcr);
+        rvvm_snapshot_field(snap, uart->scr);
+        rvvm_snapshot_field(snap, uart->dll);
+        rvvm_snapshot_field(snap, uart->dlm);
+    }
+    UNUSED(resume);
+}
+
+static void ns16550a_cleanup(rvvm_reg_dev_t* dev)
+{
+    ns16550a_dev_t* uart = rvvm_region_data(dev);
+    rvvm_irq_dealloc(uart->irq_dev, uart->irq);
     chardev_free(uart->chardev);
     free(uart);
 }
 
-static const rvvm_mmio_type_t ns16550a_dev_type = {
-    .name   = "ns16550a",
-    .update = ns16550a_update,
-    .remove = ns16550a_remove,
+static const rvvm_reg_type_t ns16550a_type = {
+    .name     = "serial-ns16550a",
+    .read     = ns16550a_read,
+    .write    = ns16550a_write,
+    .poll     = ns16550a_poll,
+    .suspend  = ns16550a_suspend,
+    .cleanup  = ns16550a_cleanup,
+    .min_size = 1,
+    .max_size = 1,
 };
 
-PUBLIC rvvm_mmio_dev_t* ns16550a_init(rvvm_machine_t* machine, chardev_t* chardev, rvvm_addr_t addr, rvvm_intc_t* intc,
-                                      rvvm_irq_t irq)
+RVVM_PUBLIC rvvm_reg_dev_t* rvvm_ns16550a_init(rvvm_machine_t* machine, //
+                                               chardev_t*      chardev, //
+                                               rvvm_addr_t     addr,    //
+                                               uint32_t        attr,    //
+                                               rvvm_irq_dev_t* irq_dev, //
+                                               rvvm_irq_t      irq)
 {
     ns16550a_dev_t* uart = safe_new_obj(ns16550a_dev_t);
-    uart->chardev        = chardev;
-    uart->intc           = intc;
-    uart->irq            = irq;
+    rvvm_reg_desc_t desc = {
+        .addr = addr,
+        .size = (attr & RVVM_REG_ATTR_PIO) ? 0x08 : 0x1000,
+        .data = uart,
+        .type = &ns16550a_type,
+        .attr = attr,
+    };
+
+    if (!irq_dev) {
+        irq_dev = rvvm_get_intc(machine);
+    }
+
+    uart->chardev = chardev;
+    uart->irq_dev = irq_dev;
+    uart->irq     = rvvm_irq_alloc(irq_dev, irq);
 
     if (chardev) {
         chardev->io_dev = uart;
         chardev->notify = ns16550a_notify;
     }
 
-    rvvm_mmio_dev_t ns16550a = {
-        .addr        = addr,
-        .size        = NS16550A_MMIO_SIZE,
-        .data        = uart,
-        .type        = &ns16550a_dev_type,
-        .read        = ns16550a_mmio_read,
-        .write       = ns16550a_mmio_write,
-        .min_op_size = 1,
-        .max_op_size = 1,
-    };
+    rvvm_reg_dev_t*  dev = rvvm_region_init_auto(machine, &desc);
+    rvvm_fdt_node_t* soc = rvvm_get_fdt_soc(machine);
 
-    rvvm_mmio_dev_t* mmio = rvvm_attach_mmio(machine, &ns16550a);
-    if (mmio == NULL) {
-        return mmio;
+    if (dev && soc) {
+        rvvm_fdt_node_t* fdt = rvvm_fdt_init_reg("uart", desc.addr);
+        rvvm_fdt_prop_set_reg(fdt, "reg", desc.addr, desc.size);
+        rvvm_fdt_prop_set_str(fdt, "compatible", "ns16550a");
+        rvvm_fdt_prop_set_u32(fdt, "clock-frequency", 20000000);
+        rvvm_fdt_prop_set_u32(fdt, "fifo-size", 16);
+        rvvm_fdt_prop_set_str(fdt, "status", "okay");
+        rvvm_irq_fdt_describe(fdt, uart->irq_dev, uart->irq);
+        rvvm_fdt_prop_set_flag(fdt, "wakeup-source");
+        rvvm_fdt_attach(soc, fdt);
+
+        if (desc.addr == 0x10000000UL) {
+            rvvm_fdt_node_t* chosen = rvvm_fdt_find(rvvm_get_fdt_root(machine), "chosen");
+            if (!rvvm_fdt_prop_get(chosen, "stdout-path", NULL)) {
+                rvvm_fdt_prop_set_str(chosen, "stdout-path", "/soc/uart@10000000");
+                rvvm_append_cmdline(machine, "console=ttyS");
+            }
+        }
     }
 
-#ifdef USE_FDT
-    struct fdt_node* uart_fdt = fdt_node_create_reg("uart", ns16550a.addr);
-    fdt_node_add_prop_reg(uart_fdt, "reg", ns16550a.addr, ns16550a.size);
-    fdt_node_add_prop_str(uart_fdt, "compatible", "ns16550a");
-    fdt_node_add_prop_u32(uart_fdt, "clock-frequency", 20000000);
-    fdt_node_add_prop_u32(uart_fdt, "fifo-size", 16);
-    fdt_node_add_prop_str(uart_fdt, "status", "okay");
-    rvvm_fdt_describe_irq(uart_fdt, intc, irq);
-    fdt_node_add_prop(uart_fdt, "wakeup-source", NULL, 0);
-    fdt_node_add_child(rvvm_get_fdt_soc(machine), uart_fdt);
-#endif
-    return mmio;
-}
-
-PUBLIC rvvm_mmio_dev_t* ns16550a_init_auto(rvvm_machine_t* machine, chardev_t* chardev)
-{
-    rvvm_intc_t*     intc = rvvm_get_intc(machine);
-    rvvm_addr_t      addr = rvvm_mmio_zone_auto(machine, NS16550A_ADDR_DEFAULT, NS16550A_MMIO_SIZE);
-    rvvm_mmio_dev_t* mmio = ns16550a_init(machine, chardev, addr, intc, rvvm_alloc_irq(intc));
-    if (addr == NS16550A_ADDR_DEFAULT && mmio) {
-        rvvm_append_cmdline(machine, "console=ttyS");
-#ifdef USE_FDT
-        struct fdt_node* chosen = fdt_node_find(rvvm_get_fdt_root(machine), "chosen");
-        fdt_node_add_prop_str(chosen, "stdout-path", "/soc/uart@10000000");
-#endif
-    }
-    return mmio;
-}
-
-PUBLIC rvvm_mmio_dev_t* ns16550a_init_term_auto(rvvm_machine_t* machine)
-{
-    return ns16550a_init_auto(machine, chardev_term_create());
+    return dev;
 }
 
 POP_OPTIMIZATION_SIZE

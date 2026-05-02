@@ -10,16 +10,25 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef RVVM_NS16550A_H
 #define RVVM_NS16550A_H
 
-#include "rvvmlib.h"
+#include <rvvm/rvvm_char.h>
+
 #include "chardev.h"
 
-#define NS16550A_ADDR_DEFAULT 0x10000000
+RVVM_PUBLIC rvvm_reg_dev_t* rvvm_ns16550a_init(rvvm_machine_t* machine, /**/
+                                               chardev_t*      chardev, /**/
+                                               rvvm_addr_t     addr,    /**/
+                                               uint32_t        attr,    /**/
+                                               rvvm_irq_dev_t* irq_dev, /**/
+                                               rvvm_irq_t      irq);
 
-PUBLIC rvvm_mmio_dev_t* ns16550a_init(rvvm_machine_t* machine, chardev_t* chardev,
-                                      rvvm_addr_t addr, rvvm_intc_t* intc, rvvm_irq_t irq);
+static inline rvvm_reg_dev_t* rvvm_ns16550a_init_auto(rvvm_machine_t* machine, chardev_t* chardev)
+{
+    return rvvm_ns16550a_init(machine, chardev, 0x10000000UL, 0, NULL, 0);
+}
 
-PUBLIC rvvm_mmio_dev_t* ns16550a_init_auto(rvvm_machine_t* machine, chardev_t* chardev);
-
-PUBLIC rvvm_mmio_dev_t* ns16550a_init_term_auto(rvvm_machine_t* machine);
+static inline rvvm_reg_dev_t* rvvm_ns16550a_init_term_auto(rvvm_machine_t* machine)
+{
+    return rvvm_ns16550a_init_auto(machine, chardev_term_create());
+}
 
 #endif
