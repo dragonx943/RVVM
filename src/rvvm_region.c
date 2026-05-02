@@ -10,6 +10,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include <rvvm/rvvm.h>
 #include <rvvm/rvvm_region.h>
 
+#include "mem_ops.h"
 #include "utils.h"
 
 /*
@@ -28,6 +29,7 @@ struct rvvm_reg_dev {
 static bool rvvm_region_legacy_read(rvvm_mmio_dev_t* mmio, void* data, size_t off, uint8_t size)
 {
     rvvm_reg_dev_t* dev = (rvvm_reg_dev_t*)mmio->data;
+    memset(data, 0, size);
     if (dev->desc.type && dev->desc.type->read) {
         dev->desc.type->read(dev, data, size, off);
     }
@@ -91,6 +93,7 @@ RVVM_PUBLIC rvvm_reg_dev_t* rvvm_region_init(rvvm_machine_t* machine, const rvvm
         };
         if (!(desc->attr & RVVM_REG_ATTR_FIX)) {
             mmio_desc.addr = rvvm_mmio_zone_auto(machine, mmio_desc.addr, mmio_desc.size);
+            dev->desc.addr = mmio_desc.addr;
         }
         if (desc->attr & RVVM_REG_ATTR_ROM) {
             mmio_desc.write = NULL;
