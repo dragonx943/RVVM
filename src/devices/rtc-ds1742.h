@@ -10,12 +10,18 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef RVVM_RTC_DS1742_H
 #define RVVM_RTC_DS1742_H
 
-#include "rvvmlib.h"
+/*
+ * TODO: Remove this in favor of <rvvm/rvvm_board.h>
+ */
 
-#define RTC_DS1742_DEFAULT_MMIO 0x101000
+#include <rvvm/rvvm_base.h>
 
-PUBLIC rvvm_mmio_dev_t* rtc_ds1742_init(rvvm_machine_t* machine, rvvm_addr_t base_addr);
-PUBLIC rvvm_mmio_dev_t* rtc_ds1742_init_auto(rvvm_machine_t* machine);
+RVVM_PUBLIC rvvm_reg_dev_t* rvvm_rtc_ds1742_init(rvvm_machine_t* machine, rvvm_addr_t addr);
+
+static inline rvvm_reg_dev_t* rtc_ds1742_init_auto(rvvm_machine_t* machine)
+{
+    return rvvm_rtc_ds1742_init(machine, 0x00101000UL);
+}
 
 #endif
 
