@@ -16,6 +16,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #include <rvvm/rvvm_base.h>
 
+#include <rvvm/rvvm_irq.h>
+
 RVVM_EXTERN_C_BEGIN
 
 /**
@@ -303,8 +305,8 @@ RVVM_PUBLIC rvvm_fdt_node_t* rvvm_get_fdt_soc(rvvm_machine_t* machine);
 /** @}*/
 
 /**
- * @defgroup rvvm_irq_api RVVM Interrupt API
- * @addtogroup rvvm_irq_api
+ * @defgroup rvvm_irq_legacy Legacy interrrupt backport
+ * @addtogroup rvvm_irq_legacy
  * @{
  */
 
@@ -318,51 +320,13 @@ RVVM_PUBLIC bool rvvm_send_msi_irq(rvvm_machine_t* machine, rvvm_addr_t addr, ui
  */
 RVVM_PUBLIC bool rvvm_attach_msi_target(rvvm_machine_t* machine, const rvvm_mmio_dev_t* mmio_desc);
 
-/**
- * Interrupt controller description
- */
-struct rvvm_intc {
-    void*    data;
-    uint32_t last_irq;
-
-    bool       (*send_irq)(rvvm_intc_t* intc, rvvm_irq_t irq);
-    bool       (*raise_irq)(rvvm_intc_t* intc, rvvm_irq_t irq);
-    bool       (*lower_irq)(rvvm_intc_t* intc, rvvm_irq_t irq);
-    rvvm_irq_t (*alloc_irq)(rvvm_intc_t* intc);
-    uint32_t   (*fdt_phandle)(rvvm_intc_t* intc);
-    size_t     (*fdt_irq_cells)(rvvm_intc_t* intc, rvvm_irq_t irq, uint32_t* cells, size_t size);
-};
-
-/**
- * Allocate a new IRQ pin on the IRQ controller
- */
-RVVM_PUBLIC rvvm_irq_t rvvm_alloc_irq(rvvm_intc_t* intc);
-
-/**
- * Send an edge-triggered IRQ through IRQ controller pin
- */
-RVVM_PUBLIC bool rvvm_send_irq(rvvm_intc_t* intc, rvvm_irq_t irq);
-
-/**
- * Assert/lower an IRQ pin on the IRQ controller
- */
-RVVM_PUBLIC bool rvvm_raise_irq(rvvm_intc_t* intc, rvvm_irq_t irq);
-RVVM_PUBLIC bool rvvm_lower_irq(rvvm_intc_t* intc, rvvm_irq_t irq);
-
-/**
- * Add interrupt-parent & interrupts fields to device FDT node
- */
-RVVM_PUBLIC bool rvvm_fdt_describe_irq(struct fdt_node* node, rvvm_intc_t* intc, rvvm_irq_t irq);
-
-/**
- * Get interrupt-parent FDT phandle of an interrupt controller
- */
-RVVM_PUBLIC uint32_t rvvm_fdt_intc_phandle(rvvm_intc_t* intc);
-
-/**
- * Get interrupts-extended FDT cells for an IRQ
- */
-RVVM_PUBLIC size_t rvvm_fdt_irq_cells(rvvm_intc_t* intc, rvvm_irq_t irq, uint32_t* cells, size_t size);
+#define rvvm_alloc_irq(intc)                       rvvm_irq_alloc(intc, 0)
+#define rvvm_send_irq(intc, irq)                   rvvm_irq_send(intc, irq)
+#define rvvm_raise_irq(intc, irq)                  rvvm_irq_raise(intc, irq)
+#define rvvm_lower_irq(intc, irq)                  rvvm_irq_lower(intc, irq)
+#define rvvm_fdt_intc_phandle(intc)                rvvm_irq_fdt_phandle(intc)
+#define rvvm_fdt_describe_irq(fdt, intc, irq)      rvvm_irq_fdt_describe(fdt, intc, irq)
+#define rvvm_fdt_irq_cells(intc, irq, cells, size) rvvm_irq_fdt_cells(intc, irq, cells, size)
 
 /** @}*/
 
@@ -372,11 +336,11 @@ RVVM_PUBLIC size_t rvvm_fdt_irq_cells(rvvm_intc_t* intc, rvvm_irq_t irq, uint32_
  * @{
  */
 
-#define RVVM_REGID_X0    0
-#define RVVM_REGID_F0    32
-#define RVVM_REGID_PC    1024
-#define RVVM_REGID_CAUSE 1025
-#define RVVM_REGID_TVAL  1026
+#define RVVM_REGID_X0                              0
+#define RVVM_REGID_F0                              32
+#define RVVM_REGID_PC                              1024
+#define RVVM_REGID_CAUSE                           1025
+#define RVVM_REGID_TVAL                            1026
 
 /**
  * Create a userland process context
