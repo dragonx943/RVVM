@@ -7,68 +7,97 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#include "riscv-aplic.h"
-#include "riscv_hart.h"
+#include <rvvm/rvvm_board.h>
+#include <rvvm/rvvm_fdt.h>
+#include <rvvm/rvvm_irq.h>
+#include <rvvm/rvvm_region.h>
+#include <rvvm/rvvm_snapshot.h>
+
+#include "atomics.h"
 #include "bit_ops.h"
 #include "mem_ops.h"
-#include "atomics.h"
+#include "riscv_hart.h"
 
-#define APLIC_REGION_SIZE 0x4000
+PUSH_OPTIMIZATION_SIZE
 
-// APLIC registers & register groups
-#define APLIC_REG_DOMAINCFG      0x0000 // Domain configuration
-#define APLIC_REG_SOURCECFG_1    0x0004 // Source configurations (1 - 1023)
-#define APLIC_REG_SOURCECFG_1023 0x0FFC // Source configurations (1 - 1023)
-#define APLIC_REG_MMSIADDRCFG    0x1BC0 // Machine MSI address configuration
-#define APLIC_REG_MMSIADDRCFGH   0x1BC4 // Machine MSI address configuration (high)
-#define APLIC_REG_SMSIADDRCFG    0x1BC8 // Supervisor MSI address configuration
-#define APLIC_REG_SMSIADDRCFGH   0x1BCC // Supervisor MSI address configuration (high)
-#define APLIC_REG_SETIP_0        0x1C00 // Set interrupt-pending bits (0 - 31)
-#define APLIC_REG_SETIP_31       0x1C7C // Set interrupt-pending bits (0 - 31)
-#define APLIC_REG_SETIPNUM       0x1CDC // Set interrupt-pending bit by number
-#define APLIC_REG_IN_CLRIP_0     0x1D00 // Rectified inputs, clear interrupt-pending bits (0 - 31)
-#define APLIC_REG_IN_CLRIP_31    0x1D7C // Rectified inputs, clear interrupt-pending bits (0 - 31)
-#define APLIC_REG_CLRIPNUM       0x1DDC // Clear interrupt-pending bit by number
-#define APLIC_REG_SETIE_0        0x1E00 // Set interrupt-enabled bits (0 - 31)
-#define APLIC_REG_SETIE_31       0x1E7C // Set interrupt-enabled bits (0 - 31)
-#define APLIC_REG_SETIENUM       0x1EDC // Set interrupt-enabled bit by number
-#define APLIC_REG_CLRIE_0        0x1F00 // Clear interrupt-enabled bits (0 - 31)
-#define APLIC_REG_CLRIE_31       0x1F7C // Clear interrupt-enabled bits (0 - 31)
-#define APLIC_REG_CLRIENUM       0x1FDC // Clear interrupt-enabled bit by number
-#define APLIC_REG_SETIPNUM_LE    0x2000 // Set interrupt-pending bit by number (Little-endian)
-#define APLIC_REG_SETIPNUM_BE    0x2004 // Set interrupt-pending bit by number (Big-endian)
-#define APLIC_REG_GENMSI         0x3000 // Generate MSI
-#define APLIC_REG_TARGET_1       0x3004 // Interrupt targets (1 - 1023)
-#define APLIC_REG_TARGET_1023    0x3FFC // Interrupt targets (1 - 1023)
+/*
+ * APLIC Registers
+ */
+#define APLIC_REG_DOMAINCFG       0x0000 // Domain configuration
+#define APLIC_REG_SOURCECFG       0x0004 // Source configurations (1 - 1023)
+#define APLIC_REG_SOURCECFG_SIZE  0x0FFC // Source configurations size
+#define APLIC_REG_MMSIADDRCFG     0x1BC0 // Machine MSI address configuration
+#define APLIC_REG_MMSIADDRCFGH    0x1BC4 // Machine MSI address configuration (high)
+#define APLIC_REG_SMSIADDRCFG     0x1BC8 // Supervisor MSI address configuration
+#define APLIC_REG_SMSIADDRCFGH    0x1BCC // Supervisor MSI address configuration (high)
+#define APLIC_REG_SETIP           0x1C00 // Interrupt-pending bits (0 - 31)
+#define APLIC_REG_SETIP_SIZE      0x0020 // Interrupt-pending bits size
+#define APLIC_REG_SETIPNUM        0x1CDC // Set interrupt-pending bit by number
+#define APLIC_REG_IN_CLRIP        0x1D00 // Rectified inputs, clear interrupt-pending bits (0 - 31)
+#define APLIC_REG_IN_CLRIP_SIZE   0x0020 // Rectified inputs, clear interrupt-pending bits size
+#define APLIC_REG_CLRIPNUM        0x1DDC // Clear interrupt-pending bit by number
+#define APLIC_REG_SETIE           0x1E00 // Interrupt-enabled bits (0 - 31)
+#define APLIC_REG_SETIE_SIZE      0x0020 // Interrupt-enabled bits size
+#define APLIC_REG_SETIENUM        0x1EDC // Set interrupt-enabled bit by number
+#define APLIC_REG_CLRIE           0x1F00 // Clear interrupt-enabled bits (0 - 31)
+#define APLIC_REG_CLRIE_SIZE      0x0020 // Clear interrupt-enabled bits size
+#define APLIC_REG_CLRIENUM        0x1FDC // Clear interrupt-enabled bit by number
+#define APLIC_REG_SETIPNUM_LE     0x2000 // Set interrupt-pending bit by number (Little-endian)
+#define APLIC_REG_SETIPNUM_BE     0x2004 // Set interrupt-pending bit by number (Big-endian)
+#define APLIC_REG_GENMSI          0x3000 // Generate MSI
+#define APLIC_REG_TARGET          0x3004 // Interrupt targets (1 - 1023)
+#define APLIC_REG_TARGET_SIZE     0x0FFC // Interrupt targets size
 
-// APLIC register values
-#define APLIC_DOMAINCFG_BE 0x1        // Big-endian mode
-#define APLIC_DOMAINCFG_DM 0x4        // MSI delivery mode
-#define APLIC_DOMAINCFG_IE 0x100      // Interrupts enabled
-#define APLIC_DOMAINCFG    0x80000004 // Default hardwired domaincfg
+/*
+ * APLIC Register constants
+ */
+#define APLIC_DOMAINCFG_BE        0x00000001UL // Big-endian mode
+#define APLIC_DOMAINCFG_DM        0x00000004UL // MSI delivery mode
+#define APLIC_DOMAINCFG_IE        0x00000100UL // Interrupts enabled
+#define APLIC_DOMAINCFG_MASK      0x00000101UL // Valid domain config mask
+#define APLIC_DOMAINCFG           0x80000004UL // Hardwired domain config
 
-#define APLIC_SOURCECFG_DELEGATE  0x400 // Delegate to child domain
-#define APLIC_SOURCECFG_INACTIVE  0x0   // Inactive source
-#define APLIC_SOURCECFG_DETACHED  0x1   // Detached source
-#define APLIC_SOURCECFG_EDGE_RISE 0x4   // Active, edge-triggered on rise
-#define APLIC_SOURCECFG_EDGE_FALL 0x5   // Active, edge-triggered on fall
-#define APLIC_SOURCECFG_LVL_HIGH  0x6   // Active, level-triggered when high
-#define APLIC_SOURCECFG_LVL_LOW   0x7   // Active, level-triggered when low
-#define APLIC_SOURCECFG_MASK      0x7   // Valid source config mask
+#define APLIC_SOURCECFG_DELEGATE  0x0400 // Delegate to child domain
+#define APLIC_SOURCECFG_INACTIVE  0x0000 // Inactive source
+#define APLIC_SOURCECFG_DETACHED  0x0001 // Detached source
+#define APLIC_SOURCECFG_EDGE_RISE 0x0004 // Active, edge-triggered on rise
+#define APLIC_SOURCECFG_EDGE_FALL 0x0005 // Active, edge-triggered on fall
+#define APLIC_SOURCECFG_LVL_HIGH  0x0006 // Active, level-triggered when high
+#define APLIC_SOURCECFG_LVL_LOW   0x0007 // Active, level-triggered when low
+#define APLIC_SOURCECFG_MASK      0x0007 // Valid source config mask
 
-#define APLIC_MSIADDRCFGH_L 0x80000000  // Locked
+#define APLIC_MSIADDRCFGH_L       0x80000000UL // Locked
 
-// Limit on APLIC interrupt identities, maximum 1024
-#define APLIC_SRC_LIMIT 64
+/*
+ * APLIC Implementation constants
+ */
+#define APLIC_SRC_REGS            2  // Size of bitset arrays
+#define APLIC_SRC_IDTS            64 // Size of identity arrays
+#define APLIC_SRC_COUNT           63 // Number of interrupt lines
 
-// Number of APLIC source bitset registers
-#define APLIC_SRC_REGS (APLIC_SRC_LIMIT >> 5)
+#define APLIC_MDOMAIN             0
+#define APLIC_SDOMAIN             1
+
+typedef struct aplic_dev aplic_dev_t;
 
 typedef struct {
+    // APLIC controller context
+    aplic_dev_t* aplic;
+
+    // Delegation invert
+    uint32_t invert;
+
+    // Domain configuration
+    uint32_t config;
+} aplic_domain_t;
+
+struct aplic_dev {
+    // Machine & IRQ controller handles
     rvvm_machine_t* machine;
-    rvvm_intc_t intc;
-    uint32_t phandle;
-    uint32_t domaincfg[2];
+    rvvm_irq_dev_t* irq_dev;
+
+    // APLIC domains
+    aplic_domain_t domain[2];
 
     // Bitset of interrupts delegated to S-mode
     uint32_t deleg[APLIC_SRC_REGS];
@@ -86,522 +115,478 @@ typedef struct {
     uint32_t enabled[APLIC_SRC_REGS];
 
     // Interrupt source configuration
-    uint32_t source[APLIC_SRC_LIMIT];
+    uint32_t source[APLIC_SRC_IDTS];
 
     // Interrupt target configuration
-    uint32_t target[APLIC_SRC_LIMIT];
-} aplic_ctx_t;
-
-typedef struct {
-    aplic_ctx_t* aplic;
-
-    // This is used to invert delegation
-    uint32_t deleg_invert;
-
-    bool root_domain;
-} aplic_domain_t;
+    uint32_t target[APLIC_SRC_IDTS];
+};
 
 /*
- * APLIC core handling
+ * APLIC Core helpers
  */
 
-static void aplic_gen_msi(aplic_ctx_t* aplic, bool smode, uint32_t target)
+static void aplic_gen_msi(aplic_dev_t* aplic, bool smode, uint32_t target)
 {
     size_t hartid = target >> 18;
-    if (hartid < vector_size(aplic->machine->harts)) {
+    if (likely(hartid < vector_size(aplic->machine->harts))) {
         rvvm_hart_t* hart = vector_at(aplic->machine->harts, hartid);
-        riscv_send_aia_irq(hart, smode, bit_cut(target, 0, 10));
+        riscv_send_aia_irq(hart, smode, target & 0x3FF);
     }
 }
 
-static uint32_t aplic_rectified_bits(aplic_ctx_t* aplic, size_t reg)
+static uint32_t aplic_rectified_bits(aplic_dev_t* aplic, size_t reg)
 {
-    if (likely(reg < APLIC_SRC_REGS)) {
-        uint32_t raised = atomic_load_uint32_relax(&aplic->raised[reg]);
-        uint32_t invert = atomic_load_uint32_relax(&aplic->invert[reg]);
-        return (raised ^ invert);
-    }
-    return 0;
+    return atomic_load_uint32_relax(&aplic->raised[reg]) //
+         ^ atomic_load_uint32_relax(&aplic->invert[reg]);
 }
 
-static bool aplic_rectified_src(aplic_ctx_t* aplic, size_t src)
+static bool aplic_rectified_src(aplic_dev_t* aplic, size_t irq)
 {
-    uint32_t mask = (1U << (src & 0x1F));
-    return !!(aplic_rectified_bits(aplic, src >> 5) & mask);
+    return !!(aplic_rectified_bits(aplic, irq >> 5) & bit_set32(irq));
 }
 
-static bool aplic_detached_src(aplic_ctx_t* aplic, size_t src)
+static bool aplic_detached_src(aplic_dev_t* aplic, size_t irq)
 {
-    if (likely(src < APLIC_SRC_LIMIT)) {
-        return atomic_load_uint32_relax(&aplic->source[src]) <= APLIC_SOURCECFG_DETACHED;
-    }
-    return true;
+    return atomic_load_uint32_relax(&aplic->source[irq]) <= APLIC_SOURCECFG_DETACHED;
 }
 
-// Send interrupt through APLIC to MSI, or raise a pending bit
-static void aplic_notify_interrupt(aplic_ctx_t* aplic, size_t src)
+static void aplic_pending_interrupt(aplic_dev_t* aplic, size_t irq)
 {
-    if (likely(src < APLIC_SRC_LIMIT)) {
-        size_t reg = src >> 5;
-        uint32_t mask = (1U << (src & 0x1F));
-        bool smode = !!(atomic_load_uint32_relax(&aplic->deleg[reg]) & mask);
-        uint32_t enabled = atomic_load_uint32_relax(&aplic->enabled[reg]);
-        uint32_t domaincfg = atomic_load_uint32_relax(&aplic->domaincfg[smode]);
-        if (likely((enabled & mask) && (domaincfg & APLIC_DOMAINCFG_IE))) {
-            uint32_t target = atomic_load_uint32_relax(&aplic->target[src]);
-            aplic_gen_msi(aplic, smode, target);
-        } else {
-            atomic_or_uint32(&aplic->pending[reg], mask);
+    if (likely(irq - 1 < APLIC_SRC_COUNT)) {
+        size_t   reg  = irq >> 5;
+        uint32_t mask = bit_set32(irq);
+        if (likely(atomic_load_uint32_relax(&aplic->enabled[reg]) & mask)) {
+            bool            smode  = !!(atomic_load_uint32_relax(&aplic->deleg[reg]) & mask);
+            aplic_domain_t* domain = &aplic->domain[smode];
+            if (likely(atomic_load_uint32_relax(&domain->config) & APLIC_DOMAINCFG_IE)) {
+                uint32_t target = atomic_load_uint32_relax(&aplic->target[irq]);
+                aplic_gen_msi(aplic, smode, target);
+                return;
+            }
         }
+        atomic_or_uint32(&aplic->pending[reg], mask);
     }
 }
 
-// Send interrupt edge through APLIC if it's not detached
-static void aplic_edge_interrupt(aplic_ctx_t* aplic, size_t src)
+static void aplic_update_interrupt(aplic_dev_t* aplic, size_t irq)
 {
-    if (!aplic_detached_src(aplic, src)) {
-        aplic_notify_interrupt(aplic, src);
-    }
-}
-
-// React to interrupt pin state update
-static void aplic_update_interrupt(aplic_ctx_t* aplic, size_t src)
-{
-    if (aplic_rectified_src(aplic, src)) {
-        aplic_edge_interrupt(aplic, src);
+    if (aplic_rectified_src(aplic, irq) && !aplic_detached_src(aplic, irq)) {
+        aplic_pending_interrupt(aplic, irq);
     }
 }
 
 /*
- * APLIC domain handling
+ * APLIC Domain helpers
  */
 
 static uint32_t aplic_valid_bits(aplic_domain_t* domain, size_t reg)
 {
-    if (likely(reg < APLIC_SRC_REGS)) {
-        aplic_ctx_t* aplic = domain->aplic;
-        return atomic_load_uint32_relax(&aplic->deleg[reg]) ^ domain->deleg_invert;
-    }
-    return 0;
+    aplic_dev_t* aplic = domain->aplic;
+    return atomic_load_uint32_relax(&aplic->deleg[reg]) ^ domain->invert;
 }
 
-static bool aplic_valid_src(aplic_domain_t* domain, size_t src)
+static bool aplic_valid_src(aplic_domain_t* domain, size_t irq)
 {
-    uint32_t mask = (1U << (src & 0x1F));
-    return !!(aplic_valid_bits(domain, src >> 5) & mask);
+    return !!(aplic_valid_bits(domain, irq >> 5) & bit_set32(irq));
 }
 
-static bool aplic_ungated_src(aplic_domain_t* domain, size_t src)
+static bool aplic_ungated_src(aplic_domain_t* domain, size_t irq)
 {
-    if (likely(aplic_valid_src(domain, src))) {
-        return aplic_rectified_src(domain->aplic, src) || aplic_detached_src(domain->aplic, src);
+    if (likely(aplic_valid_src(domain, irq))) {
+        return aplic_rectified_src(domain->aplic, irq) || aplic_detached_src(domain->aplic, irq);
     }
     return false;
 }
 
-static uint32_t aplic_read_ip(aplic_domain_t* domain, size_t reg)
+/*
+ * APLIC Unsafe input handling (registers r/w)
+ */
+
+static inline uint32_t aplic_read_ip(aplic_domain_t* domain, size_t reg)
 {
     if (likely(reg < APLIC_SRC_REGS)) {
-        aplic_ctx_t* aplic = domain->aplic;
+        aplic_dev_t* aplic = domain->aplic;
         return atomic_load_uint32_relax(&aplic->pending[reg]) & aplic_valid_bits(domain, reg);
     }
     return 0;
 }
 
-static uint32_t aplic_read_in(aplic_domain_t* domain, size_t reg)
-{
-    return aplic_rectified_bits(domain->aplic, reg) & aplic_valid_bits(domain, reg);
-}
-
-static uint32_t aplic_read_ie(aplic_domain_t* domain, size_t reg)
+static inline uint32_t aplic_read_in(aplic_domain_t* domain, size_t reg)
 {
     if (likely(reg < APLIC_SRC_REGS)) {
-        aplic_ctx_t* aplic = domain->aplic;
+        return aplic_rectified_bits(domain->aplic, reg) & aplic_valid_bits(domain, reg);
+    }
+    return 0;
+}
+
+static inline uint32_t aplic_read_ie(aplic_domain_t* domain, size_t reg)
+{
+    if (likely(reg < APLIC_SRC_REGS)) {
+        aplic_dev_t* aplic = domain->aplic;
         return atomic_load_uint32_relax(&aplic->enabled[reg]) & aplic_valid_bits(domain, reg);
     }
     return 0;
 }
 
-static void aplic_setipnum(aplic_domain_t* domain, size_t src)
+static inline uint32_t aplic_read_sourcecfg(aplic_domain_t* domain, size_t irq)
 {
-    if (aplic_ungated_src(domain, src)) {
-        aplic_notify_interrupt(domain->aplic, src);
+    if (likely(irq - 1 < APLIC_SRC_COUNT)) {
+        aplic_dev_t* aplic = domain->aplic;
+        if (aplic_valid_src(domain, irq)) {
+            // Source configuration from our domain
+            return atomic_load_uint32_relax(&aplic->source[irq]);
+        } else if (domain->invert) {
+            // Source configuration delegated and it's an M-mode domain
+            return APLIC_SOURCECFG_DELEGATE;
+        }
+    }
+    return 0;
+}
+
+static inline uint32_t aplic_read_targetcfg(aplic_domain_t* domain, size_t irq)
+{
+    if (likely(irq - 1 < APLIC_SRC_COUNT && aplic_valid_src(domain, irq))) {
+        return atomic_load_uint32_relax(&domain->aplic->target[irq]);
+    }
+    return 0;
+}
+
+static inline void aplic_write_setipnum(aplic_domain_t* domain, size_t irq)
+{
+    if (likely(irq - 1 < APLIC_SRC_COUNT && aplic_ungated_src(domain, irq))) {
+        aplic_pending_interrupt(domain->aplic, irq);
     }
 }
 
-static void aplic_setip(aplic_domain_t* domain, size_t reg, uint32_t bits)
+static void aplic_write_setip(aplic_domain_t* domain, size_t reg, uint32_t bits)
 {
     if (likely(reg < APLIC_SRC_REGS)) {
-        uint32_t set = bits & aplic_valid_bits(domain, reg);
-        if (set) {
-            // Re-notify rectified interrupts
-            for (size_t i = 0; i < 31; ++i) {
-                if (set & (1U << i)) {
-                    aplic_setipnum(domain, (reg << 5) + i);
-                }
-            }
+        uint32_t irqs = bits & aplic_valid_bits(domain, reg);
+        // Re-notify rectified interrupts
+        while (irqs) {
+            uint32_t bit = bit_ctz32(irqs);
+            aplic_write_setipnum(domain, (reg << 5) + bit);
+            irqs &= ~bit_set32(bit);
         }
     }
 }
 
-static void aplic_clrip(aplic_domain_t* domain, size_t reg, uint32_t bits)
+static void aplic_write_clrip(aplic_domain_t* domain, size_t reg, uint32_t bits)
 {
     if (likely(reg < APLIC_SRC_REGS)) {
         uint32_t clr = bits & aplic_valid_bits(domain, reg);
         if (clr) {
-            aplic_ctx_t* aplic = domain->aplic;
+            aplic_dev_t* aplic = domain->aplic;
             atomic_and_uint32(&aplic->pending[reg], ~clr);
         }
     }
 }
 
-static void aplic_clripnum(aplic_domain_t* domain, size_t src)
+static inline void aplic_write_clripnum(aplic_domain_t* domain, size_t irq)
 {
-    size_t reg = src >> 5;
-    uint32_t mask = (1U << (src & 0x1F));
-    aplic_clrip(domain, reg, mask);
+    aplic_write_clrip(domain, irq >> 5, bit_set32(irq));
 }
 
-static void aplic_setie(aplic_domain_t* domain, size_t reg, uint32_t bits)
+static void aplic_write_setie(aplic_domain_t* domain, size_t reg, uint32_t bits)
 {
     if (likely(reg < APLIC_SRC_REGS)) {
-        aplic_ctx_t* aplic = domain->aplic;
-        uint32_t set = bits & aplic_valid_bits(domain, reg);
-        set &= ~atomic_or_uint32(&aplic->enabled[reg], set);
+        aplic_dev_t* aplic = domain->aplic;
+        uint32_t     set   = bits & aplic_valid_bits(domain, reg);
+        if (likely(set)) {
+            set &= ~atomic_or_uint32(&aplic->enabled[reg], set);
+        }
         if (set) {
-            uint32_t deliver = atomic_and_uint32(&aplic->pending[reg], ~set);
-            if (deliver) {
-                // Notify about re-enabled pending interruts
-                for (size_t i = 0; i < 31; ++i) {
-                    if (deliver & (1U << i)) {
-                        aplic_notify_interrupt(aplic, (reg << 5) + i);
-                    }
-                }
+            uint32_t irqs = atomic_and_uint32(&aplic->pending[reg], ~set);
+            // Notify about re-enabled pending interrupts
+            while (irqs) {
+                uint32_t bit = bit_ctz32(irqs);
+                aplic_pending_interrupt(aplic, (reg << 5) + bit);
+                irqs &= ~bit_set32(bit);
             }
         }
     }
 }
 
-static void aplic_setienum(aplic_domain_t* domain, size_t src)
+static inline void aplic_write_setienum(aplic_domain_t* domain, size_t irq)
 {
-    size_t reg = src >> 5;
-    uint32_t mask = (1U << (src & 0x1F));
-    aplic_setie(domain, reg, mask);
+    aplic_write_setie(domain, irq >> 5, bit_set32(irq));
 }
 
-static void aplic_clrie(aplic_domain_t* domain, size_t reg, uint32_t bits)
+static void aplic_write_clrie(aplic_domain_t* domain, size_t reg, uint32_t val)
 {
     if (likely(reg < APLIC_SRC_REGS)) {
-        uint32_t clr = bits & aplic_valid_bits(domain, reg);
+        uint32_t clr = val & aplic_valid_bits(domain, reg);
         if (clr) {
-            aplic_ctx_t* aplic = domain->aplic;
+            aplic_dev_t* aplic = domain->aplic;
             atomic_and_uint32(&aplic->enabled[reg], ~clr);
         }
     }
 }
 
-static void aplic_clrienum(aplic_domain_t* domain, size_t src)
+static inline void aplic_write_clrienum(aplic_domain_t* domain, size_t irq)
 {
-    size_t reg = src >> 5;
-    uint32_t mask = (1U << (src & 0x1F));
-    aplic_clrie(domain, reg, mask);
+    aplic_write_clrie(domain, irq >> 5, bit_set32(irq));
 }
 
-static bool aplic_mmio_read(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint8_t size)
+static inline void aplic_write_sourcecfg(aplic_domain_t* domain, size_t irq, uint32_t val)
 {
-    aplic_domain_t* domain = dev->data;
-    aplic_ctx_t* aplic = domain->aplic;
-    uint32_t val = 0;
+    if (likely(irq - 1 < APLIC_SRC_COUNT)) {
+        aplic_dev_t* aplic = domain->aplic;
+        size_t       reg   = irq >> 5;
+        uint32_t     mask  = bit_set32(irq);
+        if (domain->invert) {
+            // M-mode source configuration write
+            if (val & APLIC_SOURCECFG_DELEGATE) {
+                // Enable delegation
+                atomic_or_uint32(&aplic->deleg[reg], mask);
+            } else {
+                // Disable delegation
+                atomic_and_uint32(&aplic->deleg[reg], ~mask);
+            }
+        }
+        if (aplic_valid_src(domain, irq)) {
+            // Source configuration for our domain
+            uint32_t cfg = val & APLIC_SOURCECFG_MASK;
+            atomic_store_uint32_relax(&aplic->source[irq], cfg);
+            if (cfg == APLIC_SOURCECFG_LVL_LOW || cfg == APLIC_SOURCECFG_EDGE_FALL) {
+                // Enable input inversion
+                atomic_or_uint32(&aplic->invert[reg], mask);
+            } else {
+                // Disable input inversion
+                atomic_and_uint32(&aplic->invert[reg], ~mask);
+            }
+        }
+    }
+}
+
+static void aplic_mmio_read(rvvm_reg_dev_t* dev, void* data, size_t size, size_t off)
+{
+    aplic_domain_t* domain = rvvm_region_data(dev);
+    uint32_t        config = atomic_load_uint32_relax(&domain->config);
+    uint32_t        val    = 0;
     UNUSED(size);
 
-    switch (offset) {
-        case APLIC_REG_DOMAINCFG:
-            // Hardwired little-endian & MSI delivery mode
-            val = atomic_load_uint32_relax(&aplic->domaincfg[!domain->root_domain]) | APLIC_DOMAINCFG;
-            break;
-        case APLIC_REG_MMSIADDRCFGH:
-        case APLIC_REG_SMSIADDRCFGH:
-            // Hardwired MSI addresses
-            val = APLIC_MSIADDRCFGH_L;
-            break;
-        default:
-            if (offset >= APLIC_REG_SETIP_0 && offset <= APLIC_REG_SETIP_31) {
-                size_t reg = ((offset - APLIC_REG_SETIP_0) >> 2);
-                val = aplic_read_ip(domain, reg);
-            } else if (offset >= APLIC_REG_IN_CLRIP_0 && offset <= APLIC_REG_IN_CLRIP_31) {
-                size_t reg = ((offset - APLIC_REG_IN_CLRIP_0) >> 2);
-                val = aplic_read_in(domain, reg);
-            } else if (offset >= APLIC_REG_SETIE_0 && offset <= APLIC_REG_SETIE_31) {
-                size_t reg = ((offset - APLIC_REG_SETIE_0) >> 2);
-                val = aplic_read_ie(domain, reg);
-            } else if (offset >= APLIC_REG_SOURCECFG_1 && offset <= APLIC_REG_SOURCECFG_1023) {
-                size_t reg = ((offset - APLIC_REG_SOURCECFG_1) >> 2) + 1;
-                if (aplic_valid_src(domain, reg)) {
-                    // Source configuration from our domain
-                    val = atomic_load_uint32_relax(&aplic->source[reg]);
-                } else if (domain->root_domain) {
-                    // Source configuration delegated and we-re an M-mode domain
-                    val = APLIC_SOURCECFG_DELEGATE;
-                }
-            } else if (offset >= APLIC_REG_TARGET_1 && offset <= APLIC_REG_TARGET_1023) {
-                size_t reg = ((offset - APLIC_REG_TARGET_1) >> 2) + 1;
-                if (aplic_valid_src(domain, reg)) {
-                    // Target configuration from our domain
-                    val = atomic_load_uint32_relax(&aplic->target[reg]);
-                }
-            }
-            break;
+    if (off == APLIC_REG_DOMAINCFG) {
+        // Hardwired MSI delivery mode
+        val = config | APLIC_DOMAINCFG;
+    } else if (off - APLIC_REG_SETIP < APLIC_REG_SETIP_SIZE) {
+        val = aplic_read_ip(domain, (off - APLIC_REG_SETIP) >> 2);
+    } else if (off - APLIC_REG_IN_CLRIP < APLIC_REG_IN_CLRIP_SIZE) {
+        val = aplic_read_in(domain, (off - APLIC_REG_IN_CLRIP) >> 2);
+    } else if (off - APLIC_REG_SETIE < APLIC_REG_SETIE_SIZE) {
+        val = aplic_read_ie(domain, (off - APLIC_REG_SETIE) >> 2);
+    } else if (off - APLIC_REG_SOURCECFG < APLIC_REG_SOURCECFG_SIZE) {
+        val = aplic_read_sourcecfg(domain, ((off - APLIC_REG_SOURCECFG) >> 2) + 1);
+    } else if (off - APLIC_REG_TARGET < APLIC_REG_TARGET_SIZE) {
+        val = aplic_read_targetcfg(domain, ((off - APLIC_REG_TARGET) >> 2) + 1);
+    } else if (off == APLIC_REG_MMSIADDRCFGH || off == APLIC_REG_SMSIADDRCFGH) {
+        // Hardwired MSI addresses
+        val = APLIC_MSIADDRCFGH_L;
     }
 
-    write_uint32_le(data, val);
-    return true;
+    if (likely(!(config & APLIC_DOMAINCFG_BE))) {
+        write_uint32_le(data, val);
+    } else {
+        write_uint32_be_m(data, val);
+    }
 }
 
-static bool aplic_mmio_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint8_t size)
+static void aplic_mmio_write(rvvm_reg_dev_t* dev, const void* data, size_t size, size_t off)
 {
-    aplic_domain_t* domain = dev->data;
-    aplic_ctx_t* aplic = domain->aplic;
-    uint32_t val = read_uint32_le(data);
+    aplic_domain_t* domain = rvvm_region_data(dev);
+    uint32_t        config = atomic_load_uint32_relax(&domain->config);
+    uint32_t        val    = 0;
     UNUSED(size);
 
-    switch (offset) {
+    if (likely(!(config & APLIC_DOMAINCFG_BE))) {
+        val = read_uint32_le(data);
+    } else {
+        val = read_uint32_be_m(data);
+    }
+
+    switch (off) {
         case APLIC_REG_DOMAINCFG:
-            atomic_store_uint32_relax(&aplic->domaincfg[!domain->root_domain], val & APLIC_DOMAINCFG_IE);
-            break;
+            atomic_store_uint32_relax(&domain->config, val & APLIC_DOMAINCFG_MASK);
+            return;
         case APLIC_REG_SETIPNUM:
-        case APLIC_REG_SETIPNUM_LE:
-            aplic_setipnum(domain, val);
-            break;
+            aplic_write_setipnum(domain, val);
+            return;
         case APLIC_REG_CLRIPNUM:
-            aplic_clripnum(domain, val);
-            break;
+            aplic_write_clripnum(domain, val);
+            return;
         case APLIC_REG_SETIENUM:
-            aplic_setienum(domain, val);
-            break;
+            aplic_write_setienum(domain, val);
+            return;
         case APLIC_REG_CLRIENUM:
-            aplic_clrienum(domain, val);
-            break;
+            aplic_write_clrienum(domain, val);
+            return;
+        case APLIC_REG_SETIPNUM_LE:
+            aplic_write_setipnum(domain, read_uint32_le(data));
+            return;
         case APLIC_REG_SETIPNUM_BE:
-            aplic_setipnum(domain, read_uint32_be_m(data));
-            break;
+            aplic_write_setipnum(domain, read_uint32_be_m(data));
+            return;
         case APLIC_REG_GENMSI:
-            aplic_gen_msi(aplic, !domain->root_domain, val);
-            break;
-        default:
-            if (offset >= APLIC_REG_SETIP_0 && offset <= APLIC_REG_SETIP_31) {
-                size_t reg = ((offset - APLIC_REG_SETIP_0) >> 2);
-                aplic_setip(domain, reg, val);
-            } else if (offset >= APLIC_REG_IN_CLRIP_0 && offset <= APLIC_REG_IN_CLRIP_31) {
-                size_t reg = ((offset - APLIC_REG_IN_CLRIP_0) >> 2);
-                aplic_clrip(domain, reg, val);
-            } else if (offset >= APLIC_REG_SETIE_0 && offset <= APLIC_REG_SETIE_31) {
-                size_t reg = ((offset - APLIC_REG_SETIE_0) >> 2);
-                aplic_setie(domain, reg, val);
-            } else if (offset >= APLIC_REG_CLRIE_0 && offset <= APLIC_REG_CLRIE_31) {
-                size_t reg = ((offset - APLIC_REG_CLRIE_0) >> 2);
-                aplic_clrie(domain, reg, val);
-            } else if (offset >= APLIC_REG_SOURCECFG_1 && offset <= APLIC_REG_SOURCECFG_1023) {
-                size_t reg = ((offset - APLIC_REG_SOURCECFG_1) >> 2) + 1;
-                if (domain->root_domain) {
-                    // M-mode source configuration write
-                    uint32_t mask = (1U << (reg & 0x1F));
-                    if (val & APLIC_SOURCECFG_DELEGATE) {
-                        // Enable delegation
-                        atomic_or_uint32(&aplic->deleg[reg >> 5], mask);
-                    } else {
-                        // Disable delegation
-                        atomic_and_uint32(&aplic->deleg[reg >> 5], ~mask);
-                    }
-                }
-                if (aplic_valid_src(domain, reg)) {
-                    // Source configuration for our domain
-                    uint32_t cfg = val & APLIC_SOURCECFG_MASK;
-                    uint32_t mask = (1U << (reg & 0x1F));
-                    atomic_store_uint32_relax(&aplic->source[reg], cfg);
-                    if (cfg == APLIC_SOURCECFG_LVL_LOW || cfg == APLIC_SOURCECFG_EDGE_FALL) {
-                        // Enable input inversion
-                        atomic_or_uint32(&aplic->invert[reg >> 5], mask);
-                    } else {
-                        // Disable input inversion
-                        atomic_and_uint32(&aplic->invert[reg >> 5], ~mask);
-                    }
-                }
-            } else if (offset >= APLIC_REG_TARGET_1 && offset <= APLIC_REG_TARGET_1023) {
-                size_t reg = ((offset - APLIC_REG_TARGET_1) >> 2) + 1;
-                if (aplic_valid_src(domain, reg)) {
-                    // Target configuration for our domain
-                    atomic_store_uint32_relax(&aplic->target[reg], val);
-                }
-            }
+            aplic_gen_msi(domain->aplic, !domain->invert, val);
+            return;
     }
 
-    return true;
+    if (off - APLIC_REG_SETIP < APLIC_REG_SETIP_SIZE) {
+        aplic_write_setip(domain, (off - APLIC_REG_SETIP) >> 2, val);
+    } else if (off - APLIC_REG_IN_CLRIP < APLIC_REG_IN_CLRIP_SIZE) {
+        aplic_write_clrip(domain, (off - APLIC_REG_IN_CLRIP) >> 2, val);
+    } else if (off - APLIC_REG_SETIE < APLIC_REG_SETIE_SIZE) {
+        aplic_write_setie(domain, (off - APLIC_REG_SETIE) >> 2, val);
+    } else if (off - APLIC_REG_CLRIE < APLIC_REG_CLRIE_SIZE) {
+        aplic_write_clrie(domain, (off - APLIC_REG_CLRIE) >> 2, val);
+    } else if (off - APLIC_REG_SOURCECFG < APLIC_REG_SOURCECFG_SIZE) {
+        aplic_write_sourcecfg(domain, ((off - APLIC_REG_SOURCECFG) >> 2) + 1, val);
+    } else if (off - APLIC_REG_TARGET < APLIC_REG_TARGET_SIZE) {
+        size_t reg = ((off - APLIC_REG_TARGET) >> 2) + 1;
+        if (aplic_valid_src(domain, reg)) {
+            // Target configuration for our domain
+            atomic_store_uint32_relax(&domain->aplic->target[reg], val);
+        }
+    }
 }
 
-static void aplic_remove(rvvm_mmio_dev_t* dev)
+static void aplic_suspend(rvvm_reg_dev_t* dev, rvvm_snapshot_t* snap, bool resume)
 {
-    aplic_domain_t* domain = dev->data;
-    if (domain->root_domain) {
+    aplic_domain_t* domain = rvvm_region_data(dev);
+    if (snap && domain->invert) {
+        aplic_dev_t* aplic = domain->aplic;
+        rvvm_snapshot_section(snap, "riscv-aplic");
+        rvvm_snapshot_field(snap, aplic->domain[APLIC_MDOMAIN].config);
+        rvvm_snapshot_field(snap, aplic->domain[APLIC_SDOMAIN].config);
+        for (size_t i = 0; i < APLIC_SRC_REGS; ++i) {
+            rvvm_snapshot_field(snap, aplic->deleg[i]);
+            rvvm_snapshot_field(snap, aplic->raised[i]);
+            rvvm_snapshot_field(snap, aplic->invert[i]);
+            rvvm_snapshot_field(snap, aplic->pending[i]);
+            rvvm_snapshot_field(snap, aplic->enabled[i]);
+        }
+        for (size_t i = 0; i < APLIC_SRC_IDTS; ++i) {
+            rvvm_snapshot_field(snap, aplic->source[i]);
+            rvvm_snapshot_field(snap, aplic->target[i]);
+        }
+    }
+    UNUSED(resume);
+}
+
+static void aplic_cleanup(rvvm_reg_dev_t* dev)
+{
+    aplic_domain_t* domain = rvvm_region_data(dev);
+    if (domain->aplic->machine) {
+        domain->aplic->machine = NULL;
+    } else {
+        rvvm_irq_dev_free(domain->aplic->irq_dev);
         free(domain->aplic);
     }
-    free(domain);
 }
 
-static rvvm_mmio_type_t aplic_dev_type = {
-    .name = "riscv_aplic",
-    .remove = aplic_remove,
-};
-
-/*
- * RVVM Interrupt API glue
- */
-
-static bool aplic_send_irq(rvvm_intc_t* intc, rvvm_irq_t irq)
+static void aplic_set_irq(rvvm_irq_dev_t* irq_dev, rvvm_irq_t irq, bool lvl)
 {
-    if (irq > 0 && irq < APLIC_SRC_LIMIT) {
-        aplic_edge_interrupt(intc->data, irq);
-    }
-    return false;
-}
-
-static bool aplic_raise_irq(rvvm_intc_t* intc, rvvm_irq_t irq)
-{
-    aplic_ctx_t* aplic = intc->data;
-    if (irq > 0 && irq < APLIC_SRC_LIMIT) {
-        uint32_t mask = (1U << (irq & 0x1F));
-        if ((~atomic_or_uint32(&aplic->raised[irq >> 5], mask)) & mask) {
-            aplic_update_interrupt(aplic, irq);
+    aplic_dev_t* aplic = rvvm_irq_dev_data(irq_dev);
+    if (irq - 1 < APLIC_SRC_COUNT) {
+        uint32_t mask = bit_set32(irq);
+        if (lvl) {
+            if ((~atomic_or_uint32(&aplic->raised[irq >> 5], mask)) & mask) {
+                aplic_update_interrupt(aplic, irq);
+            }
+        } else {
+            if (atomic_and_uint32(&aplic->raised[irq >> 5], ~mask) & mask) {
+                aplic_update_interrupt(aplic, irq);
+            }
         }
-        return true;
     }
-    return false;
 }
 
-static bool aplic_lower_irq(rvvm_intc_t* intc, rvvm_irq_t irq)
+static size_t aplic_fdt_irq_cells(rvvm_irq_dev_t* irq_dev, rvvm_irq_t irq, uint32_t* cells, size_t size)
 {
-    aplic_ctx_t* aplic = intc->data;
-    if (irq > 0 && irq < APLIC_SRC_LIMIT) {
-        uint32_t mask = (1U << (irq & 0x1F));
-        if (atomic_and_uint32(&aplic->raised[irq >> 5], ~mask) & ~mask) {
-            aplic_update_interrupt(aplic, irq);
-        }
-        return true;
-    }
-    return false;
-}
-
-static uint32_t aplic_fdt_phandle(rvvm_intc_t* intc)
-{
-    aplic_ctx_t* aplic = intc->data;
-    return aplic->phandle;
-}
-
-static size_t aplic_fdt_irq_cells(rvvm_intc_t* intc, rvvm_irq_t irq, uint32_t* cells, size_t size)
-{
-    UNUSED(intc);
-    if (cells && size >= 2) {
+    if (irq_dev && cells && size >= 2) {
         cells[0] = irq;
-        cells[1] = 0x4; // Level-triggered
+        cells[1] = APLIC_SOURCECFG_EDGE_RISE;
         return 2;
     }
     return 0;
 }
 
-// Returns phandle
-static uint32_t aplic_attach_domain(rvvm_machine_t* machine, rvvm_addr_t addr, aplic_domain_t* domain)
-{
-    bool smode = !domain->deleg_invert;
+static const rvvm_reg_type_t aplic_type = {
+    .name     = "riscv-aplic",
+    .read     = aplic_mmio_read,
+    .write    = aplic_mmio_write,
+    .suspend  = aplic_suspend,
+    .cleanup  = aplic_cleanup,
+    .min_size = 4,
+    .max_size = 4,
+};
 
-    rvvm_mmio_dev_t aplic_mmio = {
+static const rvvm_irq_dev_cb_t aplic_cb = {
+    .set_irq       = aplic_set_irq,
+    .fdt_irq_cells = aplic_fdt_irq_cells,
+};
+
+static rvvm_reg_dev_t* aplic_attach_domain(rvvm_machine_t* machine, rvvm_addr_t addr, aplic_domain_t* domain)
+{
+    rvvm_reg_desc_t desc = {
         .addr = addr,
-        .size = APLIC_REGION_SIZE,
+        .size = 0x4000,
         .data = domain,
-        .min_op_size = 4,
-        .max_op_size = 4,
-        .read = aplic_mmio_read,
-        .write = aplic_mmio_write,
-        .type = &aplic_dev_type,
+        .type = &aplic_type,
     };
 
-    if (!rvvm_attach_msi_target(machine, &aplic_mmio)) {
-        return 0;
+    rvvm_reg_dev_t*  dev = rvvm_region_init_auto(machine, &desc);
+    rvvm_fdt_node_t* soc = rvvm_get_fdt_soc(machine);
+
+    if (dev && soc) {
+        rvvm_fdt_node_t* imsic_fdt = rvvm_fdt_find_reg_any(soc, domain->invert ? "imsics_m" : "imsics_s");
+        rvvm_fdt_node_t* aplic_fdt = fdt_node_create_reg(domain->invert ? "aplic_m" : "aplic_s", desc.addr);
+        rvvm_fdt_prop_set_reg(aplic_fdt, "reg", desc.addr, desc.size);
+        rvvm_fdt_prop_set_str(aplic_fdt, "compatible", "riscv,aplic");
+        rvvm_fdt_prop_set_u32(aplic_fdt, "msi-parent", rvvm_fdt_phandle(imsic_fdt));
+        rvvm_fdt_prop_set_flag(aplic_fdt, "interrupt-controller");
+        rvvm_fdt_prop_set_u32(aplic_fdt, "#interrupt-cells", 2);
+        rvvm_fdt_prop_set_u32(aplic_fdt, "#address-cells", 0);
+        rvvm_fdt_prop_set_u32(aplic_fdt, "riscv,num-sources", APLIC_SRC_COUNT);
+        if (domain->invert) {
+            rvvm_fdt_node_t* aplic_s    = rvvm_fdt_find_reg_any(soc, "aplic_s");
+            uint32_t         children   = rvvm_fdt_phandle(aplic_s);
+            uint32_t         delegate[] = {children, 1, APLIC_SRC_COUNT};
+            rvvm_fdt_prop_set_u32(aplic_fdt, "riscv,children", children);
+            rvvm_fdt_prop_set_cells(aplic_fdt, "riscv,delegate", delegate, STATIC_ARRAY_SIZE(delegate));
+            rvvm_fdt_prop_set_cells(aplic_fdt, "riscv,delegation", delegate, STATIC_ARRAY_SIZE(delegate));
+        }
+        rvvm_fdt_attach(soc, aplic_fdt);
+        if (!domain->invert) {
+            rvvm_irq_dev_set_phandle(domain->aplic->irq_dev, rvvm_fdt_phandle(aplic_fdt));
+        }
     }
-
-#ifdef USE_FDT
-    struct fdt_node* imsic_fdt = fdt_node_find_reg_any(rvvm_get_fdt_soc(machine), smode ? "imsics_s" : "imsics_m");
-    struct fdt_node* aplic_s = fdt_node_find_reg_any(rvvm_get_fdt_soc(machine), "aplic_s");
-    if (!imsic_fdt) {
-        rvvm_warn("Missing /soc/imsic node in FDT!");
-    }
-    if (!smode && !aplic_s) {
-        rvvm_warn("Missing /soc/aplic_s node in FDT!");
-    }
-
-    struct fdt_node* aplic_fdt = fdt_node_create_reg(smode ? "aplic_s" : "aplic_m", aplic_mmio.addr);
-    fdt_node_add_prop_reg(aplic_fdt, "reg", aplic_mmio.addr, aplic_mmio.size);
-    fdt_node_add_prop_str(aplic_fdt, "compatible", "riscv,aplic");
-    fdt_node_add_prop_u32(aplic_fdt, "msi-parent", fdt_node_get_phandle(imsic_fdt));
-    fdt_node_add_prop(aplic_fdt, "interrupt-controller", NULL, 0);
-    fdt_node_add_prop_u32(aplic_fdt, "#interrupt-cells", 2);
-    fdt_node_add_prop_u32(aplic_fdt, "#address-cells", 0);
-    fdt_node_add_prop_u32(aplic_fdt, "riscv,num-sources", APLIC_SRC_LIMIT - 1);
-
-    if (!smode) {
-        uint32_t children = fdt_node_get_phandle(aplic_s);
-        uint32_t delegate[] = { children, 1, APLIC_SRC_LIMIT - 1, };
-        fdt_node_add_prop_u32(aplic_fdt, "riscv,children", children);
-        fdt_node_add_prop_cells(aplic_fdt, "riscv,delegate", delegate, STATIC_ARRAY_SIZE(delegate));
-        fdt_node_add_prop_cells(aplic_fdt, "riscv,delegation", delegate, STATIC_ARRAY_SIZE(delegate));
-    }
-
-    fdt_node_add_child(rvvm_get_fdt_soc(machine), aplic_fdt);
-
-    return fdt_node_get_phandle(aplic_fdt);
-#else
-    return 1;
-#endif
+    return dev;
 }
 
-PUBLIC rvvm_intc_t* riscv_aplic_init(rvvm_machine_t* machine, rvvm_addr_t m_addr, rvvm_addr_t s_addr)
+RVVM_PUBLIC rvvm_irq_dev_t* rvvm_riscv_aplic_init(rvvm_machine_t* machine, rvvm_addr_t maddr, rvvm_addr_t saddr)
 {
-    aplic_ctx_t* aplic = safe_new_obj(aplic_ctx_t);
-    aplic_domain_t* m_domain = safe_new_obj(aplic_domain_t);
-    aplic_domain_t* s_domain = safe_new_obj(aplic_domain_t);
+    aplic_dev_t* aplic = safe_new_obj(aplic_dev_t);
+
+    aplic->domain[APLIC_MDOMAIN].invert = -1;
+    aplic->domain[APLIC_MDOMAIN].aplic  = aplic;
+    aplic->domain[APLIC_SDOMAIN].aplic  = aplic;
 
     aplic->machine = machine;
+    aplic->irq_dev = rvvm_irq_dev_init(&aplic_cb, aplic);
+    rvvm_irq_dev_set_base(aplic->irq_dev, 1);
 
     for (size_t i = 0; i < APLIC_SRC_REGS; ++i) {
         aplic->deleg[i] = -1;
     }
 
-    m_domain->deleg_invert = -1;
-    m_domain->root_domain = true;
-    m_domain->aplic = aplic;
-    s_domain->aplic = aplic;
-
-    rvvm_intc_t aplic_intc = {
-        .data = aplic,
-        .send_irq = aplic_send_irq,
-        .raise_irq = aplic_raise_irq,
-        .lower_irq = aplic_lower_irq,
-        .fdt_phandle = aplic_fdt_phandle,
-        .fdt_irq_cells = aplic_fdt_irq_cells,
-    };
-
-    aplic->intc = aplic_intc;
-    aplic->phandle = aplic_attach_domain(machine, s_addr, s_domain);
-    if (!aplic->phandle || !aplic_attach_domain(machine, m_addr, m_domain)) {
-        rvvm_error("Failed to attach RISC-V APLIC!");
+    if (!aplic_attach_domain(machine, saddr, &aplic->domain[APLIC_SDOMAIN]) || //
+        !aplic_attach_domain(machine, maddr, &aplic->domain[APLIC_MDOMAIN])) {
         return NULL;
     }
 
-    rvvm_set_intc(machine, &aplic->intc);
-    return &aplic->intc;
+    rvvm_set_intc(machine, aplic->irq_dev);
+    return aplic->irq_dev;
 }
 
-PUBLIC rvvm_intc_t* riscv_aplic_init_auto(rvvm_machine_t* machine)
-{
-    rvvm_addr_t m_addr = rvvm_mmio_zone_auto(machine, APLIC_M_ADDR_DEFAULT, APLIC_REGION_SIZE);
-    rvvm_addr_t s_addr = rvvm_mmio_zone_auto(machine, APLIC_S_ADDR_DEFAULT, APLIC_REGION_SIZE);
-    return riscv_aplic_init(machine, m_addr, s_addr);
-}
+POP_OPTIMIZATION_SIZE

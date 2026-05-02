@@ -10,13 +10,17 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef RVVM_APLIC_H
 #define RVVM_APLIC_H
 
-#include "rvvmlib.h"
+#include <rvvm/rvvm_base.h>
 
-#define APLIC_M_ADDR_DEFAULT 0x0C000000U
-#define APLIC_S_ADDR_DEFAULT 0x0D000000U
+/*
+ * TODO: Remove this in favor of <rvvm/rvvm_board.h>
+ */
 
-PUBLIC rvvm_intc_t* riscv_aplic_init(rvvm_machine_t* machine, rvvm_addr_t m_addr, rvvm_addr_t s_addr);
+RVVM_PUBLIC rvvm_irq_dev_t* rvvm_riscv_aplic_init(rvvm_machine_t* machine, rvvm_addr_t maddr, rvvm_addr_t saddr);
 
-PUBLIC rvvm_intc_t* riscv_aplic_init_auto(rvvm_machine_t* machine);
+static inline rvvm_irq_dev_t* riscv_aplic_init_auto(rvvm_machine_t* machine)
+{
+    return rvvm_riscv_aplic_init(machine, 0x0C000000UL, 0x0D000000UL);
+}
 
 #endif
