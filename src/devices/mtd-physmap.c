@@ -7,9 +7,12 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#include "mtd-physmap.h"
 
-#include "fdtlib.h"
+#include <rvvm/rvvm_blk.h>
+#include <rvvm/rvvm_board.h>
+#include <rvvm/rvvm_fdt.h>
+#include <rvvm/rvvm_region.h>
+
 #include "mem_ops.h"
 #include "utils.h"
 
@@ -18,114 +21,109 @@ PUSH_OPTIMIZATION_SIZE
 typedef struct {
     rvvm_blk_dev_t* blk;
 
-    uint8_t  buffer[4096];
+    uint8_t  buffer[0x1000];
     uint32_t dirty;
-} mtd_flash_t;
+} mtd_ram_t;
 
-static void mtd_flash_remove(rvvm_mmio_dev_t* dev)
+TSAN_SUPPRESS
+static void mtd_ram_read(rvvm_reg_dev_t* dev, void* data, size_t size, size_t off)
 {
-    mtd_flash_t* mtd = dev->data;
-    if (atomic_load_uint32_relax(&mtd->dirty)) {
-        rvvm_blk_write_head(mtd->blk, mtd->buffer, sizeof(mtd->buffer));
-    }
-    rvvm_blk_close(mtd->blk);
-    free(mtd);
-}
-
-static void mtd_flash_reset(rvvm_mmio_dev_t* dev)
-{
-    mtd_flash_t* mtd  = dev->data;
-    rvvm_addr_t  addr = rvvm_get_opt(dev->machine, RVVM_OPT_RESET_PC);
-    rvvm_addr_t  size = rvvm_blk_get_size(mtd->blk);
-
-    void* ptr = rvvm_get_dma_ptr(dev->machine, addr, size);
-    if (ptr) {
-        rvvm_blk_read(mtd->blk, ptr, size, 0);
-    }
-}
-
-static const rvvm_mmio_type_t mtd_flash_type = {
-    .name   = "mtd-physmap",
-    .remove = mtd_flash_remove,
-    .reset  = mtd_flash_reset,
-};
-
-static bool mtd_flash_mmio_read(rvvm_mmio_dev_t* dev, void* data, size_t off, uint8_t size)
-{
-    mtd_flash_t* mtd = dev->data;
+    mtd_ram_t* mtd = rvvm_region_data(dev);
     if ((off >> 12) != (rvvm_blk_tell_head(mtd->blk) >> 12)) {
         rvvm_blk_seek_head(mtd->blk, (off >> 12) << 12, RVVM_BLK_SEEK_SET);
         rvvm_blk_read_head(mtd->blk, mtd->buffer, sizeof(mtd->buffer));
     }
     memcpy(data, mtd->buffer + (off & 0xFFF), size);
-    return true;
 }
 
-static bool mtd_flash_mmio_write(rvvm_mmio_dev_t* dev, void* data, size_t off, uint8_t size)
+TSAN_SUPPRESS
+static void mtd_ram_write(rvvm_reg_dev_t* dev, const void* data, size_t size, size_t off)
 {
-    mtd_flash_t* mtd = dev->data;
+    mtd_ram_t* mtd = rvvm_region_data(dev);
     if ((off >> 12) != (rvvm_blk_tell_head(mtd->blk) >> 12)) {
         rvvm_blk_write_head(mtd->blk, mtd->buffer, sizeof(mtd->buffer));
         rvvm_blk_seek_head(mtd->blk, (off >> 12) << 12, RVVM_BLK_SEEK_SET);
     }
     memcpy(mtd->buffer + (off & 0xFFF), data, size);
     atomic_store_uint32_relax(&mtd->dirty, true);
-    return true;
 }
 
-PUBLIC rvvm_mmio_dev_t* mtd_physmap_init_blk(rvvm_machine_t* machine, rvvm_addr_t addr, rvvm_blk_dev_t* blk)
+static void mtd_ram_reset(rvvm_reg_dev_t* dev)
 {
-    mtd_flash_t* mtd = safe_new_obj(mtd_flash_t);
+    mtd_ram_t*      mtd  = rvvm_region_data(dev);
+    rvvm_machine_t* mach = rvvm_region_machine(dev);
+    rvvm_addr_t     addr = rvvm_get_opt(mach, RVVM_OPT_RESET_PC);
+    rvvm_addr_t     size = rvvm_blk_get_size(mtd->blk);
+    void*           ptr  = rvvm_get_dma_ptr(mach, addr, size);
+    if (ptr) {
+        rvvm_blk_read(mtd->blk, ptr, size, 0);
+    }
+}
+
+static void mtd_ram_suspend(rvvm_reg_dev_t* dev, rvvm_snapshot_t* snap, bool resume)
+{
+    mtd_ram_t* mtd = rvvm_region_data(dev);
+    UNUSED(snap && resume);
+    if (atomic_load_uint32_relax(&mtd->dirty)) {
+        atomic_store_uint32_relax(&mtd->dirty, 0);
+        rvvm_blk_write_head(mtd->blk, mtd->buffer, sizeof(mtd->buffer));
+    }
+}
+
+static void mtd_ram_cleanup(rvvm_reg_dev_t* dev)
+{
+    mtd_ram_t* mtd = rvvm_region_data(dev);
+    mtd_ram_suspend(dev, NULL, false);
+    rvvm_blk_close(mtd->blk);
+    free(mtd);
+}
+
+static const rvvm_reg_type_t mtd_ram_type = {
+    .name     = "mtd-ram",
+    .read     = mtd_ram_read,
+    .write    = mtd_ram_write,
+    .reset    = mtd_ram_reset,
+    .suspend  = mtd_ram_suspend,
+    .cleanup  = mtd_ram_cleanup,
+    .min_size = 1,
+    .max_size = 16,
+};
+
+RVVM_PUBLIC rvvm_reg_dev_t* mtd_ram_init_blk(rvvm_machine_t* machine, rvvm_addr_t addr, rvvm_blk_dev_t* blk)
+{
+    mtd_ram_t* mtd = safe_new_obj(mtd_ram_t);
+
+    rvvm_reg_desc_t desc = {
+        .addr = addr,
+        .size = rvvm_blk_get_size(mtd->blk),
+        .data = mtd,
+        .type = &mtd_ram_type,
+    };
 
     mtd->blk = blk;
 
     rvvm_blk_read_head(mtd->blk, mtd->buffer, sizeof(mtd->buffer));
 
-    rvvm_mmio_dev_t mtd_mmio = {
-        .addr        = addr,
-        .size        = rvvm_blk_get_size(mtd->blk),
-        .min_op_size = 1,
-        .max_op_size = 8,
-        .read        = mtd_flash_mmio_read,
-        .write       = mtd_flash_mmio_write,
-        .data        = mtd,
-        .type        = &mtd_flash_type,
-    };
-    rvvm_mmio_dev_t* mmio = rvvm_attach_mmio(machine, &mtd_mmio);
-    if (mmio == NULL) {
-        return mmio;
-    }
-#if defined(USE_FDT)
-    struct fdt_node* mtd_fdt = fdt_node_create_reg("flash", mtd_mmio.addr);
-    fdt_node_add_prop_reg(mtd_fdt, "reg", mtd_mmio.addr, mtd_mmio.size);
-    fdt_node_add_prop_str(mtd_fdt, "compatible", "mtd-ram");
-    fdt_node_add_prop_u32(mtd_fdt, "bank-width", 0x1);
-    fdt_node_add_prop_u32(mtd_fdt, "#address-cells", 1);
-    fdt_node_add_prop_u32(mtd_fdt, "#size-cells", 1);
-    {
-        struct fdt_node* partition0 = fdt_node_create("partition@0");
-        uint32_t         reg[2]     = {0, mtd_mmio.size};
-        fdt_node_add_prop_cells(partition0, "reg", reg, 2);
-        fdt_node_add_prop_str(partition0, "label", "firmware");
-        fdt_node_add_child(mtd_fdt, partition0);
-    }
-    fdt_node_add_child(rvvm_get_fdt_soc(machine), mtd_fdt);
-#endif
-    return mmio;
-}
+    rvvm_reg_dev_t*  dev = rvvm_region_init_auto(machine, &desc);
+    rvvm_fdt_node_t* soc = rvvm_get_fdt_soc(machine);
 
-rvvm_mmio_dev_t* mtd_physmap_init(rvvm_machine_t* machine, rvvm_addr_t addr, const char* image, bool rw)
-{
-    rvvm_blk_dev_t* blk = rvvm_blk_open(image, NULL, rw ? RVVM_BLK_RW : RVVM_BLK_READ);
-    if (blk) {
-        return mtd_physmap_init_blk(machine, addr, blk);
+    if (dev && soc) {
+        rvvm_fdt_node_t* fdt = rvvm_fdt_init_reg("flash", desc.addr);
+        rvvm_fdt_prop_set_reg(fdt, "reg", desc.addr, desc.size);
+        rvvm_fdt_prop_set_str(fdt, "compatible", "mtd-ram");
+        rvvm_fdt_prop_set_u32(fdt, "bank-width", 0x1);
+        rvvm_fdt_prop_set_u32(fdt, "#address-cells", 1);
+        rvvm_fdt_prop_set_u32(fdt, "#size-cells", 1);
+        {
+            rvvm_fdt_node_t* part0  = rvvm_fdt_init_reg("partition", 0);
+            uint32_t         reg[2] = {0, desc.size};
+            rvvm_fdt_prop_set_cells(part0, "reg", reg, 2);
+            rvvm_fdt_prop_set_str(part0, "label", "flash");
+            rvvm_fdt_attach(fdt, part0);
+        }
+        rvvm_fdt_attach(soc, fdt);
     }
-    return NULL;
-}
-
-rvvm_mmio_dev_t* mtd_physmap_init_auto(rvvm_machine_t* machine, const char* image, bool rw)
-{
-    return mtd_physmap_init(machine, MTD_PHYSMAP_DEFAULT_MMIO, image, rw);
+    return dev;
 }
 
 POP_OPTIMIZATION_SIZE

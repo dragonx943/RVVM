@@ -13,16 +13,34 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include <rvvm/rvvm_blk.h>
 
 /*
+ * TODO: Remove this in favor of <rvvm/rvvm_board.h>
+ */
+
+/*
  * The main purpose of this device is to allow guests to flash
  * different firmware into the board memory chip
  */
 
-#define MTD_PHYSMAP_DEFAULT_MMIO 0x04000000
+RVVM_PUBLIC rvvm_reg_dev_t* rvvm_mtd_ram_init(rvvm_machine_t* machine, /**/
+                                              rvvm_blk_dev_t* blk,     /**/
+                                              rvvm_addr_t     addr,    /**/
+                                              bool            fw);
 
-RVVM_PUBLIC rvvm_mmio_dev_t* mtd_physmap_init_blk(rvvm_machine_t* machine, rvvm_addr_t addr, rvvm_blk_dev_t* blk);
+static inline rvvm_reg_dev_t* mtd_physmap_init(rvvm_machine_t* machine, /**/
+                                               const char*     image,   /**/
+                                               rvvm_addr_t     addr,    /**/
+                                               bool            fw)
+{
+    rvvm_blk_dev_t* blk = rvvm_blk_open(image, NULL, RVVM_BLK_RW);
+    if (blk) {
+        return rvvm_mtd_ram_init(machine, blk, addr, fw);
+    }
+    return NULL;
+}
 
-RVVM_PUBLIC rvvm_mmio_dev_t* mtd_physmap_init(rvvm_machine_t* machine, rvvm_addr_t addr, const char* image, bool rw);
-RVVM_PUBLIC rvvm_mmio_dev_t* mtd_physmap_init_auto(rvvm_machine_t* machine, const char* image, bool rw);
+static inline rvvm_reg_dev_t* mtd_physmap_init_auto(rvvm_machine_t* machine, const char* image, bool fw)
+{
+    return mtd_physmap_init(machine, image, 0x04000000UL, fw);
+}
 
 #endif
-
