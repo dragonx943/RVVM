@@ -7,28 +7,30 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#include "rtc-goldfish.h"
-#include "fdtlib.h"
+#include <rvvm/rvvm_board.h>
+#include <rvvm/rvvm_fdt.h>
+#include <rvvm/rvvm_irq.h>
+#include <rvvm/rvvm_region.h>
+#include <rvvm/rvvm_snapshot.h>
+
 #include "mem_ops.h"
 #include "rvtimer.h"
 #include "utils.h"
 
 PUSH_OPTIMIZATION_SIZE
 
-#define RTC_TIME_LOW          0x0
-#define RTC_TIME_HIGH         0x4
-#define RTC_ALARM_LOW         0x8
-#define RTC_ALARM_HIGH        0xC
-#define RTC_IRQ_ENABLED       0x10
-#define RTC_ALARM_CLEAR       0x14
-#define RTC_ALARM_STATUS      0x18
-#define RTC_IRQ_CLEAR         0x1C
-
-#define RTC_GOLDFISH_REG_SIZE 0x1000
+#define RTC_TIME_LOW     0x00
+#define RTC_TIME_HIGH    0x04
+#define RTC_ALARM_LOW    0x08
+#define RTC_ALARM_HIGH   0x0C
+#define RTC_IRQ_ENABLED  0x10
+#define RTC_ALARM_CLEAR  0x14
+#define RTC_ALARM_STATUS 0x18
+#define RTC_IRQ_CLEAR    0x1C
 
 typedef struct {
-    rvvm_intc_t* intc;
-    rvvm_irq_t   irq;
+    rvvm_irq_dev_t* irq_dev;
+    rvvm_irq_t      irq;
 
     uint32_t time_low;
     uint32_t time_high;
@@ -48,20 +50,20 @@ static void rtc_goldfish_update(rtc_goldfish_dev_t* rtc)
         uint64_t alarm64  = atomic_load_uint32_relax(&rtc->alarm_low);
         alarm64          |= (((uint64_t)atomic_load_uint32_relax(&rtc->alarm_high)) << 32);
         if (timer64 >= alarm64) {
-            rvvm_raise_irq(rtc->intc, rtc->irq);
+            rvvm_irq_raise(rtc->irq_dev, rtc->irq);
         }
     } else {
-        rvvm_lower_irq(rtc->intc, rtc->irq);
+        rvvm_irq_lower(rtc->irq_dev, rtc->irq);
     }
 }
 
-static bool rtc_goldfish_mmio_read(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint8_t size)
+static void rtc_goldfish_mmio_read(rvvm_reg_dev_t* dev, void* data, size_t size, size_t off)
 {
-    rtc_goldfish_dev_t* rtc = dev->data;
+    rtc_goldfish_dev_t* rtc = rvvm_region_data(dev);
     uint32_t            val = 0;
     UNUSED(size);
 
-    switch (offset) {
+    switch (off) {
         case RTC_TIME_LOW:
             rtc_goldfish_update(rtc);
             val = atomic_load_uint32_relax(&rtc->time_low);
@@ -84,16 +86,15 @@ static bool rtc_goldfish_mmio_read(rvvm_mmio_dev_t* dev, void* data, size_t offs
     }
 
     write_uint32_le(data, val);
-    return true;
 }
 
-static bool rtc_goldfish_mmio_write(rvvm_mmio_dev_t* dev, void* data, size_t offset, uint8_t size)
+static void rtc_goldfish_mmio_write(rvvm_reg_dev_t* dev, const void* data, size_t size, size_t off)
 {
-    rtc_goldfish_dev_t* rtc = dev->data;
+    rtc_goldfish_dev_t* rtc = rvvm_region_data(dev);
     uint32_t            val = read_uint32_le(data);
     UNUSED(size);
 
-    switch (offset) {
+    switch (off) {
         case RTC_ALARM_LOW:
             atomic_store_uint32_relax(&rtc->alarm_enabled, true);
             atomic_store_uint32_relax(&rtc->alarm_low, val);
@@ -114,49 +115,73 @@ static bool rtc_goldfish_mmio_write(rvvm_mmio_dev_t* dev, void* data, size_t off
             rtc_goldfish_update(rtc);
             break;
     }
-
-    return true;
 }
 
-static rvvm_mmio_type_t rtc_goldfish_dev_type = {
-    .name = "rtc_goldfish",
+static void rtc_goldfish_suspend(rvvm_reg_dev_t* dev, rvvm_snapshot_t* snap, bool resume)
+{
+    if (snap) {
+        rtc_goldfish_dev_t* rtc = rvvm_region_data(dev);
+        rvvm_snapshot_section(snap, "rtc-goldfish");
+        rvvm_snapshot_field(snap, rtc->time_low);
+        rvvm_snapshot_field(snap, rtc->time_high);
+        rvvm_snapshot_field(snap, rtc->alarm_low);
+        rvvm_snapshot_field(snap, rtc->alarm_high);
+        rvvm_snapshot_field(snap, rtc->alarm_enabled);
+        rvvm_snapshot_field(snap, rtc->irq_enabled);
+    }
+    UNUSED(resume);
+}
+
+static void rtc_goldfish_cleanup(rvvm_reg_dev_t* dev)
+{
+    rtc_goldfish_dev_t* rtc = rvvm_region_data(dev);
+    rvvm_irq_dealloc(rtc->irq_dev, rtc->irq);
+    free(rtc);
+}
+
+static const rvvm_reg_type_t rtc_goldfish_type = {
+    .name     = "rtc-goldfish",
+    .read     = rtc_goldfish_mmio_read,
+    .write    = rtc_goldfish_mmio_write,
+    .suspend  = rtc_goldfish_suspend,
+    .cleanup  = rtc_goldfish_cleanup,
+    .min_size = 4,
+    .max_size = 4,
 };
 
-PUBLIC rvvm_mmio_dev_t* rtc_goldfish_init(rvvm_machine_t* machine, rvvm_addr_t addr, rvvm_intc_t* intc, rvvm_irq_t irq)
+RVVM_PUBLIC rvvm_reg_dev_t* rvvm_rtc_goldfish_init(rvvm_machine_t* machine, //
+                                                   rvvm_addr_t     addr,    //
+                                                   rvvm_irq_dev_t* irq_dev, //
+                                                   rvvm_irq_t      irq)
 {
     rtc_goldfish_dev_t* rtc = safe_new_obj(rtc_goldfish_dev_t);
-    rtc->intc               = intc;
-    rtc->irq                = irq;
 
-    rvvm_mmio_dev_t rtc_mmio = {
-        .addr        = addr,
-        .size        = RTC_GOLDFISH_REG_SIZE,
-        .data        = rtc,
-        .type        = &rtc_goldfish_dev_type,
-        .read        = rtc_goldfish_mmio_read,
-        .write       = rtc_goldfish_mmio_write,
-        .min_op_size = 4,
-        .max_op_size = 4,
+    rvvm_reg_desc_t desc = {
+        .addr = addr,
+        .size = 0x1000,
+        .data = rtc,
+        .type = &rtc_goldfish_type,
     };
-    rvvm_mmio_dev_t* mmio = rvvm_attach_mmio(machine, &rtc_mmio);
-    if (mmio == NULL) {
-        return mmio;
-    }
-#ifdef USE_FDT
-    struct fdt_node* rtc_fdt = fdt_node_create_reg("rtc", rtc_mmio.addr);
-    fdt_node_add_prop_reg(rtc_fdt, "reg", rtc_mmio.addr, rtc_mmio.size);
-    fdt_node_add_prop_str(rtc_fdt, "compatible", "google,goldfish-rtc");
-    rvvm_fdt_describe_irq(rtc_fdt, intc, irq);
-    fdt_node_add_child(rvvm_get_fdt_soc(machine), rtc_fdt);
-#endif
-    return mmio;
-}
 
-PUBLIC rvvm_mmio_dev_t* rtc_goldfish_init_auto(rvvm_machine_t* machine)
-{
-    rvvm_intc_t* intc = rvvm_get_intc(machine);
-    rvvm_addr_t  addr = rvvm_mmio_zone_auto(machine, RTC_GOLDFISH_ADDR_DEFAULT, RTC_GOLDFISH_REG_SIZE);
-    return rtc_goldfish_init(machine, addr, intc, rvvm_alloc_irq(intc));
+    if (!irq_dev) {
+        irq_dev = rvvm_get_intc(machine);
+    }
+
+    rtc->irq_dev = irq_dev;
+    rtc->irq     = rvvm_irq_alloc(irq_dev, irq);
+
+    rvvm_reg_dev_t*  dev = rvvm_region_init_auto(machine, &desc);
+    rvvm_fdt_node_t* soc = rvvm_get_fdt_soc(machine);
+
+    if (dev && soc) {
+        rvvm_fdt_node_t* fdt = rvvm_fdt_init_reg("rtc", desc.addr);
+        rvvm_fdt_prop_set_reg(fdt, "reg", desc.addr, desc.size);
+        rvvm_fdt_prop_set_str(fdt, "compatible", "google,goldfish-rtc");
+        rvvm_irq_fdt_describe(fdt, rtc->irq_dev, rtc->irq);
+        rvvm_fdt_attach(soc, fdt);
+    }
+
+    return dev;
 }
 
 POP_OPTIMIZATION_SIZE

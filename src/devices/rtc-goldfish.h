@@ -10,14 +10,20 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef RVVM_RTC_GOLDFISH_H
 #define RVVM_RTC_GOLDFISH_H
 
-#include "rvvmlib.h"
+#include <rvvm/rvvm_base.h>
 
-#define RTC_GOLDFISH_ADDR_DEFAULT 0x101000
+/*
+ * TODO: Remove this in favor of <rvvm/rvvm_board.h>
+ */
 
-PUBLIC rvvm_mmio_dev_t* rtc_goldfish_init(rvvm_machine_t* machine, rvvm_addr_t addr,
-                                          rvvm_intc_t* intc, rvvm_irq_t irq);
+RVVM_PUBLIC rvvm_reg_dev_t* rvvm_rtc_goldfish_init(rvvm_machine_t* machine, /**/
+                                                   rvvm_addr_t     addr,    /**/
+                                                   rvvm_irq_dev_t* irq_dev, /**/
+                                                   rvvm_irq_t      irq);
 
-PUBLIC rvvm_mmio_dev_t* rtc_goldfish_init_auto(rvvm_machine_t* machine);
+static inline rvvm_reg_dev_t* rtc_goldfish_init_auto(rvvm_machine_t* machine)
+{
+    return rvvm_rtc_goldfish_init(machine, 0x00101000UL, NULL, 0);
+}
 
 #endif
-
