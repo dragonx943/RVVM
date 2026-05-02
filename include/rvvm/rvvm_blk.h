@@ -28,8 +28,11 @@ RVVM_EXTERN_C_BEGIN
 #define RVVM_BLK_WRITE    0x02 /**< Permit writing the block device image      */
 #define RVVM_BLK_RW       0x03 /**< Open block device image in read/write mode */
 #define RVVM_BLK_CREAT    0x04 /**< Create image if it doesn't exist           */
+#define RVVM_BLK_EXCL     0x08 /**< Prevent other processes from opening       */
+#define RVVM_BLK_TRUNC    0x10 /**< Truncate conents upon opening              */
 #define RVVM_BLK_DIRECT   0x20 /**< Direct DMA IO with the underlying storage  */
 #define RVVM_BLK_SYNC     0x40 /**< Disable writeback buffering                */
+#define RVVM_BLK_GROW     0x80 /**< Allow writes beyond end of image           */
 
 /*
  * Seek whence for rvvm_blk_seek_head()

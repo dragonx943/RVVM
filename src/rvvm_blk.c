@@ -70,7 +70,7 @@ static bool blk_raw_trim(rvvm_blk_dev_t* blk, uint64_t off, uint64_t size)
     return rvtrim(file, off, size);
 }
 
-static rvvm_blk_cb_t blk_raw_cb = {
+static const rvvm_blk_cb_t blk_raw_cb = {
     .name     = "raw",
     .probe    = blk_raw_probe,
     .close    = blk_raw_close,
@@ -102,7 +102,7 @@ struct rvvm_blk_dev {
     uint32_t opts;
 };
 
-rvvm_blk_dev_t* rvvm_blk_open(const char* name, const char* fmt, uint32_t opts)
+RVVM_PUBLIC rvvm_blk_dev_t* rvvm_blk_open(const char* name, const char* fmt, uint32_t opts)
 {
     rvvm_blk_dev_t* blk = rvvm_blk_init();
     if (!fmt || rvvm_strcmp(fmt, blk_raw_cb.name)) {
@@ -118,17 +118,17 @@ rvvm_blk_dev_t* rvvm_blk_open(const char* name, const char* fmt, uint32_t opts)
     return NULL;
 }
 
-void rvvm_blk_close(rvvm_blk_dev_t* blk)
+RVVM_PUBLIC void rvvm_blk_close(rvvm_blk_dev_t* blk)
 {
     if (blk) {
-        if (blk->cb && blk->cb->close) {
+        if (blk->cb->close) {
             blk->cb->close(blk);
         }
         safe_free(blk);
     }
 }
 
-const char* rvvm_blk_get_format(rvvm_blk_dev_t* blk)
+RVVM_PUBLIC const char* rvvm_blk_get_format(rvvm_blk_dev_t* blk)
 {
     if (blk) {
         return blk->cb->name;
@@ -136,70 +136,102 @@ const char* rvvm_blk_get_format(rvvm_blk_dev_t* blk)
     return NULL;
 }
 
-uint64_t rvvm_blk_get_size(rvvm_blk_dev_t* blk)
+RVVM_PUBLIC uint64_t rvvm_blk_get_size(rvvm_blk_dev_t* blk)
 {
     if (blk) {
-        return blk->size;
+        return atomic_load_uint64_relax(&blk->size);
     }
     return 0;
 }
 
-bool rvvm_blk_set_size(rvvm_blk_dev_t* blk, uint64_t size)
+RVVM_PUBLIC bool rvvm_blk_set_size(rvvm_blk_dev_t* blk, uint64_t size)
 {
-    if (blk && (blk->opts & RVVM_BLK_WRITE)) {
-        if (blk->cb->set_size && blk->cb->set_size(blk, size)) {
-            blk->size = size;
-            return true;
+    if (likely(blk && (blk->opts & RVVM_BLK_WRITE))) {
+        if (blk->cb->set_size && !blk->cb->set_size(blk, size)) {
+            return false;
         }
+        atomic_store_uint64(&blk->size, size);
+        return true;
     }
     return false;
 }
 
-size_t rvvm_blk_read(rvvm_blk_dev_t* blk, void* dst, size_t size, uint64_t off)
+RVVM_PUBLIC size_t rvvm_blk_read(rvvm_blk_dev_t* blk, void* dst, size_t size, uint64_t off)
 {
-    if (blk && blk->cb->read && (off + size) <= blk->size) {
-        return blk->cb->read(blk, dst, size, off);
+    if (likely(blk && (blk->opts & RVVM_BLK_READ))) {
+        uint64_t blk_size = atomic_load_uint64_relax(&blk->size);
+        if (likely(off < blk_size)) {
+            uint64_t remain = blk_size - off;
+            if (size > remain) {
+                size = remain;
+            }
+            return blk->cb->read(blk, dst, size, off);
+        }
     }
     return 0;
 }
 
-size_t rvvm_blk_write(rvvm_blk_dev_t* blk, const void* src, size_t size, uint64_t off)
+static void rvvm_blk_grow_size(rvvm_blk_dev_t* blk, uint64_t old_size, uint64_t size)
 {
-    if (blk && blk->cb->write && (blk->opts & RVVM_BLK_WRITE) && (off + size) <= blk->size) {
-        return blk->cb->write(blk, src, size, off);
+    do {
+        if (size <= old_size) {
+            return;
+        }
+    } while (!atomic_cas_uint64_loop(&blk->size, &old_size, size));
+}
+
+RVVM_PUBLIC size_t rvvm_blk_write(rvvm_blk_dev_t* blk, const void* src, size_t size, uint64_t off)
+{
+    if (likely(blk && (blk->opts & RVVM_BLK_WRITE))) {
+        uint64_t blk_size = atomic_load_uint64_relax(&blk->size);
+        if (likely(off < blk_size)) {
+            uint64_t remain = blk_size - off;
+            if (likely(size <= remain)) {
+                return blk->cb->write(blk, src, size, off);
+            } else if (!(blk->opts & RVVM_BLK_GROW)) {
+                return blk->cb->write(blk, src, remain, off);
+            }
+        }
+        if ((blk->opts & RVVM_BLK_GROW) && off + size > off) {
+            size_t ret = blk->cb->write(blk, src, size, off);
+            rvvm_blk_grow_size(blk, blk_size, off + ret);
+            return ret;
+        }
     }
     return 0;
 }
 
-bool rvvm_blk_sync(rvvm_blk_dev_t* blk)
+RVVM_PUBLIC bool rvvm_blk_sync(rvvm_blk_dev_t* blk)
 {
-    if (blk && blk->cb->sync && (blk->opts & RVVM_BLK_WRITE)) {
+    if (likely(blk && blk->cb->sync && (blk->opts & RVVM_BLK_WRITE))) {
         return blk->cb->sync(blk);
     }
     return !!blk;
 }
 
-bool rvvm_blk_trim(rvvm_blk_dev_t* blk, uint64_t off, uint64_t size)
+RVVM_PUBLIC bool rvvm_blk_trim(rvvm_blk_dev_t* blk, uint64_t off, uint64_t size)
 {
-    if (blk && blk->cb->trim && (blk->opts & RVVM_BLK_WRITE) && (off + size) <= blk->size) {
-        return blk->cb->trim(blk, off, size);
+    if (likely(blk && blk->cb->trim && (blk->opts & RVVM_BLK_WRITE))) {
+        uint64_t blk_size = atomic_load_uint64_relax(&blk->size);
+        if (likely(off < blk_size && size <= blk_size - off)) {
+            return blk->cb->trim(blk, off, size);
+        }
     }
     return false;
 }
 
-bool rvvm_blk_seek_head(rvvm_blk_dev_t* blk, int64_t off, uint32_t whence)
+RVVM_PUBLIC bool rvvm_blk_seek_head(rvvm_blk_dev_t* blk, int64_t off, uint32_t whence)
 {
     if (blk) {
-        uint64_t size = rvvm_blk_get_size(blk);
         if (whence == RVVM_BLK_SEEK_CUR) {
-            off += rvvm_blk_tell_head(blk);
+            off = rvvm_blk_tell_head(blk) + off;
         } else if (whence == RVVM_BLK_SEEK_END) {
-            off = size - off;
+            off = atomic_load_uint64_relax(&blk->size) + off;
         } else if (whence != RVVM_BLK_SEEK_SET) {
             // Invalid seek operation
             off = -1;
         }
-        if (off >= 0 && off < (int64_t)size) {
+        if (off >= 0) {
             atomic_store_uint64_relax(&blk->head, off);
             return true;
         }
@@ -207,7 +239,7 @@ bool rvvm_blk_seek_head(rvvm_blk_dev_t* blk, int64_t off, uint32_t whence)
     return false;
 }
 
-uint64_t rvvm_blk_tell_head(rvvm_blk_dev_t* blk)
+RVVM_PUBLIC uint64_t rvvm_blk_tell_head(rvvm_blk_dev_t* blk)
 {
     if (blk) {
         return atomic_load_uint64_relax(&blk->head);
@@ -215,7 +247,7 @@ uint64_t rvvm_blk_tell_head(rvvm_blk_dev_t* blk)
     return 0;
 }
 
-size_t rvvm_blk_write_head(rvvm_blk_dev_t* blk, const void* src, size_t size)
+RVVM_PUBLIC size_t rvvm_blk_write_head(rvvm_blk_dev_t* blk, const void* src, size_t size)
 {
     size_t ret = rvvm_blk_write(blk, src, size, rvvm_blk_tell_head(blk));
     if (ret) {
@@ -224,7 +256,7 @@ size_t rvvm_blk_write_head(rvvm_blk_dev_t* blk, const void* src, size_t size)
     return ret;
 }
 
-size_t rvvm_blk_read_head(rvvm_blk_dev_t* blk, void* dst, size_t size)
+RVVM_PUBLIC size_t rvvm_blk_read_head(rvvm_blk_dev_t* blk, void* dst, size_t size)
 {
     size_t ret = rvvm_blk_read(blk, dst, size, rvvm_blk_tell_head(blk));
     if (ret) {
@@ -247,6 +279,12 @@ void rvvm_blk_register_cb(rvvm_blk_dev_t* blk, const rvvm_blk_cb_t* cb, uint32_t
     if (blk && cb) {
         blk->cb   = cb;
         blk->opts = opts ? opts : (RVVM_BLK_RW | RVVM_BLK_DIRECT);
+        if (!cb->read) {
+            blk->opts &= ~RVVM_BLK_READ;
+        }
+        if (!cb->write) {
+            blk->opts &= ~RVVM_BLK_WRITE;
+        }
     }
 }
 
