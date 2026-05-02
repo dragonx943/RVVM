@@ -10,12 +10,17 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef RVVM_ACLINT_H
 #define RVVM_ACLINT_H
 
-#include "rvvmlib.h"
+#include <rvvm/rvvm_base.h>
 
-#define CLINT_ADDR_DEFAULT 0x2000000U
+/*
+ * TODO: Remove this in favor of <rvvm/rvvm_board.h>
+ */
 
-PUBLIC void riscv_clint_init(rvvm_machine_t* machine, rvvm_addr_t addr);
+RVVM_PUBLIC bool rvvm_riscv_clint_init(rvvm_machine_t* machine, rvvm_addr_t addr);
 
-PUBLIC void riscv_clint_init_auto(rvvm_machine_t* machine);
+static inline bool riscv_clint_init_auto(rvvm_machine_t* machine)
+{
+    return rvvm_riscv_clint_init(machine, 0x2000000UL);
+}
 
 #endif
