@@ -249,6 +249,6 @@ typedef struct rvvm_pci_bus pci_bus_t;
 
 typedef struct rvvm_i2c_bus i2c_bus_t;
 
-typedef struct rvvm_intc rvvm_intc_t;
+typedef struct rvvm_irq_dev rvvm_intc_t;
 
 #endif

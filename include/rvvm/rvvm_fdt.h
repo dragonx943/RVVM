@@ -40,7 +40,6 @@ RVVM_PUBLIC rvvm_fdt_node_t* rvvm_fdt_init(const char* name);
  */
 RVVM_PUBLIC rvvm_fdt_node_t* rvvm_fdt_init_reg(const char* name, uint64_t addr);
 
-
 /**
  * Attach child FDT node
  *
