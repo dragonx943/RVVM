@@ -181,6 +181,9 @@ struct rvvm_pci_function {
     uint16_t vendor_id;
     uint16_t device_id;
     uint16_t class_code;
+    uint16_t subsys_vendor_id;   // 0 → use the bus default (CERN/ECP/EDU)
+    uint16_t subsys_device_id;
+    uint8_t  bar_io_mask;        // bit N: 1 = BAR N is I/O type, 0 = Memory
     uint8_t  prog_if;
     uint8_t  rev;
     uint8_t  irq_pin;
@@ -465,10 +468,23 @@ static rvvm_addr_t pci_assign_mmio_addr(pci_bus_t* bus, size_t bar_size)
     }
 }
 
-// Attach a preconfigured BAR to the PCI host
-static rvvm_mmio_dev_t* pci_attach_bar(pci_bus_t* bus, rvvm_mmio_dev_t bar)
+// Assign I/O port BAR address — allocates from the bus's I/O range
+// (typically PCI_IO_ADDR_DEFAULT = 0x03000000, length 0x10000). The
+// MMIO callback is registered at bus->io_addr + io_port; the BAR
+// config space exposes io_port (i.e. addr - bus->io_addr). I/O BARs
+// have a 4-byte minimum size per PCI spec §6.2.5.1.
+static rvvm_addr_t pci_assign_io_addr(pci_bus_t* bus, size_t bar_size)
 {
-    bar.addr = pci_assign_mmio_addr(bus, bar.size);
+    rvvm_addr_t size = bit_next_pow2(EVAL_MAX(bar_size, 4));
+    return rvvm_mmio_zone_auto(bus->machine, bus->io_addr, size);
+}
+
+// Attach a preconfigured BAR to the PCI host. is_io selects between
+// memory and I/O port allocation pools.
+static rvvm_mmio_dev_t* pci_attach_bar(pci_bus_t* bus, rvvm_mmio_dev_t bar, bool is_io)
+{
+    bar.addr = is_io ? pci_assign_io_addr(bus, bar.size)
+                     : pci_assign_mmio_addr(bus, bar.size);
     return rvvm_attach_mmio(bus->machine, &bar);
 }
 
@@ -477,12 +493,15 @@ static pci_func_t* pci_attach_func_internal(pci_bus_t* bus, const pci_func_desc_
     pci_func_t* func = safe_new_obj(pci_func_t);
     func->bus        = bus;
 
-    func->vendor_id  = desc->vendor_id;
-    func->device_id  = desc->device_id;
-    func->class_code = desc->class_code;
-    func->prog_if    = desc->prog_if;
-    func->rev        = desc->rev;
-    func->irq_pin    = desc->irq_pin;
+    func->vendor_id        = desc->vendor_id;
+    func->device_id        = desc->device_id;
+    func->class_code       = desc->class_code;
+    func->subsys_vendor_id = desc->subsys_vendor_id;
+    func->subsys_device_id = desc->subsys_device_id;
+    func->bar_io_mask      = desc->bar_io_mask;
+    func->prog_if          = desc->prog_if;
+    func->rev              = desc->rev;
+    func->irq_pin          = desc->irq_pin;
 
     func->addr = bus_addr;
 
@@ -491,7 +510,8 @@ static pci_func_t* pci_attach_func_internal(pci_bus_t* bus, const pci_func_desc_
 
     for (size_t bar_id = 0; bar_id < PCI_FUNC_BARS; ++bar_id) {
         if (desc->bar[bar_id].size) {
-            func->bar[bar_id] = pci_attach_bar(bus, desc->bar[bar_id]);
+            bool is_io = (desc->bar_io_mask >> bar_id) & 1u;
+            func->bar[bar_id] = pci_attach_bar(bus, desc->bar[bar_id], is_io);
             if (func->bar[bar_id] == NULL) {
                 // Failed to attach function BAR
                 free(func);
@@ -506,7 +526,8 @@ static pci_func_t* pci_attach_func_internal(pci_bus_t* bus, const pci_func_desc_
                 .read  = pci_msix_bar_read,
                 .write = pci_msix_bar_write,
             };
-            func->bar[bar_id] = pci_attach_bar(bus, msix_bar);
+            // MSI-X always goes into the memory pool — never an I/O BAR.
+            func->bar[bar_id] = pci_attach_bar(bus, msix_bar, false);
             if (func->bar[bar_id]) {
                 // Successfully attached MSI-X BAR
                 func->msix_bar = bar_id;
@@ -515,7 +536,7 @@ static pci_func_t* pci_attach_func_internal(pci_bus_t* bus, const pci_func_desc_
     }
 
     if (desc->expansion_rom.size) {
-        func->expansion_rom = pci_attach_bar(bus, desc->expansion_rom);
+        func->expansion_rom = pci_attach_bar(bus, desc->expansion_rom, false);
         if (func->expansion_rom == NULL) {
             // Failed to attach function expansion ROM
             free(func);
@@ -619,6 +640,12 @@ static bool pci_bus_read(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint8
                     if (pci_bar_is_upper_half(func, bar_id)) {
                         // This is an upper half of a 64-bit BAR
                         val = bar->addr >> 32;
+                    } else if ((func->bar_io_mask >> bar_id) & 1u) {
+                        // I/O BAR (PCI spec §6.2.5.1): config space exposes
+                        // the I/O port number (offset within bus->io_addr
+                        // range), with bit 0 set to indicate I/O type.
+                        val = (uint32_t)(bar->addr - func->bus->io_addr)
+                            | PCI_BAR_IO_SPACE;
                     } else {
                         val = bar->addr;
                         if (pci_bar_is_64bit(func, bar_id)) {
@@ -649,7 +676,16 @@ static bool pci_bus_read(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint8
             break;
         }
         case PCI_REG_SSID_SVID:
-            val = 0x510010DC;
+            // Per-device override if set in the descriptor; otherwise
+            // fall back to the bus's CERN/ECP/EDU placeholder so existing
+            // devices that don't care about subsys IDs round-trip the
+            // same value they always have.
+            if (func->subsys_vendor_id || func->subsys_device_id) {
+                val = ((uint32_t)func->subsys_device_id << 16)
+                    | (uint32_t)func->subsys_vendor_id;
+            } else {
+                val = 0x510010DC;
+            }
             break;
         case PCI_REG_EXPANSION_ROM:
             if (func->expansion_rom) {
@@ -752,9 +788,17 @@ static bool pci_bus_write(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint
                 if (bar) {
                     rvvm_addr_t bar_addr = bar->addr;
                     rvvm_addr_t bar_size = bit_next_pow2(bar->size);
+                    bool is_io = (func->bar_io_mask >> bar_id) & 1u;
                     if (pci_bar_is_upper_half(func, bar_id)) {
                         // This is an upper half of a 64-bit BAR
                         bar_addr = bit_replace(bar_addr, 32, 32, val);
+                    } else if (is_io) {
+                        // I/O BAR: 4-byte alignment, preserve type bits
+                        // 0:1. The config-space view holds the I/O port
+                        // offset; the actual MMIO address is offset
+                        // from bus->io_addr.
+                        rvvm_addr_t io_port = val & ~0x3U;
+                        bar_addr = func->bus->io_addr + io_port;
                     } else {
                         // Mask lower option bits and align to page
                         bar_addr = bit_replace(bar_addr, 0, 32, val & ~0xFFFU);
