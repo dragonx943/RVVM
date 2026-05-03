@@ -29,7 +29,7 @@ option(USE_RVV  "Enable Vector extensions support" OFF)
 option(USE_DEBUG "Enable debug logging / sanity checks" OFF)
 option(USE_SPINLOCK_DEBUG "Enable deadlock debugging" ON)
 option(USE_ISOLATION "Enable seccomp/pledge isolation measures" ON)
-option(USE_JNI "Enable JNI bindings in librvvm (Very tiny size impact)" ON)
+option(USE_JNI "Enable JNI bindings in librvvm (Very tiny size impact)" OFF)
 
 # Acceleration, accessibility
 option(USE_JIT "Enable RVJIT Just-in-time compiler" ON)
