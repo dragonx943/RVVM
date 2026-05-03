@@ -13,7 +13,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "mem_ops.h"
 #include "utils.h"
 
-#define SNAP_MAGIC 0x50414E534D565652ULL // 'RVVMSNAP' in LE
+#define SNAP_MAGIC "\x7Frvvm-snapshot0\xFF"
 
 PUSH_OPTIMIZATION_SIZE
 
@@ -49,18 +49,22 @@ RVVM_PUBLIC bool rvvm_snapshot_close(rvvm_snapshot_t* snap)
 
 static bool rvvm_snapshot_section_next(rvvm_snapshot_t* snap)
 {
-    uint8_t tmp[16] = {0};
+    uint8_t tmp[24] = {0};
     if (snap->out) {
-        snap->off = rvvm_blk_tell_head(snap->blk);
-        write_uint64_le_m(tmp, SNAP_MAGIC);
-        write_uint64_le_m(tmp + 8, snap->off);
-        if (rvvm_blk_write_head(snap->blk, tmp, sizeof(tmp)) == sizeof(tmp)) {
-            return true;
+        uint64_t prev = snap->off;
+        snap->off     = rvvm_blk_tell_head(snap->blk);
+        memcpy(tmp, SNAP_MAGIC, 16);
+        write_uint64_le_m(tmp + 16, snap->off);
+        if (rvvm_blk_write(snap->blk, tmp, sizeof(tmp), prev) == sizeof(tmp)) {
+            write_uint64_le_m(tmp + 16, 0);
+            if (rvvm_blk_write_head(snap->blk, tmp, sizeof(tmp)) == sizeof(tmp)) {
+                return true;
+            }
         }
     } else {
         if (rvvm_blk_read_head(snap->blk, tmp, sizeof(tmp)) == sizeof(tmp) && //
-            read_uint64_le_m(tmp) == SNAP_MAGIC) {
-            snap->off = read_uint64_le(tmp + 8);
+            !memcmp(tmp, SNAP_MAGIC, 16)) {
+            snap->off = read_uint64_le(tmp + 16);
             return true;
         }
     }
@@ -70,7 +74,7 @@ static bool rvvm_snapshot_section_next(rvvm_snapshot_t* snap)
 
 RVVM_PUBLIC bool rvvm_snapshot_section(rvvm_snapshot_t* snap, const char* name)
 {
-    if (snap && name) {
+    if (snap && name && !snap->err) {
         char   buf[256] = {0};
         size_t len      = rvvm_strlen(name);
         if (len > 255) {
@@ -83,7 +87,7 @@ RVVM_PUBLIC bool rvvm_snapshot_section(rvvm_snapshot_t* snap, const char* name)
             if (!rvvm_snapshot_section_next(snap) || !rvvm_snapshot_data(snap, buf, len)) {
                 return false;
             }
-        } while (!snap->out && !rvvm_strcmp(buf, name));
+        } while (!snap->out && rvvm_strcmp(buf, name) == false);
         return true;
     }
     return false;
@@ -99,7 +103,7 @@ RVVM_PUBLIC bool rvvm_snapshot_writing(rvvm_snapshot_t* snap)
 
 RVVM_PUBLIC bool rvvm_snapshot_data(rvvm_snapshot_t* snap, void* data, size_t size)
 {
-    if (snap && data) {
+    if (snap && data && !snap->err) {
         if (snap->out) {
             if (rvvm_blk_write_head(snap->blk, data, size) != size) {
                 return false;
