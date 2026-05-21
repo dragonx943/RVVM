@@ -166,7 +166,7 @@ static inline bool riscv_csr_seed(rvvm_hart_t* vm, rvvm_uxlen_t* dest)
     if (riscv_csr_seed_enabled(vm)) {
         uint16_t seed = 0;
         rvvm_randombytes(&seed, sizeof(seed));
-        return riscv_csr_const(dest, seed);
+        return riscv_csr_const(dest, seed | CSR_SEED_OPST_ES16);
     }
     return false;
 }
