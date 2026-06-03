@@ -297,6 +297,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define CSR_COUNTEREN_TM   0x2U
 #define CSR_COUNTEREN_IR   0x4U
 
+#define CSR_SEED_OPST_ES16 (2ULL << 30)
+
 /*
  * CSR Masks (For WARL behavior of CSRs)
  */
