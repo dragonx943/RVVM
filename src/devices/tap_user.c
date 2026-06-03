@@ -819,7 +819,7 @@ static void handle_arp(tap_dev_t* tap, const uint8_t* buffer, size_t size)
     uint8_t frame[ARPv4_HDR_SIZE + ETH2_HDR_SIZE];
     uint16_t ptype = read_uint16_be_m(buffer + 2);
     uint16_t oper  = read_uint16_be_m(buffer + 6);
-    if (oper == OP_REQUEST && ptype == ETH2_IPv4 && memcmp(buffer + 14, buffer + 24, 4)) {
+    if (oper == OP_REQUEST && ptype == ETH2_IPv4 && memcmp(buffer + 14, buffer + 24, 4) && memcmp(buffer + 24, CLIENT_IP, 4)) {
         uint8_t* arp = create_eth_frame(tap, frame, ETH2_ARP);
         create_arp_frame(tap, arp, buffer + 24);
         eth_send(tap, frame, ARPv4_HDR_SIZE + ETH2_HDR_SIZE);
