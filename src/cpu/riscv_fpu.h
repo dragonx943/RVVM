@@ -164,12 +164,35 @@ static forceinline void riscv_emulate_f_fmsub(rvvm_hart_t* vm, const uint32_t in
 
     if (likely(riscv_fpu_is_enabled(vm) && riscv_fpu_rm_is_valid(rm))) {
         switch (bit_ext_u32(insn, 25, 2)) {
-            case 0x0: // fmsub.s
-                riscv_emit_s(vm, rds,
-                             fpu_fma32(riscv_view_s(vm, rs1), //
-                                       riscv_view_s(vm, rs2), //
-                                       fpu_neg32(riscv_view_s(vm, rs3))));
+            case 0x0: { // fmsub.s
+                fpu_f32_t a = riscv_view_s(vm, rs1);
+                fpu_f32_t b = riscv_view_s(vm, rs2);
+                fpu_f32_t c = riscv_view_s(vm, rs3);
+
+                uint32_t e_old = fpu_get_exceptions();
+                fpu_f32_t out  = fpu_fma32(a, b, fpu_neg32(c));
+                uint32_t e_new = fpu_get_exceptions();
+
+                bool c_is_qnan = fpu_is_nan32_soft(c) && !fpu_is_snan32_soft(c);
+
+                uint32_t ua = fpu_bit_f32_to_u32(a);
+                uint32_t ub = fpu_bit_f32_to_u32(b);
+                bool a_zero = (ua & 0x7FFFFFFFU) == 0;
+                bool b_zero = (ub & 0x7FFFFFFFU) == 0;
+                bool a_inf  = !fpu_is_finite32(a) && !fpu_is_nan32_soft(a);
+                bool b_inf  = !fpu_is_finite32(b) && !fpu_is_nan32_soft(b);
+                bool inf0_invalid = (a_inf && b_zero) || (b_inf && a_zero);
+
+                if (c_is_qnan && !inf0_invalid) {
+                    uint32_t raised = e_new & ~e_old;
+                    if (raised & FPU_LIB_FLAG_NV) {
+                        fpu_set_exceptions(e_new & ~FPU_LIB_FLAG_NV);
+                    }
+                }
+
+                riscv_emit_s(vm, rds, out);
                 return;
+            }
             case 0x1: // fmsub.d
                 riscv_emit_d(vm, rds,
                              fpu_fma64(riscv_view_d(vm, rs1), //
