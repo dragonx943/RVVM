@@ -227,7 +227,7 @@ set(SRC_USE_X11 "${RVVM_SRC_DIR}/gui/x11_window.c")
 set(SRC_USE_SDL "${RVVM_SRC_DIR}/gui/sdl_window.c")
 
 set(SRC_USE_TAP_LINUX "${RVVM_SRC_DIR}/devices/tap_linux.c")
-set(SRC_USE_NET "${RVVM_SRC_DIR}/networking.c" "${RVVM_SRC_DIR}/devices/tap_user.c")
+set(SRC_USE_NET "${RVVM_SRC_DIR}/util/networking.c" "${RVVM_SRC_DIR}/devices/tap_user.c")
 set(SRC_USE_JIT "${RVVM_SRC_DIR}/rvjit/rvjit.c" "${RVVM_SRC_DIR}/rvjit/rvjit_emit.c")
 set(SRC_USE_JNI "${RVVM_SRC_DIR}/bindings/jni/rvvm_jni.c")
 
