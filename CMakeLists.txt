@@ -81,6 +81,7 @@ endif()
 
 set(RVVM_INC_DIR "${CMAKE_SOURCE_DIR}/include")
 set(RVVM_SRC_DIR "${CMAKE_SOURCE_DIR}/src")
+set(RVVM_SRC_DIR "${CMAKE_SOURCE_DIR}/src/util")
 
 # Fancy coloring
 if (NOT WIN32)
