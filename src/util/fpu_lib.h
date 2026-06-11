@@ -1090,6 +1090,76 @@ static forceinline fpu_f64_t fpu_fcvt_i64_to_f64(int64_t i)
     return fpu_wrap_f64((actual_double_t)i);
 }
 
+static forceinline fpu_f64_t fpu_round_i64_to_f64(int64_t i, uint32_t rm)
+{
+    bool sign = i < 0;
+    uint64_t mag = sign ? (0 - (uint64_t)i) : (uint64_t)i;
+
+    if (unlikely(!mag)) {
+        return fpu_bit_u64_to_f64(0);
+    }
+
+    if (unlikely(rm > FPU_LIB_ROUND_MM)) {
+        rm = fpu_get_rounding_mode();
+    }
+
+    uint32_t exp = 0;
+    uint64_t tmp = mag;
+    while (tmp >>= 1) {
+        ++exp;
+    }
+
+    uint64_t sig = 0;
+
+    if (likely(exp <= 52)) {
+        sig = mag << (52 - exp);
+    } else {
+        uint32_t shift = exp - 52;
+        uint64_t mask = (1ULL << shift) - 1;
+        uint64_t rem = mag & mask;
+        uint64_t half = 1ULL << (shift - 1);
+
+        sig = mag >> shift;
+
+        bool increment = false;
+        switch (rm) {
+            case FPU_LIB_ROUND_NE:
+                increment = (rem > half) || ((rem == half) && (sig & 1));
+                break;
+            case FPU_LIB_ROUND_TZ:
+                increment = false;
+                break;
+            case FPU_LIB_ROUND_DN:
+                increment = sign && rem;
+                break;
+            case FPU_LIB_ROUND_UP:
+                increment = !sign && rem;
+                break;
+            case FPU_LIB_ROUND_MM:
+                increment = rem >= half;
+                break;
+        }
+
+        if (unlikely(rem)) {
+            fpu_raise_inexact();
+        }
+
+        if (increment) {
+            ++sig;
+            if (unlikely(sig == (1ULL << 53))) {
+                sig >>= 1;
+                ++exp;
+            }
+        }
+
+        sig <<= 52 - exp + shift;
+    }
+
+    uint64_t bits = (sign ? FPU_LIB_FP64_SIGNEDFP_MASK : 0) | (((uint64_t)exp + 0x3FF) << 52) | (sig & FPU_LIB_FP64_MANTISSA_MASK);
+
+    return fpu_bit_u64_to_f64(bits);
+}
+
 /*
  * Check whether floating-point value fits an integer type, never raises exceptions
  */
@@ -1333,10 +1403,21 @@ static forceinline uint32_t fpu_round_f64_to_u32(fpu_f64_t d, uint32_t mode)
 
 static forceinline int32_t fpu_round_f32_to_i32(fpu_f32_t f, uint32_t mode)
 {
-    if (likely(mode == FPU_LIB_ROUND_TZ)) {
-        return fpu_fcvt_f32_to_i32(f);
+    fpu_f32_t rounded = f;
+
+    if (likely(mode != FPU_LIB_ROUND_TZ)) {
+        rounded = fpu_round_f32_internal(f, mode);
     }
-    return fpu_fcvt_f32_to_i32(fpu_round_f32_internal(f, mode));
+
+    int32_t ret = fpu_fcvt_f32_to_i32(rounded);
+
+    if (likely(!(fpu_get_exceptions() & FPU_LIB_FLAG_NV))) {
+        if (unlikely(!fpu_is_bit_equal32(f, fpu_fcvt_i32_to_f32(ret)))) {
+            fpu_raise_inexact();
+        }
+    }
+
+    return ret;
 }
 
 static forceinline int32_t fpu_round_f64_to_i32(fpu_f64_t d, uint32_t mode)
