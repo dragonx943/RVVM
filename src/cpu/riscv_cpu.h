@@ -10,8 +10,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef RISCV_CPU_H
 #define RISCV_CPU_H
 
-#include "rvvm.h"
-#include "riscv_mmu.h"
+#include <core/rvvm.h>
+#include <cpu/riscv_mmu.h>
 
 // Run the vCPU in current thread
 void riscv_run_till_event(rvvm_hart_t* vm);

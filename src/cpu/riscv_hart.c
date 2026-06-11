@@ -7,19 +7,21 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#include "atomics.h"
-#include "bit_ops.h"
-#include "gdbstub.h"
-#include "rvvm_isolation.h"
-#include "rvvmlib.h"
-#include "threading.h"
-#include "utils.h"
-#include "vma_ops.h"
+#include <rvvm/rvvm.h>
 
-#include "riscv_cpu.h"
-#include "riscv_csr.h"
-#include "riscv_hart.h"
-#include "riscv_mmu.h"
+#include <util/atomics.h>
+#include <util/bit_ops.h>
+#include <util/threading.h>
+#include <util/utils.h>
+#include <util/vma_ops.h>
+
+#include <core/gdbstub.h>
+#include <core/rvvm_isolation.h>
+
+#include <cpu/riscv_cpu.h>
+#include <cpu/riscv_csr.h>
+#include <cpu/riscv_hart.h>
+#include <cpu/riscv_mmu.h>
 
 // Valid vm->pending_events bits deliverable to the hart
 #define HART_EVENT_PAUSE   0x1 // Pause the hart in a consistent state

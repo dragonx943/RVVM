@@ -11,9 +11,11 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include <rvvm/rvvm_fdt.h>
 #include <rvvm/rvvm_region.h>
 
-#include "mem_ops.h"
-#include "riscv-aclint.h"
-#include "riscv_hart.h"
+#include <util/mem_ops.h>
+
+#include <cpu/riscv_hart.h>
+
+#include "riscv-aclint.h" // TODO: Remove with rvvm_board
 
 static void aclint_mswi_read(rvvm_reg_dev_t* dev, void* data, size_t size, size_t off)
 {

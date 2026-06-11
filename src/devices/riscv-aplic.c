@@ -13,10 +13,11 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include <rvvm/rvvm_region.h>
 #include <rvvm/rvvm_snapshot.h>
 
-#include "atomics.h"
-#include "bit_ops.h"
-#include "mem_ops.h"
-#include "riscv_hart.h"
+#include <util/atomics.h>
+#include <util/bit_ops.h>
+#include <util/mem_ops.h>
+
+#include <cpu/riscv_hart.h>
 
 PUSH_OPTIMIZATION_SIZE
 

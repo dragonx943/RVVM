@@ -21,33 +21,35 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-#include "feature_test.h"
+#include <util/feature_test.h>
 
-#include "gdbstub.h"
-#include "rvvm_isolation.h"
-#include "rvvm_user.h"
-#include "rvvmlib.h"
-#include "utils.h"
+#include <rvvm/rvvm.h>
 
-#include "devices/ata.h"
-#include "devices/bochs-display.h"
-#include "devices/framebuffer.h"
-#include "devices/i2c-oc.h"
-#include "devices/ns16550a.h"
-#include "devices/nvme.h"
-#include "devices/pci-bus.h"
-#include "devices/pci-vfio.h"
-#include "devices/riscv-aclint.h"
-#include "devices/riscv-aplic.h"
-#include "devices/riscv-imsic.h"
-#include "devices/riscv-plic.h"
-#include "devices/rtc-goldfish.h"
-#include "devices/rtl8169.h"
-#include "devices/sound-hda.h"
-#include "devices/syscon.h"
-#include "devices/usb-xhci.h"
+#include <util/utils.h>
 
-#include "gui/gui_window.h"
+#include <core/rvvm_isolation.h>
+#include <core/gdbstub.h>
+#include <core/rvvm_user.h>
+
+#include <devices/ata.h>
+#include <devices/bochs-display.h>
+#include <devices/framebuffer.h>
+#include <devices/i2c-oc.h>
+#include <devices/ns16550a.h>
+#include <devices/nvme.h>
+#include <devices/pci-bus.h>
+#include <devices/pci-vfio.h>
+#include <devices/riscv-aclint.h>
+#include <devices/riscv-aplic.h>
+#include <devices/riscv-imsic.h>
+#include <devices/riscv-plic.h>
+#include <devices/rtc-goldfish.h>
+#include <devices/rtl8169.h>
+#include <devices/sound-hda.h>
+#include <devices/syscon.h>
+#include <devices/usb-xhci.h>
+
+#include <gui/gui_window.h>
 
 PUSH_OPTIMIZATION_SIZE
 

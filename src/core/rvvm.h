@@ -14,21 +14,22 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef RVVM_INTERNAL_H
 #define RVVM_INTERNAL_H
 
-#include "rvvmlib.h"
+#include <rvvm/rvvm.h>
 
-#include "atomics.h"
-#include "fpu_types.h"
+#include <util/atomics.h>
+#include <util/fpu_types.h>
+#include <util/blk_io.h>
+#include <util/rvtimer.h>
+#include <util/threading.h>
+#include <util/vector.h>
+#include <util/utils.h>
 
-#include "blk_io.h"
-#include "fdtlib.h"
-#include "gdbstub.h"
-#include "rvtimer.h"
-#include "threading.h"
-#include "utils.h"
-#include "vector.h"
+#include <util/fdtlib.h> // TODO: Replace with rvvm_fdt
+
+#include <core/gdbstub.h>
 
 #if defined(USE_JIT)
-#include "rvjit/rvjit.h"
+#include <rvjit/rvjit.h>
 #endif
 
 #define RVVM_TLB_SIZE      256 // Always nonzero & power of 2 (32, 64..)

@@ -10,7 +10,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef RISCV_PRIV_H
 #define RISCV_PRIV_H
 
-#include "rvvm.h"
+#include <core/rvvm.h>
 
 slow_path void riscv_emulate_opc_system(rvvm_hart_t* vm, const uint32_t insn);
 slow_path void riscv_emulate_opc_misc_mem(rvvm_hart_t* vm, const uint32_t insn);

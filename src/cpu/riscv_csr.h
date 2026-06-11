@@ -10,8 +10,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef RVVM_RISCV_CSR_H
 #define RVVM_RISCV_CSR_H
 
-#include "bit_ops.h"
-#include "rvvm.h"
+#include <core/rvvm.h>
+#include <util/bit_ops.h>
 
 /*
  * CSR Listing

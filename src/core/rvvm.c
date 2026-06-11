@@ -7,20 +7,22 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#include "feature_test.h" // IWYU pragma: keep
+#include <util/feature_test.h>
 
-#include "elf_load.h"
-#include "mem_ops.h"
-#include "riscv_cpu.h"
-#include "riscv_hart.h"
-#include "riscv_mmu.h"
-#include "rvvm.h"
-#include "rvvm_isolation.h"
-#include "spinlock.h"
-#include "stacktrace.h"
-#include "threading.h"
-#include "utils.h"
-#include "vector.h"
+#include <util/elf_load.h>
+#include <util/mem_ops.h>
+#include <util/spinlock.h>
+#include <util/stacktrace.h>
+#include <util/threading.h>
+#include <util/utils.h>
+#include <util/vector.h>
+
+#include <core/rvvm.h>
+#include <core/rvvm_isolation.h>
+
+#include <cpu/riscv_cpu.h>
+#include <cpu/riscv_hart.h>
+#include <cpu/riscv_mmu.h>
 
 PUSH_OPTIMIZATION_SIZE
 

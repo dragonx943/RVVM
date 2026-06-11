@@ -10,7 +10,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #ifndef RISCV_HART_H
 #define RISCV_HART_H
 
-#include "rvvm.h"
+#include <core/rvvm.h>
 
 /*
  * Hart context creation, disposal

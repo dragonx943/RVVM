@@ -7,10 +7,12 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#include "riscv-imsic.h"
-#include "riscv_hart.h"
-#include "mem_ops.h"
-#include "bit_ops.h"
+#include <util/mem_ops.h>
+#include <util/bit_ops.h>
+
+#include <cpu/riscv_hart.h>
+
+#include "riscv-imsic.h" // TODO: Remove with rvvm_board
 
 #define IMSIC_REG_SETEIPNUM_LE 0x00
 #define IMSIC_REG_SETEIPNUM_BE 0x04

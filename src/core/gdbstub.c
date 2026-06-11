@@ -7,15 +7,16 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
-#include "gdbstub.h"
-#include "networking.h"
-#include "spinlock.h"
-#include "threading.h"
-#include "utils.h"
-#include "vector.h"
+#include <util/networking.h>
+#include <util/spinlock.h>
+#include <util/threading.h>
+#include <util/utils.h>
+#include <util/vector.h>
 
-#include "riscv_hart.h"
-#include "riscv_mmu.h"
+#include <core/gdbstub.h>
+
+#include <cpu/riscv_hart.h>
+#include <cpu/riscv_mmu.h>
 
 PUSH_OPTIMIZATION_SIZE
 
