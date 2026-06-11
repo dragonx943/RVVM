@@ -133,7 +133,7 @@ override SRC_USE_SDL       := $(SRCDIR)/gui/sdl_window.c
 override SRC_USE_WAYLAND   := $(SRCDIR)/gui/wayland_window.c
 
 override SRC_USE_TAP_LINUX := $(SRCDIR)/devices/tap_linux.c
-override SRC_USE_NET       := $(SRCDIR)/networking.c $(SRCDIR)/devices/tap_user.c
+override SRC_USE_NET       := $(SRCDIR)/util/networking.c $(SRCDIR)/devices/tap_user.c
 override SRC_USE_JIT       := $(SRCDIR)/rvjit/rvjit.c $(SRCDIR)/rvjit/rvjit_emit.c
 override SRC_USE_RV32      := $(SRCDIR)/cpu/riscv32_interpreter.c
 override SRC_USE_RV64      := $(SRCDIR)/cpu/riscv64_interpreter.c
