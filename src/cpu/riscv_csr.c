@@ -103,6 +103,29 @@ static inline bool riscv_csr_helper(rvvm_hart_t* vm, rvvm_uxlen_t* csr, rvvm_uxl
     }
 }
 
+static inline bool riscv_csr_tvec(rvvm_hart_t* vm, rvvm_uxlen_t* csr, rvvm_uxlen_t* dest, uint8_t op)
+{
+    // Apply normal CSR op first (preserves read-old-value behavior)
+    riscv_csr_helper(vm, csr, dest, op);
+
+    // WARL legalization for tvec.MODE:
+    // legal values are 0 (Direct) and 1 (Vectored).
+    // Any write producing mode >= 2 is mapped to a legal value.
+    *csr = bit_replace(*csr, 0, 2, bit_cut(*csr, 0, 2) & 0x1);
+
+    return true;
+}
+
+static inline bool riscv_csr_epc(rvvm_hart_t* vm, rvvm_uxlen_t* csr, rvvm_uxlen_t* dest, uint8_t op)
+{
+    riscv_csr_helper(vm, csr, dest, op);
+
+    // epc[0] is always zero
+    *csr &= ~((rvvm_uxlen_t)1);
+
+    return true;
+}
+
 static inline bool riscv_csr_helper_l(rvvm_hart_t* vm, uint64_t* csr, rvvm_uxlen_t* dest, uint64_t mask, uint8_t op)
 {
     rvvm_uxlen_t tmp = *csr;
@@ -161,8 +184,13 @@ static inline bool riscv_csr_counter_h(rvvm_hart_t* vm, rvvm_uxlen_t* dest, uint
     return false;
 }
 
-static inline bool riscv_csr_seed(rvvm_hart_t* vm, rvvm_uxlen_t* dest)
+static inline bool riscv_csr_seed(rvvm_hart_t* vm, rvvm_uxlen_t* dest, uint8_t op)
 {
+    // Zkr: SEED must be accessed via CSR read-write instruction form
+    if (op != CSR_SWAP) {
+        return false;
+    }
+
     if (riscv_csr_seed_enabled(vm)) {
         uint16_t seed = 0;
         rvvm_randombytes(&seed, sizeof(seed));
@@ -558,7 +586,7 @@ static forceinline bool riscv_csr_op_internal(rvvm_hart_t* vm, uint32_t csr_id, 
 
         // Unprivileged Entropy Source CSR
         case CSR_SEED:
-            return riscv_csr_seed(vm, dest);
+            return riscv_csr_seed(vm, dest, op);
 
         // User Counters / Timers
         case CSR_CYCLE:
@@ -578,7 +606,7 @@ static forceinline bool riscv_csr_op_internal(rvvm_hart_t* vm, uint32_t csr_id, 
         case CSR_SIEH:
             return riscv_csr_zero_h(vm, dest);
         case CSR_STVEC:
-            return riscv_csr_helper(vm, &vm->csr.tvec[RISCV_PRIV_SUPERVISOR], dest, op);
+            return riscv_csr_tvec(vm, &vm->csr.tvec[RISCV_PRIV_SUPERVISOR], dest, op);
         case CSR_SCOUNTEREN:
             return riscv_csr_helper_masked(vm, &vm->csr.counteren[RISCV_PRIV_SUPERVISOR], dest, CSR_COUNTEREN_MASK, op);
 
@@ -600,7 +628,7 @@ static forceinline bool riscv_csr_op_internal(rvvm_hart_t* vm, uint32_t csr_id, 
         case CSR_SSCRATCH:
             return riscv_csr_helper(vm, &vm->csr.scratch[RISCV_PRIV_SUPERVISOR], dest, op);
         case CSR_SEPC:
-            return riscv_csr_helper(vm, &vm->csr.epc[RISCV_PRIV_SUPERVISOR], dest, op);
+            return riscv_csr_epc(vm, &vm->csr.epc[RISCV_PRIV_SUPERVISOR], dest, op);
         case CSR_SCAUSE:
             return riscv_csr_helper(vm, &vm->csr.cause[RISCV_PRIV_SUPERVISOR], dest, op);
         case CSR_STVAL:
@@ -650,7 +678,7 @@ static forceinline bool riscv_csr_op_internal(rvvm_hart_t* vm, uint32_t csr_id, 
         case CSR_MIEH:
             return riscv_csr_zero_h(vm, dest);
         case CSR_MTVEC:
-            return riscv_csr_helper(vm, &vm->csr.tvec[RISCV_PRIV_MACHINE], dest, op);
+            return riscv_csr_tvec(vm, &vm->csr.tvec[RISCV_PRIV_MACHINE], dest, op);
         case CSR_MCOUNTEREN:
             return riscv_csr_helper_masked(vm, &vm->csr.counteren[RISCV_PRIV_MACHINE], dest, CSR_COUNTEREN_MASK, op);
         // TODO: mvien, mvip
@@ -659,7 +687,7 @@ static forceinline bool riscv_csr_op_internal(rvvm_hart_t* vm, uint32_t csr_id, 
         case CSR_MSCRATCH:
             return riscv_csr_helper(vm, &vm->csr.scratch[RISCV_PRIV_MACHINE], dest, op);
         case CSR_MEPC:
-            return riscv_csr_helper(vm, &vm->csr.epc[RISCV_PRIV_MACHINE], dest, op);
+            return riscv_csr_epc(vm, &vm->csr.epc[RISCV_PRIV_MACHINE], dest, op);
         case CSR_MCAUSE:
             return riscv_csr_helper(vm, &vm->csr.cause[RISCV_PRIV_MACHINE], dest, op);
         case CSR_MTVAL:
