@@ -31,8 +31,12 @@ endif
 ifneq (,$(filter haiku,$(OS)))
 USE_HAIKU_GUI ?= 1
 endif
-ifneq (,$(filter darwin serenity,$(OS)))
-# Enable SDL2 on Darwin, Serenity by default
+ifneq (,$(filter darwin,$(OS)))
+# Enable the native Cocoa GUI backend on macOS by default
+USE_COCOA_GUI ?= 1
+endif
+ifneq (,$(filter serenity,$(OS)))
+# Enable SDL2 on Serenity by default
 USE_SDL ?= 2
 endif
 ifneq (,$(filter redox,$(OS)))
@@ -128,6 +132,7 @@ endif
 # Useflag conditional sources
 override SRC_USE_WIN32_GUI := $(SRCDIR)/gui/win32_window.c
 override SRC_USE_HAIKU_GUI := $(SRCDIR)/gui/haiku_window.cpp
+override SRC_USE_COCOA_GUI := $(SRCDIR)/gui/cocoa_window.c
 override SRC_USE_X11       := $(SRCDIR)/gui/x11_window.c
 override SRC_USE_SDL       := $(SRCDIR)/gui/sdl_window.c
 override SRC_USE_WAYLAND   := $(SRCDIR)/gui/wayland_window.c
@@ -149,6 +154,7 @@ override DEPS_USE_SDL       := USE_GUI
 override DEPS_USE_WAYLAND   := USE_GUI
 override DEPS_USE_WIN32_GUI := USE_GUI
 override DEPS_USE_HAIKU_GUI := USE_GUI
+override DEPS_USE_COCOA_GUI := USE_GUI
 override DEPS_USE_ALSA      := USE_SOUND
 override DEPS_USE_GDBSTUB   := USE_NET
 override DEPS_USE_JNI       := USE_LIB USE_NET
