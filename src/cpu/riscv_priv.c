@@ -55,6 +55,8 @@ slow_path void riscv_emulate_opc_system(rvvm_hart_t* vm, const uint32_t insn)
                 vm->csr.status = bit_replace(vm->csr.status, 8, 1, RISCV_PRIV_USER);
                 // Set SIE to SPIE
                 vm->csr.status = bit_replace(vm->csr.status, 1, 1, bit_ext_u32(vm->csr.status, 5, 1));
+                // Set SPIE to 1
+                vm->csr.status = bit_replace(vm->csr.status, 5, 1, 1);
                 // Set PC to csr.sepc, counteract PC increment done by interpreter
                 vm->registers[RISCV_REG_PC] = vm->csr.epc[RISCV_PRIV_SUPERVISOR] - 4;
                 // Set privilege mode to SPP
@@ -74,6 +76,8 @@ slow_path void riscv_emulate_opc_system(rvvm_hart_t* vm, const uint32_t insn)
                 vm->csr.status = bit_replace(vm->csr.status, 11, 2, RISCV_PRIV_USER);
                 // Set MIE to MPIE
                 vm->csr.status = bit_replace(vm->csr.status, 3, 1, bit_ext_u32(vm->csr.status, 7, 1));
+                // Set MPIE to 1
+                vm->csr.status = bit_replace(vm->csr.status, 7, 1, 1);
                 // Set PC to csr.mepc, counteract PC increment done by interpreter
                 vm->registers[RISCV_REG_PC] = vm->csr.epc[RISCV_PRIV_MACHINE] - 4;
                 // Set privilege mode to MPP
