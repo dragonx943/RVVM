@@ -667,6 +667,11 @@ override LDFLAGS_USE_HAIKU_GUI := -lbe
 override LDFLAGS_USE_NET       := -lnetwork
 endif
 
+ifeq ($(OS),darwin)
+# macOS-specific frameworks to link to
+override LDFLAGS_USE_COCOA_GUI := -framework Cocoa
+endif
+
 ifeq ($(OS),sunos)
 # Solaris-specific libraries to link to
 override LDFLAGS_USE_NET := $(call check_cc_flags,-lsocket)
