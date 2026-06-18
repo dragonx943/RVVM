@@ -56,12 +56,13 @@ PUSH_OPTIMIZATION_SIZE
 #define ATA_STATUS_ERR           0x01 // Error occured
 #define ATA_STATUS_DRQ           0x08 // Data ready
 #define ATA_STATUS_SRV           0x10 // Overlapped Service Request
-#define ATA_STATUS_RDY           0x40 // Always set, except after an error
+#define ATA_STATUS_RDY           0x40 // Device ready
 
 // Commands
 #define ATA_CMD_NOP              0x00 // No operation
 #define ATA_CMD_READ_SECTORS     0x20 // Read Sectors (PIO)
 #define ATA_CMD_WRITE_SECTORS    0x30 // Write Sectors (PIO)
+#define ATA_CMD_DEV_DIAGNOSTIC   0x90 // Execute device diagnostic
 #define ATA_CMD_INIT_DEV_PARAMS  0x91 // Set CHS addressing options, CHS not supported!
 #define ATA_CMD_READ_DMA         0xC8 // Prepare to read DMA (Actually just seek)
 #define ATA_CMD_WRITE_DMA        0xCA // Prepare to write DMA (Actually just seek)
@@ -223,6 +224,14 @@ static void ata_perform_pio_rw(ata_dev_t* ata, bool write)
     }
 }
 
+static void ata_device_diagnostic(ata_dev_t* ata)
+{
+    ata->lba       = 0x01;
+    ata->sectcount = 0x01;
+    ata->error     = 0x01;
+    ata->status    = ATA_STATUS_RDY;
+}
+
 static void ata_handle_cmd(ata_dev_t* ata, uint8_t cmd)
 {
     switch (cmd) {
@@ -249,6 +258,9 @@ static void ata_handle_cmd(ata_dev_t* ata, uint8_t cmd)
         case ATA_CMD_IDENTIFY:
             // Report drive information
             ata_cmd_identify(ata);
+            return;
+        case ATA_CMD_DEV_DIAGNOSTIC:
+            ata_device_diagnostic(ata);
             return;
         default:
             // Ignore
