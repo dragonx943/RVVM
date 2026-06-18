@@ -672,15 +672,16 @@ pci_dev_t* ata_pci_init(pci_bus_t* pci_bus, const char* image, bool rw)
     ata_dev_t* ata_secondary = ata_create(NULL, false);
 
     pci_func_desc_t ata_desc = {
-        .vendor_id = 0x1179,  // Toshiba
-        .device_id = 0x0102,  // Extended IDE Controller
-        .class_code = 0x0101, // Mass Storage, IDE
-        .prog_if = 0x85,      // PCI native mode-only controller, supports bus mastering
-        .irq_pin = PCI_IRQ_PIN_INTA,
+        .vendor_id   = 0x1179, // Toshiba
+        .device_id   = 0x0102, // Extended IDE Controller
+        .class_code  = 0x0101, // Mass Storage, IDE
+        .prog_if     = 0x85,   // PCI native mode-only controller, supports bus mastering
+        .irq_pin     = PCI_IRQ_PIN_INTA,
+        .bar_io_mask = 0x1F,   // BAR0 - BAR4 are IO Port BARs
 
         // Primary channel data/ctl BARs
         .bar[0] = {
-            .size = 0x1000,
+            .size = 0x08,
             .min_op_size = 1,
             .max_op_size = 4,
             .read = ata_data_read,
@@ -689,7 +690,7 @@ pci_dev_t* ata_pci_init(pci_bus_t* pci_bus, const char* image, bool rw)
             .type = &ata_data_dev_type,
         },
         .bar[1] = {
-            .size = 0x1000,
+            .size = 0x08,
             .min_op_size = 1,
             .max_op_size = 1,
             .read = ata_pci_ctl_read,
@@ -700,7 +701,7 @@ pci_dev_t* ata_pci_init(pci_bus_t* pci_bus, const char* image, bool rw)
 
         // Dummy secondary channel data/ctl BARs
         .bar[2] = {
-            .size = 0x1000,
+            .size = 0x08,
             .min_op_size = 1,
             .max_op_size = 4,
             .read = ata_data_read,
@@ -709,7 +710,7 @@ pci_dev_t* ata_pci_init(pci_bus_t* pci_bus, const char* image, bool rw)
             .type = &ata_data_dev_type,
         },
         .bar[3] = {
-            .size = 0x1000,
+            .size = 0x08,
             .min_op_size = 1,
             .max_op_size = 1,
             .read = ata_pci_ctl_read,
@@ -720,7 +721,7 @@ pci_dev_t* ata_pci_init(pci_bus_t* pci_bus, const char* image, bool rw)
 
         // ATA BMDMA
         .bar[4] = {
-            .size = 0x1000,
+            .size = 0x10,
             .min_op_size = 1,
             .max_op_size = 4,
             .read = ata_pci_bmdma_read,
