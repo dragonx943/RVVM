@@ -19,7 +19,6 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 /*
  * PCI Configuration Space Registers
  */
-
 #define PCI_REG_DEV_VEN_ID           0x00 // Device, Vendor ID
 #define PCI_REG_STATUS_CMD           0x04 // Status, Command
 #define PCI_REG_CLASS_REV            0x08 // Class, Subclass, Prog IF, revision
@@ -35,7 +34,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define PCI_REG_CAP_PTR              0x34 // Capabilities List Pointer
 #define PCI_REG_IRQ_PIN_LINE         0x3C // Interrupt PIN, Interrupt Line
 
-// Command bits
+/*
+ * Command bits
+ */
 #define PCI_CMD_IO_SPACE             0x0001 // Accessible through IO ports
 #define PCI_CMD_MEM_SPACE            0x0002 // Accessible through MMIO
 #define PCI_CMD_BUS_MASTER           0x0004 // May use DMA
@@ -44,68 +45,86 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define PCI_CMD_DEFAULT              (PCI_CMD_IO_SPACE | PCI_CMD_MEM_SPACE | PCI_CMD_BUS_MASTER)
 #define PCI_CMD_MASK                 (PCI_CMD_IO_SPACE | PCI_CMD_MEM_SPACE | PCI_CMD_BUS_MASTER | PCI_CMD_INTX_DISABLE)
 
-// Status bits
+/*
+ * Status bits
+ */
 #define PCI_STATUS_INTX              0x08 // INTx Interrupt Status
 #define PCI_STATUS_CAP               0x10 // Capabilities List Present
 
-// Header type bits
+/*
+ * Header type bits
+ */
 #define PCI_HEADER_PCI_PCI           0x01 // PCI-PCI Bridge
 #define PCI_HEADER_MULTIFUNC         0x80 // Multi-function device
 
-// BAR bits
+/*
+ * BAR bits
+ */
 #define PCI_BAR_IO_SPACE             0x01
 #define PCI_BAR_64_BIT               0x04
 #define PCI_BAR_PREFETCH             0x08
 
-// Expansion ROM bits
+/*
+ * Expansion ROM bits
+ */
 #define PCI_EXPANSION_ROM_ENABLED    0x01
 
-// PCI capabilities offset
+/*
+ * PCI capabilities offset
+ */
 #define PCI_CAP_LIST_OFF             0x40 // Capabilities List Offset
 
 /*
  * PCI Capability Registers
  */
-
 #define PCI_REG_ENDPOINT             0x40 // Endpoint capability
-
 #define PCI_REG_PMCSR                0x84 // Power Management Control/Status
-
 #define PCI_REG_MSI                  0x90 // MSI capability
 #define PCI_REG_MSI_AL               0x94 // MSI address low
 #define PCI_REG_MSI_AH               0x98 // MSI address high
 #define PCI_REG_MSI_DATA             0x9C // MSI data
 #define PCI_REG_MSI_MASK             0xA0 // MSI mask vector
 #define PCI_REG_MSI_PEND             0xA4 // MSI pending vector
-
 #define PCI_REG_MSIX                 0xB0 // MSI-X capability
 #define PCI_REG_MSIX_TBL             0xB4 // MSI-X table offset/BAR
 #define PCI_REG_MSIX_PBO             0xB8 // MSI-X pending bits offset/BAR
 
-// PCI Express capability port type
+/*
+ * PCI Express capability port types
+ */
 #define PCIE_CAP_PORT_ENDPOINT       0x00
 #define PCIE_CAP_ROOT_PORT           0x04
 #define PCIE_CAP_UPSTREAM_SWITCH     0x05
 #define PCIE_CAP_DOWNSTREAM_SWITCH   0x06
 #define PCIE_CAP_INTEGRATED_ENDPOINT 0x09
 
-// Power management
+/*
+ * Power management
+ */
 #define PCI_PMCSR_PS                 0x03
 
-// MSI-X interrupts
+/*
+ * MSI-X interrupts
+ */
 #define PCI_MSIX_MAX_IRQS            32
 #define PCI_MSIX_TBL_SIZE            (((PCI_MSIX_MAX_IRQS + 1) >> 1) << 3)
 #define PCI_MSIX_PBA_SIZE            ((PCI_MSIX_MAX_IRQS + 0x1F) >> 5)
 #define PCI_MSIX_BAR_SIZE            (PCI_MSIX_TBL_SIZE + PCI_MSIX_PBA_SIZE)
-
 #define PCI_MSIX_ENABLED             0x80000000
 #define PCI_MSIX_MASKED              0x40000000
 #define PCI_MSIX_VALID               0xC0000000
 
-// MSI interrupts
+/*
+ * MSI interrupts
+ */
 #define PCI_MSI_ENABLED              0x00010000 // MSI Enabled
 #define PCI_MSI_DATA                 0x0000FFFF // MSI Data (16-bit)
 #define PCI_MSI_BIT                  0x00000001 // MSI Pending/Masked bit
+
+/*
+ * Implementation constants
+ */
+#define PCI_MAX_NONPREFETCH_BAR      0x08000000U
 
 static const uint32_t pci_express_caps_ro[] = {
     // [40] PCI Express (v2) Endpoint, IntMsgNum 0
@@ -181,9 +200,9 @@ struct rvvm_pci_function {
     uint16_t vendor_id;
     uint16_t device_id;
     uint16_t class_code;
-    uint16_t subsys_vendor_id;   // 0 → use the bus default (CERN/ECP/EDU)
+    uint16_t subsys_vendor_id;
     uint16_t subsys_device_id;
-    uint8_t  bar_io_mask;        // bit N: 1 = BAR N is I/O type, 0 = Memory
+    uint8_t  bar_io_mask; // bit N: 1 = BAR N is I/O type, 0 = Memory
     uint8_t  prog_if;
     uint8_t  rev;
     uint8_t  irq_pin;
@@ -460,7 +479,7 @@ static void pci_free_dev_internal(pci_dev_t* dev, bool remove_mmio)
 static rvvm_addr_t pci_assign_mmio_addr(pci_bus_t* bus, size_t bar_size)
 {
     rvvm_addr_t size = bit_next_pow2(EVAL_MAX(bar_size, 0x1000));
-    if (size >= 0x10000000U) {
+    if (size >= PCI_MAX_NONPREFETCH_BAR) {
         // Assign to prefetchable MMIO64 range
         return rvvm_mmio_zone_auto(bus->machine, 0x4000000000ULL, size);
     } else {
@@ -483,8 +502,7 @@ static rvvm_addr_t pci_assign_io_addr(pci_bus_t* bus, size_t bar_size)
 // memory and I/O port allocation pools.
 static rvvm_mmio_dev_t* pci_attach_bar(pci_bus_t* bus, rvvm_mmio_dev_t bar, bool is_io)
 {
-    bar.addr = is_io ? pci_assign_io_addr(bus, bar.size)
-                     : pci_assign_mmio_addr(bus, bar.size);
+    bar.addr = is_io ? pci_assign_io_addr(bus, bar.size) : pci_assign_mmio_addr(bus, bar.size);
     return rvvm_attach_mmio(bus->machine, &bar);
 }
 
@@ -508,9 +526,14 @@ static pci_func_t* pci_attach_func_internal(pci_bus_t* bus, const pci_func_desc_
     func->command  = PCI_CMD_DEFAULT;
     func->irq_line = pci_func_intx_irq(func);
 
+    if (!func->subsys_vendor_id && !func->subsys_device_id) {
+        func->subsys_vendor_id = 0x10DC;
+        func->subsys_device_id = 0x5100;
+    }
+
     for (size_t bar_id = 0; bar_id < PCI_FUNC_BARS; ++bar_id) {
         if (desc->bar[bar_id].size) {
-            bool is_io = (desc->bar_io_mask >> bar_id) & 1u;
+            bool is_io        = (desc->bar_io_mask >> bar_id) & 1u;
             func->bar[bar_id] = pci_attach_bar(bus, desc->bar[bar_id], is_io);
             if (func->bar[bar_id] == NULL) {
                 // Failed to attach function BAR
@@ -644,15 +667,14 @@ static bool pci_bus_read(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint8
                         // I/O BAR (PCI spec §6.2.5.1): config space exposes
                         // the I/O port number (offset within bus->io_addr
                         // range), with bit 0 set to indicate I/O type.
-                        val = (uint32_t)(bar->addr - func->bus->io_addr)
-                            | PCI_BAR_IO_SPACE;
+                        val = (uint32_t)(bar->addr - func->bus->io_addr) | PCI_BAR_IO_SPACE;
                     } else {
                         val = bar->addr;
                         if (pci_bar_is_64bit(func, bar_id)) {
                             // This BAR supports 64-bit addressing
                             val |= PCI_BAR_64_BIT;
                         }
-                        if (bar->size >= 0x10000000U) {
+                        if (bar->size >= PCI_MAX_NONPREFETCH_BAR) {
                             // This is a prefetchable BAR (GPU VRAM, etc)
                             val |= PCI_BAR_PREFETCH;
                         }
@@ -676,16 +698,7 @@ static bool pci_bus_read(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint8
             break;
         }
         case PCI_REG_SSID_SVID:
-            // Per-device override if set in the descriptor; otherwise
-            // fall back to the bus's CERN/ECP/EDU placeholder so existing
-            // devices that don't care about subsys IDs round-trip the
-            // same value they always have.
-            if (func->subsys_vendor_id || func->subsys_device_id) {
-                val = ((uint32_t)func->subsys_device_id << 16)
-                    | (uint32_t)func->subsys_vendor_id;
-            } else {
-                val = 0x510010DC;
-            }
+            val = ((uint32_t)func->subsys_device_id << 16) | (uint32_t)func->subsys_vendor_id;
             break;
         case PCI_REG_EXPANSION_ROM:
             if (func->expansion_rom) {
@@ -788,7 +801,7 @@ static bool pci_bus_write(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint
                 if (bar) {
                     rvvm_addr_t bar_addr = bar->addr;
                     rvvm_addr_t bar_size = bit_next_pow2(bar->size);
-                    bool is_io = (func->bar_io_mask >> bar_id) & 1u;
+                    bool        is_io    = (func->bar_io_mask >> bar_id) & 1u;
                     if (pci_bar_is_upper_half(func, bar_id)) {
                         // This is an upper half of a 64-bit BAR
                         bar_addr = bit_replace(bar_addr, 32, 32, val);
@@ -798,7 +811,7 @@ static bool pci_bus_write(rvvm_mmio_dev_t* ecam, void* data, size_t offset, uint
                         // offset; the actual MMIO address is offset
                         // from bus->io_addr.
                         rvvm_addr_t io_port = val & ~0x3U;
-                        bar_addr = func->bus->io_addr + io_port;
+                        bar_addr            = func->bus->io_addr + io_port;
                     } else {
                         // Mask lower option bits and align to page
                         bar_addr = bit_replace(bar_addr, 0, 32, val & ~0xFFFU);
