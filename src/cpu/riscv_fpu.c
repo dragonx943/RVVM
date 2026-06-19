@@ -253,7 +253,7 @@ slow_path func_opt_size void riscv_emulate_f_opc_op(rvvm_hart_t* vm, const uint3
                         return;
                     case 0x02: // fcvt.d.l
                         if (likely(vm->rv64)) {
-                            riscv_emit_d(vm, rds, fpu_fcvt_i64_to_f64(riscv_read_reg(vm, rs1)));
+                            riscv_emit_d(vm, rds, fpu_round_i64_to_f64(riscv_read_reg(vm, rs1), rm));
                             return;
                         }
                         break;
