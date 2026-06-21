@@ -126,7 +126,7 @@ RVVM_PUBLIC gui_window_t* gui_rvvm_init(size_t vram_size, const rvvm_fb_t* fb, r
 // Register GUI event callbacks
 static inline void gui_window_register(gui_window_t* win, const gui_event_cb_t* cb)
 {
-    if (win && cb) {
+    if (cb) {
         win->ev_cb = cb;
     }
 }
@@ -134,15 +134,13 @@ static inline void gui_window_register(gui_window_t* win, const gui_event_cb_t* 
 // Set GUI window private data
 static inline void gui_window_set_data(gui_window_t* win, void* data)
 {
-    if (win) {
-        win->data = data;
-    }
+    win->data = data;
 }
 
 // Get GUI window private data
 static inline void* gui_window_get_data(gui_window_t* win)
 {
-    return win ? win->data : NULL;
+    return win->data;
 }
 
 // Get GUI window framebuffer device
@@ -157,17 +155,17 @@ static inline rvvm_fbdev_t* gui_window_get_fbdev(gui_window_t* win)
 
 static inline uint32_t gui_window_width(const gui_window_t* win)
 {
-    return win ? win->width : 0;
+    return win->width;
 }
 
 static inline uint32_t gui_window_height(const gui_window_t* win)
 {
-    return win ? win->height : 0;
+    return win->height;
 }
 
 static inline bool gui_window_set_title(gui_window_t* win, const char* title)
 {
-    if (win && title && win->bknd_cb->set_title) {
+    if (win->bknd_cb->set_title && title) {
         win->bknd_cb->set_title(win, title);
         return true;
     }
@@ -176,7 +174,7 @@ static inline bool gui_window_set_title(gui_window_t* win, const char* title)
 
 static inline bool gui_window_grab_input(gui_window_t* win, bool grab)
 {
-    if (win && win->bknd_cb->grab_input) {
+    if (win->bknd_cb->grab_input) {
         win->bknd_cb->grab_input(win, grab);
         return true;
     }
@@ -185,7 +183,7 @@ static inline bool gui_window_grab_input(gui_window_t* win, bool grab)
 
 static inline bool gui_window_hide_cursor(gui_window_t* win, bool hide)
 {
-    if (win && win->bknd_cb->hide_cursor) {
+    if (win->bknd_cb->hide_cursor) {
         win->bknd_cb->hide_cursor(win, hide);
         return true;
     }
@@ -194,7 +192,7 @@ static inline bool gui_window_hide_cursor(gui_window_t* win, bool hide)
 
 static inline bool gui_window_hide_window(gui_window_t* win, bool hide)
 {
-    if (win && win->bknd_cb->hide_window) {
+    if (win->bknd_cb->hide_window) {
         win->bknd_cb->hide_window(win, hide);
         return true;
     }
@@ -203,7 +201,7 @@ static inline bool gui_window_hide_window(gui_window_t* win, bool hide)
 
 static inline size_t gui_window_get_clipboard(gui_window_t* win, char* buf, size_t size)
 {
-    if (win && buf && size && win->bknd_cb->get_clipboard) {
+    if (win->bknd_cb->get_clipboard && buf && size) {
         buf[0] = 0;
         win->bknd_cb->get_clipboard(win, buf, size);
         return rvvm_strlen(buf);
@@ -213,7 +211,7 @@ static inline size_t gui_window_get_clipboard(gui_window_t* win, char* buf, size
 
 static inline bool gui_window_set_size(gui_window_t* win, uint32_t w, uint32_t h)
 {
-    if (win && win->bknd_cb->set_win_size) {
+    if (win->bknd_cb->set_win_size) {
         win->bknd_cb->set_win_size(win, w, h);
         win->width  = w;
         win->height = h;
@@ -224,7 +222,7 @@ static inline bool gui_window_set_size(gui_window_t* win, uint32_t w, uint32_t h
 
 static inline bool gui_window_set_min_size(gui_window_t* win, uint32_t w, uint32_t h)
 {
-    if (win && win->bknd_cb->set_min_size) {
+    if (win->bknd_cb->set_min_size) {
         win->bknd_cb->set_min_size(win, w, h);
         return true;
     }
@@ -233,7 +231,7 @@ static inline bool gui_window_set_min_size(gui_window_t* win, uint32_t w, uint32
 
 static inline bool gui_window_get_position(gui_window_t* win, int32_t* x, int32_t* y)
 {
-    if (win && win->bknd_cb->get_position && x && y) {
+    if (win->bknd_cb->get_position && x && y) {
         win->bknd_cb->get_position(win, x, y);
         return true;
     }
@@ -242,7 +240,7 @@ static inline bool gui_window_get_position(gui_window_t* win, int32_t* x, int32_
 
 static inline bool gui_window_set_position(gui_window_t* win, uint32_t x, uint32_t y)
 {
-    if (win && win->bknd_cb->set_position) {
+    if (win->bknd_cb->set_position) {
         win->bknd_cb->set_position(win, x, y);
         return true;
     }
@@ -251,7 +249,7 @@ static inline bool gui_window_set_position(gui_window_t* win, uint32_t x, uint32
 
 static inline bool gui_window_get_scr_size(gui_window_t* win, uint32_t* w, uint32_t* h)
 {
-    if (win && win->bknd_cb->get_scr_size && w && h) {
+    if (win->bknd_cb->get_scr_size && w && h) {
         win->bknd_cb->get_scr_size(win, w, h);
         return true;
     }
@@ -260,7 +258,7 @@ static inline bool gui_window_get_scr_size(gui_window_t* win, uint32_t* w, uint3
 
 static inline bool gui_window_set_fullscreen(gui_window_t* win, bool fullscreen)
 {
-    if (win && win->bknd_cb->set_fullscreen) {
+    if (win->bknd_cb->set_fullscreen) {
         win->bknd_cb->set_fullscreen(win, fullscreen);
         return true;
     }
@@ -274,7 +272,7 @@ static inline bool gui_window_set_fullscreen(gui_window_t* win, bool fullscreen)
 // Register GUI backend callbacks
 static inline void gui_backend_register(gui_window_t* win, const gui_backend_cb_t* cb)
 {
-    if (win && cb) {
+    if (cb) {
         win->bknd_cb = cb;
     }
 }
@@ -282,23 +280,19 @@ static inline void gui_backend_register(gui_window_t* win, const gui_backend_cb_
 // Set GUI backend private data
 static inline void gui_backend_set_data(gui_window_t* win, void* data)
 {
-    if (win) {
-        win->bknd_data = data;
-    }
+    win->bknd_data = data;
 }
 
 // Get GUI backend private data
 static inline void* gui_backend_get_data(gui_window_t* win)
 {
-    return win ? win->bknd_data : NULL;
+    return win->bknd_data;
 }
 
 // Set VRAM buffer (XShm / wl_shm), GUI API user must place scanout inside VRAM
 static inline void gui_backend_set_vram(gui_window_t* win, void* vram, size_t vram_size)
 {
-    if (win) {
-        rvvm_fbdev_set_vram(win->fbdev, vram, vram_size);
-    }
+    rvvm_fbdev_set_vram(win->fbdev, vram, vram_size);
 }
 
 // Get VRAM buffer
@@ -317,87 +311,85 @@ static inline size_t gui_backend_get_vram_size(gui_window_t* win)
 
 static inline void gui_backend_on_close(gui_window_t* win)
 {
-    if (win && win->ev_cb->on_close) {
+    if (win->ev_cb->on_close) {
         win->ev_cb->on_close(win);
     }
 }
 
 static inline void gui_backend_on_focus_lost(gui_window_t* win)
 {
-    if (win && win->ev_cb->on_focus_lost) {
+    if (win->ev_cb->on_focus_lost) {
         win->ev_cb->on_focus_lost(win);
     }
 }
 
 static inline void gui_backend_on_resize(gui_window_t* win, uint32_t w, uint32_t h)
 {
-    if (win) {
-        if (w != win->width || h != win->height) {
-            rvvm_fb_t fb = ZERO_INIT;
-            // Soft dirty the framebuffer
-            rvvm_fbdev_get_scanout(win->fbdev, &fb);
-            rvvm_fbdev_set_scanout(win->fbdev, &fb);
-            if (win->ev_cb->on_resize) {
-                win->ev_cb->on_resize(win, w, h);
-            }
-            win->width  = w;
-            win->height = h;
+    if (w != win->width || h != win->height) {
+        rvvm_fb_t fb = ZERO_INIT;
+        // Soft dirty the framebuffer
+        rvvm_fbdev_get_scanout(win->fbdev, &fb);
+        rvvm_fbdev_set_scanout(win->fbdev, &fb);
+        if (win->ev_cb->on_resize) {
+            win->ev_cb->on_resize(win, w, h);
         }
+        win->width  = w;
+        win->height = h;
     }
 }
 
 static inline void gui_backend_on_input(gui_window_t* win, const char* text)
 {
-    if (win && text && win->ev_cb->on_input) {
+    if (win->ev_cb->on_input && text) {
         win->ev_cb->on_input(win, text);
     }
 }
 
 static inline void gui_backend_on_key_press(gui_window_t* win, hid_key_t key)
 {
-    if (win && win->ev_cb->on_key_press && key) {
+    if (win->ev_cb->on_key_press && key) {
         win->ev_cb->on_key_press(win, key);
     }
 }
 
 static inline void gui_backend_on_key_release(gui_window_t* win, hid_key_t key)
 {
-    if (win && win->ev_cb->on_key_release && key) {
+    if (win->ev_cb->on_key_release && key) {
         win->ev_cb->on_key_release(win, key);
     }
 }
 
 static inline void gui_backend_on_mouse_press(gui_window_t* win, hid_btns_t btns)
 {
-    if (win && win->ev_cb->on_mouse_press && btns) {
+    if (win->ev_cb->on_mouse_press && btns) {
         win->ev_cb->on_mouse_press(win, btns);
     }
 }
 
 static inline void gui_backend_on_mouse_release(gui_window_t* win, hid_btns_t btns)
 {
-    if (win && win->ev_cb->on_mouse_release && btns) {
+    if (win->ev_cb->on_mouse_release && btns) {
         win->ev_cb->on_mouse_release(win, btns);
     }
 }
 
 static inline void gui_backend_on_mouse_place(gui_window_t* win, int32_t x, int32_t y)
 {
-    if (win && win->ev_cb->on_mouse_place) {
+    if (win->ev_cb->on_mouse_place) {
         win->ev_cb->on_mouse_place(win, x, y);
     }
 }
 
 static inline void gui_backend_on_mouse_move(gui_window_t* win, int32_t x, int32_t y)
 {
-    if (win && win->ev_cb->on_mouse_move && (x || y)) {
+    if (win->ev_cb->on_mouse_move && (x || y)) {
         win->ev_cb->on_mouse_move(win, x, y);
     }
 }
 
 static inline void gui_backend_on_mouse_scroll(gui_window_t* win, int32_t offset)
 {
-    if (win && win->ev_cb->on_mouse_scroll && offset) {
+    if (win->ev_cb->on_mouse_scroll && offset) {
         win->ev_cb->on_mouse_scroll(win, offset);
     }
 }
