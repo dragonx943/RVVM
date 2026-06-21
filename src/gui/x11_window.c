@@ -418,11 +418,12 @@ static gui_window_t* x11_find_window(Window window)
     vector_foreach (x11_windows, i) {
         gui_window_t* win = vector_at(x11_windows, i);
         x11_window_t* x11 = gui_backend_get_data(win);
-        if (x11 && x11->window == window) {
+        if (x11->window == window) {
             return win;
         }
     }
-    return NULL;
+    // Fallback to first created window
+    return vector_at(x11_windows, 0);
 }
 
 // Must be called under x11_lock
@@ -560,12 +561,10 @@ static void x11_handle_event(const XEvent* ev, size_t pending)
             break;
         case ConfigureNotify: {
             x11_window_t* x11 = gui_backend_get_data(win);
-            if (x11) {
-                x11->width  = ev->xconfigure.width;
-                x11->height = ev->xconfigure.height;
-                x11->pos_x  = ev->xconfigure.x;
-                x11->pos_y  = ev->xconfigure.y;
-            }
+            x11->width        = ev->xconfigure.width;
+            x11->height       = ev->xconfigure.height;
+            x11->pos_x        = ev->xconfigure.x;
+            x11->pos_y        = ev->xconfigure.y;
             spin_unlock(&x11_lock);
             gui_backend_on_resize(win, ev->xconfigure.width, ev->xconfigure.height);
             break;
@@ -1038,22 +1037,19 @@ static bool x11_window_init_internal(gui_window_t* win)
 
 static void x11_window_free(gui_window_t* win)
 {
-    if (gui_backend_get_data(win)) {
-        scoped_spin_lock (&x11_lock) {
-            if (!x11_catch_error()) {
-                x11_window_free_internal(win);
-            }
-            x11_window_t* x11 = gui_backend_get_data(win);
-            if (x11->gc) {
-                // Display is dead, just free the GC structure
-                XFree(x11->gc);
-            }
-            x11_vram_free(win);
-            safe_free(x11);
-            x11_global_free();
+    scoped_spin_lock (&x11_lock) {
+        if (!x11_catch_error()) {
+            x11_window_free_internal(win);
         }
+        x11_window_t* x11 = gui_backend_get_data(win);
+        if (x11->gc) {
+            // Display is dead, just free the GC structure
+            XFree(x11->gc);
+        }
+        x11_vram_free(win);
+        safe_free(x11);
+        x11_global_free();
     }
-    gui_backend_set_data(win, NULL);
 }
 
 static void x11_window_draw(gui_window_t* win, const rvvm_fb_t* fb, uint32_t x, uint32_t y)
