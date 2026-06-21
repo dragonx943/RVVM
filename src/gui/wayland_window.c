@@ -501,7 +501,7 @@ static void wl_pointer_on_motion(void* data, struct wl_pointer* pointer, //
     if (ptr_data && ptr_data->surface) {
         gui_window_t* win = wl_surface_get_user_data(ptr_data->surface);
         wl_window_t*  wl  = gui_backend_get_data(win);
-        if (wl && !wl->ptr_lock) {
+        if (!wl->ptr_lock) {
             gui_backend_on_mouse_place(win, wl_fixed_to_int(x), wl_fixed_to_int(y));
         }
     }
@@ -588,7 +588,7 @@ static void relative_pointer_on_relative_motion(void* data, struct zwp_relative_
     if (ptr_data && ptr_data->surface) {
         gui_window_t* win = wl_surface_get_user_data(ptr_data->surface);
         wl_window_t*  wl  = gui_backend_get_data(win);
-        if (wl && wl->ptr_lock) {
+        if (wl->ptr_lock) {
             gui_backend_on_mouse_move(win, wl_fixed_to_int(dx_unaccel), wl_fixed_to_int(dy_unaccel));
         }
     }
@@ -918,7 +918,11 @@ static void wayland_global_free(void)
 {
     // Shut down the event thread
     if (wl_display && wl_thread) {
-        wl_display_roundtrip(wl_display);
+        struct wl_callback* sync = wl_display_sync(wl_display);
+        wl_display_flush(wl_display);
+        if (sync) {
+            wl_callback_destroy(sync);
+        }
         thread_join(wl_thread);
         wl_thread = NULL;
     }
@@ -995,45 +999,38 @@ static void wayland_global_free(void)
 
 static void wayland_window_free(gui_window_t* win)
 {
-    wl_window_t* wl = gui_backend_get_data(win);
-    gui_backend_set_data(win, NULL);
-    if (wl) {
-        bool last = atomic_sub_uint32(&wl_windows, 1) == 1;
-        // Synchronize with display and possibly halt event thread
-        if (wl_display) {
-            wl_display_roundtrip(wl_display);
-        }
-        // Destroy frame buffer
-        if (wl->buffer) {
-            wl_buffer_destroy(wl->buffer);
-        }
-        // Destroy shared memory pool
-        if (wl->shm_pool) {
-            wl_shm_pool_destroy(wl->shm_pool);
-        }
-        // Unmap VRAM region
-        if (gui_backend_get_vram(win)) {
-            munmap(gui_backend_get_vram(win), gui_backend_get_vram_size(win));
-        }
-        // Clean up Wayland objects
-        if (wl->xdg_decoration) {
-            zxdg_toplevel_decoration_v1_destroy(wl->xdg_decoration);
-        }
-        if (wl->xdg_toplevel) {
-            xdg_toplevel_destroy(wl->xdg_toplevel);
-        }
-        if (wl->xdg_surface) {
-            xdg_surface_destroy(wl->xdg_surface);
-        }
-        if (wl->surface) {
-            wl_surface_destroy(wl->surface);
-        }
-        // If this was a last window, perform global deinit
-        if (last) {
-            wayland_global_free();
-        }
-        safe_free(wl);
+    wl_window_t* wl   = gui_backend_get_data(win);
+    bool         last = atomic_sub_uint32(&wl_windows, 1) == 1;
+    // Destroy frame buffer
+    if (wl->buffer) {
+        wl_buffer_destroy(wl->buffer);
     }
+    // Destroy shared memory pool
+    if (wl->shm_pool) {
+        wl_shm_pool_destroy(wl->shm_pool);
+    }
+    // Unmap VRAM region
+    if (gui_backend_get_vram(win)) {
+        munmap(gui_backend_get_vram(win), gui_backend_get_vram_size(win));
+    }
+    // Clean up Wayland objects
+    if (wl->xdg_decoration) {
+        zxdg_toplevel_decoration_v1_destroy(wl->xdg_decoration);
+    }
+    if (wl->xdg_toplevel) {
+        xdg_toplevel_destroy(wl->xdg_toplevel);
+    }
+    if (wl->xdg_surface) {
+        xdg_surface_destroy(wl->xdg_surface);
+    }
+    if (wl->surface) {
+        wl_surface_destroy(wl->surface);
+    }
+    // If this was a last window, perform global deinit
+    if (last) {
+        wayland_global_free();
+    }
+    safe_free(wl);
 }
 
 static int32_t wayland_window_format(const rvvm_fb_t* fb)
