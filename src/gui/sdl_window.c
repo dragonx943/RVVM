@@ -515,7 +515,8 @@ static gui_window_t* sdl_find_window(uint32_t window_id)
             return win;
         }
     }
-    return NULL;
+    // Fallback to first created window
+    return vector_at(sdl_windows, 0);
 }
 
 static void sdl_handle_keyboard(const SDL_Event* event, bool press)
@@ -545,7 +546,7 @@ static void sdl_handle_mouse_moution(const SDL_Event* event)
     gui_window_t* win = sdl_find_window(0);
 #endif
     sdl_window_t* sdl = gui_backend_get_data(win);
-    if (sdl && sdl->grab) {
+    if (sdl->grab) {
         gui_backend_on_mouse_move(win, (int)event->motion.xrel, (int)event->motion.yrel);
     } else {
         gui_backend_on_mouse_place(win, (int)event->motion.x, (int)event->motion.y);
@@ -705,8 +706,7 @@ static void* sdl_create_texture(sdl_window_t* sdl, const rvvm_fb_t* fb)
 static void sdl_window_free(gui_window_t* win)
 {
     sdl_window_t* sdl = gui_backend_get_data(win);
-    gui_backend_set_data(win, NULL);
-    if (sdl_thread_ok && sdl) {
+    if (sdl_thread_ok) {
         // Remove from window list
         vector_foreach_back (sdl_windows, i) {
             if (vector_at(sdl_windows, i) == win) {
