@@ -879,8 +879,6 @@ endif
 # Enable -flto-incremental on GCC 15.0+
 # Enable -fno-plt -fno-semantic-interposition on GCC 6.0+
 # Enable -fvisibility=hidden -Bsymbolic on GCC/Clang 4.0+
-#
-# Enable -fanalyzer on USE_ANALYZER on GCC 10.1+
 override OPTIMIZE_OPTS := $(strip $(OPTIMIZE_OPTS) \
 $(if $(filter i386,$(ARCH)), \
   $(if $(call gnuc_min_ver,3.0),$(if $(filter -march% -msse% -mfpmath%,$(CFLAGS)),,-march=i586))) \
@@ -892,9 +890,7 @@ $(if $(LTO_SUPPORTED), \
 $(if $(filter-out windows amigaos,$(OS)), \
   $(if $(call gcc_min_ver,15.0),-flto-incremental=$(OBJDIR)) \
   $(if $(call gcc_min_ver,6.0),-fno-plt -fno-semantic-interposition) \
-  $(if $(call gnuc_min_ver,4.0),-fvisibility=hidden -Bsymbolic)) \
-$(if $(call var_use,USE_ANALYZER), \
-  $(if $(call gcc_min_ver,10.1),-fanalyzer)))
+  $(if $(call gnuc_min_ver,4.0),-fvisibility=hidden -Bsymbolic)))
 
 # Set compiler-specific mandatory optimization options appended after user CFLAGS
 # Override -Ofast into -O3 if detected
@@ -1007,26 +1003,34 @@ $(call path_shell,$(CC_TRIGGER) $(LD_TRIGGER)):
 # C object files (.c)
 $(call path_shell,$(OBJDIR)/%.o: %.c Makefile project.mk $(CC_TRIGGER))
 	$(call println,$(TEXT)[$(YELLOW)CC$(TEXT)] $< $(RESET))
+	@$(if $(call var_use,USE_ANALYZER),\
+		$(if $(call clang_min_ver,9.0),$(call shell_esc,$(CC) $(CPPFLAGS) $(CFLAGS) --analyze $(call path_wrap,$<)))\
+		$(if $(call gcc_min_ver,10.1),$(call shell_esc,$(CC) $(CPPFLAGS) $(CFLAGS) -fno-lto -fanalyzer -o $(HOST_NULL) -c $(call path_wrap,$<))))
 	@$(foreach out,$(call path_wrap,$@),$(call shell_esc,$(CC) $(CC_STD) $(CPPFLAGS) $(CFLAGS) $(if $(CC_IS_GNU),-MMD -MF $(patsubst %.o,%.d,$(out))) -o $(out) -c $(call path_wrap,$<)))
-	@$(if $(call var_use,USE_ANALYZER),$(if $(call clang_min_ver,9.0),$(call shell_esc,$(CC) $(CPPFLAGS) $(CFLAGS) --analyze $(call path_wrap,$<))))
 
 
 
 # C++ object files (.cpp / .cxx / .cc)
 $(call path_shell,$(OBJDIR)/%.o: %.cpp Makefile project.mk $(CC_TRIGGER))
 	$(call println,$(TEXT)[$(YELLOW)CC$(TEXT)] $< $(RESET))
+	@$(if $(call var_use,USE_ANALYZER),\
+		$(if $(call clang_min_ver,9.0),$(call shell_esc,$(CXX) $(CPPFLAGS) $(CFLAGS) --analyze $(call path_wrap,$<)))\
+		$(if $(call gcc_min_ver,10.1),$(call shell_esc,$(CXX) $(CPPFLAGS) $(CFLAGS) -fno-lto -fanalyzer -o $(HOST_NULL) -c $(call path_wrap,$<))))
 	@$(foreach out,$(call path_wrap,$@),$(call shell_esc,$(CXX) $(CXX_STD) $(CPPFLAGS) $(CFLAGS) $(if $(CC_IS_GNU),-MMD -MF $(patsubst %.o,%.d,$(out))) -o $(out) -c $(call path_wrap,$<)))
-	@$(if $(call var_use,USE_ANALYZER),$(if $(call clang_min_ver,9.0),$(call shell_esc,$(CC) $(CPPFLAGS) $(CFLAGS) --analyze $(call path_wrap,$<))))
 
 $(call path_shell,$(OBJDIR)/%.o: %.cxx Makefile project.mk $(CC_TRIGGER))
 	$(call println,$(TEXT)[$(YELLOW)CC$(TEXT)] $< $(RESET))
+	@$(if $(call var_use,USE_ANALYZER),\
+		$(if $(call clang_min_ver,9.0),$(call shell_esc,$(CXX) $(CPPFLAGS) $(CFLAGS) --analyze $(call path_wrap,$<)))\
+		$(if $(call gcc_min_ver,10.1),$(call shell_esc,$(CXX) $(CPPFLAGS) $(CFLAGS) -fno-lto -fanalyzer -o $(HOST_NULL) -c $(call path_wrap,$<))))
 	@$(foreach out,$(call path_wrap,$@),$(call shell_esc,$(CXX) $(CXX_STD) $(CPPFLAGS) $(CFLAGS) $(if $(CC_IS_GNU),-MMD -MF $(patsubst %.o,%.d,$(out))) -o $(out) -c $(call path_wrap,$<)))
-	@$(if $(call var_use,USE_ANALYZER),$(if $(call clang_min_ver,9.0),$(call shell_esc,$(CC) $(CPPFLAGS) $(CFLAGS) --analyze $(call path_wrap,$<))))
 
 $(call path_shell,$(OBJDIR)/%.o: %.cc Makefile project.mk $(CC_TRIGGER))
 	$(call println,$(TEXT)[$(YELLOW)CC$(TEXT)] $< $(RESET))
+	@$(if $(call var_use,USE_ANALYZER),\
+		$(if $(call clang_min_ver,9.0),$(call shell_esc,$(CXX) $(CPPFLAGS) $(CFLAGS) --analyze $(call path_wrap,$<)))\
+		$(if $(call gcc_min_ver,10.1),$(call shell_esc,$(CXX) $(CPPFLAGS) $(CFLAGS) -fno-lto -fanalyzer -o $(HOST_NULL) -c $(call path_wrap,$<))))
 	@$(foreach out,$(call path_wrap,$@),$(call shell_esc,$(CXX) $(CXX_STD) $(CPPFLAGS) $(CFLAGS) $(if $(CC_IS_GNU),-MMD -MF $(patsubst %.o,%.d,$(out))) -o $(out) -c $(call path_wrap,$<)))
-	@$(if $(call var_use,USE_ANALYZER),$(if $(call clang_min_ver,9.0),$(call shell_esc,$(CC) $(CPPFLAGS) $(CFLAGS) --analyze $(call path_wrap,$<))))
 
 
 
