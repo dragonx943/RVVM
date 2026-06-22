@@ -308,6 +308,9 @@ fpu_f64_t fpu_sqrt64_soft_internal(fpu_f64_t d);
 #define FPU_LIB_FP64_CANONICAL_NAN 0x7FF8000000000000ULL
 #endif
 
+#define FPU_LIB_FP32_NEGATIVE_ZERO 0x80000000U
+#define FPU_LIB_FP64_NEGATIVE_ZERO 0x8000000000000000ULL
+
 static forceinline uint16_t fpu_bit_f16_to_u16(fpu_f16_t f)
 {
 #if defined(USE_SOFT_FPU_ENCAP)
@@ -1071,12 +1074,12 @@ static forceinline fpu_f32_t fpu_sqrt32(fpu_f32_t f)
 #endif
         return ret;
     }
-    if (fpu_is_negative32(f)) {
-        // Raise invalid flag, return canonical NaN
+    if (fpu_is_negative32(f) && fpu_bit_f32_to_u32(f) != FPU_LIB_FP32_NEGATIVE_ZERO) {
+        // Negative non-zero: raise invalid, return canonical NaN
         fpu_raise_invalid();
         return fpu_bit_u32_to_f32(FPU_LIB_FP32_CANONICAL_NAN);
     }
-    // Perform NaN propagation
+    // NaN propagation, and sqrt(-0.0) == -0.0 (no exception)
     return f;
 }
 
@@ -1093,12 +1096,12 @@ static forceinline fpu_f64_t fpu_sqrt64(fpu_f64_t d)
 #endif
         return ret;
     }
-    if (fpu_is_negative64(d)) {
-        // Raise invalid flag, return canonical NaN
+    if (fpu_is_negative64(d) && fpu_bit_f64_to_u64(d) != FPU_LIB_FP64_NEGATIVE_ZERO) {
+        // Negative non-zero: raise invalid, return canonical NaN
         fpu_raise_invalid();
         return fpu_bit_u64_to_f64(FPU_LIB_FP64_CANONICAL_NAN);
     }
-    // Perform NaN propagation
+    // NaN propagation, and sqrt(-0.0) == -0.0 (no exception)
     return d;
 }
 
