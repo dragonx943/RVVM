@@ -93,7 +93,7 @@ static void riscv_prepare_rmm(rvvm_hart_t* vm, const uint32_t insn, const size_t
     }
 }
 
-slow_path func_opt_size void riscv_emulate_f_opc_op(rvvm_hart_t* vm, const uint32_t insn)
+slow_path void riscv_emulate_f_opc_op(rvvm_hart_t* vm, const uint32_t insn)
 {
     const size_t   rds = bit_ext_u32(insn, 7, 5);
     const uint32_t rm  = bit_ext_u32(insn, 12, 3);
@@ -112,32 +112,32 @@ slow_path func_opt_size void riscv_emulate_f_opc_op(rvvm_hart_t* vm, const uint3
              * FPU computations
              */
             case RISCV_FPU_GEN_RM_CASES(0x00000000UL): // fadd.s
-                riscv_emit_s(vm, rds, fpu_add32(riscv_view_s(vm, rs1), riscv_view_s(vm, rs2)));
+                riscv_emit_s(vm, rds, fpu_add32(riscv_read_s(vm, rs1), riscv_read_s(vm, rs2)));
                 return;
             case RISCV_FPU_GEN_RM_CASES(0x02000000UL): // fadd.d
                 riscv_emit_d(vm, rds, fpu_add64(riscv_view_d(vm, rs1), riscv_view_d(vm, rs2)));
                 return;
             case RISCV_FPU_GEN_RM_CASES(0x08000000UL): // fsub.s
-                riscv_write_s(vm, rds, fpu_sub32(riscv_view_s(vm, rs1), riscv_view_s(vm, rs2)));
+                riscv_write_s(vm, rds, fpu_sub32(riscv_read_s(vm, rs1), riscv_read_s(vm, rs2)));
                 return;
             case RISCV_FPU_GEN_RM_CASES(0x0A000000UL): // fsub.d
                 riscv_write_d(vm, rds, fpu_sub64(riscv_view_d(vm, rs1), riscv_view_d(vm, rs2)));
                 return;
             case RISCV_FPU_GEN_RM_CASES(0x10000000UL): // fmul.s
-                riscv_emit_s(vm, rds, fpu_mul32(riscv_view_s(vm, rs1), riscv_view_s(vm, rs2)));
+                riscv_emit_s(vm, rds, fpu_mul32(riscv_read_s(vm, rs1), riscv_read_s(vm, rs2)));
                 return;
             case RISCV_FPU_GEN_RM_CASES(0x12000000UL): // fmul.d
                 riscv_emit_d(vm, rds, fpu_mul64(riscv_view_d(vm, rs1), riscv_view_d(vm, rs2)));
                 return;
             case RISCV_FPU_GEN_RM_CASES(0x18000000UL): // fdiv.s
-                riscv_emit_s(vm, rds, fpu_div32(riscv_view_s(vm, rs1), riscv_view_s(vm, rs2)));
+                riscv_emit_s(vm, rds, fpu_div32(riscv_read_s(vm, rs1), riscv_read_s(vm, rs2)));
                 return;
             case RISCV_FPU_GEN_RM_CASES(0x1A000000UL): // fdiv.d
                 riscv_emit_d(vm, rds, fpu_div64(riscv_view_d(vm, rs1), riscv_view_d(vm, rs2)));
                 return;
             case RISCV_FPU_GEN_RM_CASES(0x58000000UL): // fsqrt.s
                 if (likely(!rs2)) {
-                    riscv_emit_s(vm, rds, fpu_sqrt32(riscv_view_s(vm, rs1)));
+                    riscv_emit_s(vm, rds, fpu_sqrt32(riscv_read_s(vm, rs1)));
                     return;
                 }
                 break;
@@ -157,14 +157,14 @@ slow_path func_opt_size void riscv_emulate_f_opc_op(rvvm_hart_t* vm, const uint3
                         return;
                     case 0x04: // fround.s (Zfa)
                     case 0x05: // TODO: froundx.s (Zfa)
-                        riscv_emit_s(vm, rds, fpu_fcvt_i64_to_f32(fpu_round_f32_to_i64(riscv_view_s(vm, rs1), rm)));
+                        riscv_emit_s(vm, rds, fpu_fcvt_i64_to_f32(fpu_round_f32_to_i64(riscv_read_s(vm, rs1), rm)));
                         return;
                 }
                 break;
             case RISCV_FPU_GEN_RM_CASES(0x42000000UL):
                 switch (rs2) {
                     case 0x00: // fcvt.d.s
-                        riscv_write_d(vm, rds, fpu_fcvt_f32_to_f64(riscv_view_s(vm, rs1)));
+                        riscv_write_d(vm, rds, fpu_fcvt_f32_to_f64(riscv_read_s(vm, rs1)));
                         return;
                     case 0x04: // fround.s (Zfa)
                     case 0x05: // TODO: froundx.s (Zfa)
@@ -175,20 +175,20 @@ slow_path func_opt_size void riscv_emulate_f_opc_op(rvvm_hart_t* vm, const uint3
             case RISCV_FPU_GEN_RM_CASES(0xC0000000UL):
                 switch (rs2) {
                     case 0x00: // fcvt.w.s
-                        riscv_write_reg(vm, rds, (int32_t)fpu_round_f32_to_i32(riscv_view_s(vm, rs1), rm));
+                        riscv_write_reg(vm, rds, (int32_t)fpu_round_f32_to_i32(riscv_read_s(vm, rs1), rm));
                         return;
                     case 0x01: // fcvt.wu.s
-                        riscv_write_reg(vm, rds, (int32_t)fpu_round_f32_to_u32(riscv_view_s(vm, rs1), rm));
+                        riscv_write_reg(vm, rds, (int32_t)fpu_round_f32_to_u32(riscv_read_s(vm, rs1), rm));
                         return;
                     case 0x02: // fcvt.l.s
                         if (likely(vm->rv64)) {
-                            riscv_write_reg(vm, rds, (int64_t)fpu_round_f32_to_i64(riscv_view_s(vm, rs1), rm));
+                            riscv_write_reg(vm, rds, (int64_t)fpu_round_f32_to_i64(riscv_read_s(vm, rs1), rm));
                             return;
                         }
                         break;
                     case 0x03: // fcvt.lu.s
                         if (likely(vm->rv64)) {
-                            riscv_write_reg(vm, rds, (int64_t)fpu_round_f32_to_u64(riscv_view_s(vm, rs1), rm));
+                            riscv_write_reg(vm, rds, (int64_t)fpu_round_f32_to_u64(riscv_read_s(vm, rs1), rm));
                             return;
                         }
                         break;
@@ -272,10 +272,10 @@ slow_path func_opt_size void riscv_emulate_f_opc_op(rvvm_hart_t* vm, const uint3
                 riscv_emit_s(vm, rds, fpu_fsgnj32(riscv_read_s(vm, rs1), riscv_read_s(vm, rs2)));
                 return;
             case 0x20001000UL: // fsgnjn.s
-                riscv_emit_s(vm, rds, fpu_fsgnjn32(riscv_view_s(vm, rs1), riscv_view_s(vm, rs2)));
+                riscv_emit_s(vm, rds, fpu_fsgnjn32(riscv_read_s(vm, rs1), riscv_read_s(vm, rs2)));
                 return;
             case 0x20002000UL: // fsgnjx.s
-                riscv_emit_s(vm, rds, fpu_fsgnjx32(riscv_view_s(vm, rs1), riscv_view_s(vm, rs2)));
+                riscv_emit_s(vm, rds, fpu_fsgnjx32(riscv_read_s(vm, rs1), riscv_read_s(vm, rs2)));
                 return;
             case 0x22000000UL: // fsgnj.d
                 riscv_emit_d(vm, rds, fpu_fsgnj64(riscv_read_d(vm, rs1), riscv_read_d(vm, rs2)));
@@ -290,16 +290,16 @@ slow_path func_opt_size void riscv_emulate_f_opc_op(rvvm_hart_t* vm, const uint3
              * FPU comparisons
              */
             case 0x28000000UL: // fmin.s
-                riscv_emit_s(vm, rds, fpu_min32(riscv_view_s(vm, rs1), riscv_view_s(vm, rs2)));
+                riscv_emit_s(vm, rds, fpu_min32(riscv_read_s(vm, rs1), riscv_read_s(vm, rs2)));
                 return;
             case 0x28001000UL: // fmax.s
-                riscv_emit_s(vm, rds, fpu_max32(riscv_view_s(vm, rs1), riscv_view_s(vm, rs2)));
+                riscv_emit_s(vm, rds, fpu_max32(riscv_read_s(vm, rs1), riscv_read_s(vm, rs2)));
                 return;
             case 0x28002000UL: // fminm.s (Zfa)
-                riscv_write_s(vm, rds, fpu_min32(riscv_view_s(vm, rs1), riscv_view_s(vm, rs2)));
+                riscv_write_s(vm, rds, fpu_min32(riscv_read_s(vm, rs1), riscv_read_s(vm, rs2)));
                 return;
             case 0x28003000UL: // fmaxm.s (Zfa)
-                riscv_write_s(vm, rds, fpu_max32(riscv_view_s(vm, rs1), riscv_view_s(vm, rs2)));
+                riscv_write_s(vm, rds, fpu_max32(riscv_read_s(vm, rs1), riscv_read_s(vm, rs2)));
                 return;
             case 0x2A000000UL: // fmin.d
                 riscv_emit_d(vm, rds, fpu_min64(riscv_view_d(vm, rs1), riscv_view_d(vm, rs2)));
@@ -314,19 +314,19 @@ slow_path func_opt_size void riscv_emulate_f_opc_op(rvvm_hart_t* vm, const uint3
                 riscv_write_d(vm, rds, fpu_max64(riscv_view_d(vm, rs1), riscv_view_d(vm, rs2)));
                 return;
             case 0xA0000000UL: // fle.s
-                riscv_write_reg(vm, rds, fpu_is_fle32_sig(riscv_view_s(vm, rs1), riscv_view_s(vm, rs2)));
+                riscv_write_reg(vm, rds, fpu_is_fle32_sig(riscv_read_s(vm, rs1), riscv_read_s(vm, rs2)));
                 return;
             case 0xA0001000UL: // flt.s
-                riscv_write_reg(vm, rds, fpu_is_flt32_sig(riscv_view_s(vm, rs1), riscv_view_s(vm, rs2)));
+                riscv_write_reg(vm, rds, fpu_is_flt32_sig(riscv_read_s(vm, rs1), riscv_read_s(vm, rs2)));
                 return;
             case 0xA0002000UL: // feq.s
-                riscv_write_reg(vm, rds, fpu_is_equal32_quiet(riscv_read_s(vm, rs1), riscv_view_s(vm, rs2)));
+                riscv_write_reg(vm, rds, fpu_is_equal32_quiet(riscv_read_s(vm, rs1), riscv_read_s(vm, rs2)));
                 return;
             case 0xA0004000UL: // fleq.s (Zfa)
-                riscv_write_reg(vm, rds, fpu_is_fle32_quiet(riscv_view_s(vm, rs1), riscv_view_s(vm, rs2)));
+                riscv_write_reg(vm, rds, fpu_is_fle32_quiet(riscv_read_s(vm, rs1), riscv_read_s(vm, rs2)));
                 return;
             case 0xA0005000UL: // fltq.s (Zfa)
-                riscv_write_reg(vm, rds, fpu_is_flt32_quiet(riscv_view_s(vm, rs1), riscv_view_s(vm, rs2)));
+                riscv_write_reg(vm, rds, fpu_is_flt32_quiet(riscv_read_s(vm, rs1), riscv_read_s(vm, rs2)));
                 return;
             case 0xA2000000UL: // fle.d
                 riscv_write_reg(vm, rds, fpu_is_fle64_sig(riscv_view_d(vm, rs1), riscv_view_d(vm, rs2)));
@@ -354,7 +354,7 @@ slow_path func_opt_size void riscv_emulate_f_opc_op(rvvm_hart_t* vm, const uint3
                 break;
             case 0xE0001000UL: // fclass.s
                 if (likely(!rs2)) {
-                    riscv_write_reg(vm, rds, 1U << fpu_fclass32(riscv_view_s(vm, rs1)));
+                    riscv_write_reg(vm, rds, 1U << fpu_fclass32(riscv_read_s(vm, rs1)));
                     return;
                 }
                 break;
